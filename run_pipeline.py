@@ -124,6 +124,7 @@ def main():
     parser.add_argument("--job-id", help="Existing Job ID to resume, or specific ID to use")
     parser.add_argument("--resume", action="store_true", help="Resume from last failed step")
     parser.add_argument("--start-at", type=int, help="Force start at specific step ID")
+    parser.add_argument("--aligner", default="mfa", choices=["mfa", "sofa"], help="Alignment engine (default: mfa)")
     
     args = parser.parse_args()
     

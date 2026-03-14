@@ -63,6 +63,24 @@ def whisperx_dir(job_id: str) -> Path:
 def gemini_dir(job_id: str) -> Path:
     return step_output(job_id, "04_gemini")
 
+def sofa_dir(job_id: str) -> Path:
+    return step_output(job_id, "03_sofa")
+
+def sofa_textgrid(job_id: str) -> Path:
+    return sofa_dir(job_id) / "alignment.TextGrid"
+
+def rosvot_dir(job_id: str) -> Path:
+    return step_output(job_id, "04_rosvot")
+
+def rosvot_json(job_id: str) -> Path:
+    return rosvot_dir(job_id) / "output.json"
+
+def fusion_dir(job_id: str) -> Path:
+    return step_output(job_id, "05_fusion")
+
+def fused_midi(job_id: str) -> Path:
+    return fusion_dir(job_id) / "fused_sofa_rosvot.mid"
+
 def ass_dir(job_id: str) -> Path:
     return step_output(job_id, "06_ass")
 
