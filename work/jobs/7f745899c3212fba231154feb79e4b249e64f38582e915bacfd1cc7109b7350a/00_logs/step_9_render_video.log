@@ -1,0 +1,46 @@
+=== OUTPUT ===
+=== Fase I: Render Video Karaoke ===
+PROGRESS: 0 | Iniciando render...
+Audio: guide.mp3 (mixado)
+PROGRESS: 5 | Detectando duração do áudio...
+ASS:      C:\Meus Projetos\Audio Karaoke\karaoke-mfa-multi\work\jobs\7f745899c3212fba231154feb79e4b249e64f38582e915bacfd1cc7109b7350a\06_ass\karaoke.ass
+Duração:  378.9s
+PROGRESS: 8 | Copiando ASS para path temporário (espaços no path)...
+ASS temp: C:\Users\Lu\AppData\Local\Temp\kstudio_vellmnez\karaoke.ass
+PROGRESS: 10 | Iniciando encode (379s de video)...
+CMD: ffmpeg -y -hide_banner -f lavfi -i color=c=#08090f:s=1280x720:d=378.88,format=yuv420p -i C:\Meus Projetos\Audio Karaoke\karaoke-mfa-multi\work\jobs\7f745899c3212fba231154feb79e4b249e64f38582e915bacfd1cc7109b7350a\08_mixed\guide.mp3 -vf subtitles='C\:/Users/Lu/AppData/Local/Temp/kstudio_vellmnez/karaoke.ass' -c:v libx264 -preset superfast -crf 23 -c:a aac -b:a 192k -t 378.88 -progress pipe:1 C:\Meus Projetos\Audio Karaoke\karaoke-mfa-multi\work\jobs\7f745899c3212fba231154feb79e4b249e64f38582e915bacfd1cc7109b7350a\07_video\karaoke_preview.mp4
+PROGRESS: 12 | Codificando 0:10 / 6:18
+PROGRESS: 14 | Codificando 0:20 / 6:18
+PROGRESS: 18 | Codificando 0:34 / 6:18
+PROGRESS: 20 | Codificando 0:46 / 6:18
+PROGRESS: 23 | Codificando 1:00 / 6:18
+PROGRESS: 27 | Codificando 1:14 / 6:18
+PROGRESS: 29 | Codificando 1:25 / 6:18
+PROGRESS: 32 | Codificando 1:36 / 6:18
+PROGRESS: 34 | Codificando 1:45 / 6:18
+PROGRESS: 36 | Codificando 1:54 / 6:18
+PROGRESS: 38 | Codificando 2:03 / 6:18
+PROGRESS: 41 | Codificando 2:15 / 6:18
+PROGRESS: 43 | Codificando 2:26 / 6:18
+PROGRESS: 46 | Codificando 2:36 / 6:18
+PROGRESS: 49 | Codificando 2:49 / 6:18
+PROGRESS: 52 | Codificando 3:02 / 6:18
+PROGRESS: 55 | Codificando 3:17 / 6:18
+PROGRESS: 58 | Codificando 3:30 / 6:18
+PROGRESS: 61 | Codificando 3:43 / 6:18
+PROGRESS: 64 | Codificando 3:56 / 6:18
+PROGRESS: 67 | Codificando 4:08 / 6:18
+PROGRESS: 70 | Codificando 4:22 / 6:18
+PROGRESS: 74 | Codificando 4:35 / 6:18
+PROGRESS: 76 | Codificando 4:46 / 6:18
+PROGRESS: 80 | Codificando 5:01 / 6:18
+PROGRESS: 83 | Codificando 5:14 / 6:18
+PROGRESS: 86 | Codificando 5:27 / 6:18
+PROGRESS: 89 | Codificando 5:40 / 6:18
+PROGRESS: 91 | Codificando 5:50 / 6:18
+PROGRESS: 94 | Codificando 6:01 / 6:18
+PROGRESS: 97 | Codificando 6:15 / 6:18
+PROGRESS: 98 | Finalizando arquivo...
+PROGRESS: 100 | Video gerado — 10.2 MB
+✓ Vídeo salvo em: C:\Meus Projetos\Audio Karaoke\karaoke-mfa-multi\work\jobs\7f745899c3212fba231154feb79e4b249e64f38582e915bacfd1cc7109b7350a\07_video\karaoke_preview.mp4
+Tamanho: 10.2 MB

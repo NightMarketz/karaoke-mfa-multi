@@ -1,0 +1,10 @@
+{
+  "metrics": {
+    "total_lines": 61,
+    "lines_without_kf": 0,
+    "negative_kf": 0,
+    "overlapping_events": 0,
+    "duration_mismatches": 3,
+    "word_coverage_percent": 100.0
+  }
+}

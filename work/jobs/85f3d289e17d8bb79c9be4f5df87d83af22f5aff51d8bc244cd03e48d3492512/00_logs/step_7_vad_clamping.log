@@ -1,0 +1,8 @@
+=== OUTPUT ===
+=== Fase E.5: VAD Clamping (Job: 85f3d289e17d8bb79c9be4f5df87d83af22f5aff51d8bc244cd03e48d3492512) ===
+Palavras carregadas: 243
+Rodando VAD em vocals_raw.wav...
+Segmentos VAD: 9
+Palavras clampeadas para VAD: 22
+word_timing.json atualizado
+=== VAD Clamping concluído ===

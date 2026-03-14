@@ -1,0 +1,13 @@
+{
+  "job_id": "7f745899c3212fba231154feb79e4b249e64f38582e915bacfd1cc7109b7350a",
+  "words_total": 243,
+  "words_clamped": 22,
+  "vad_stats": {
+    "p10_db": -19.03,
+    "p50_db": 68.17,
+    "p90_db": 73.81,
+    "avg_db": 36.05,
+    "fixed_thresh": -24.0,
+    "applied_thresh": -11.03
+  }
+}

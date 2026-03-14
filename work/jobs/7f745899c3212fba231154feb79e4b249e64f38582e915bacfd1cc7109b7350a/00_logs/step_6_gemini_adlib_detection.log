@@ -1,0 +1,10 @@
+=== OUTPUT ===
+=== Step 03c: Gemini Transcription + Adlib Detection ===
+PROGRESS: 0 | Iniciando...
+Vocal:  C:\Meus Projetos\Audio Karaoke\karaoke-mfa-multi\work\jobs\7f745899c3212fba231154feb79e4b249e64f38582e915bacfd1cc7109b7350a\03_vocals_clean\vocals_raw.wav
+Letra:  C:\Meus Projetos\Audio Karaoke\karaoke-mfa-multi\input\jobs\7f745899c3212fba231154feb79e4b249e64f38582e915bacfd1cc7109b7350a\lyrics.txt
+Saída:  C:\Meus Projetos\Audio Karaoke\karaoke-mfa-multi\work\jobs\7f745899c3212fba231154feb79e4b249e64f38582e915bacfd1cc7109b7350a\05_alignment
+Modelo: models/gemini-2.5-flash-native-audio-latest
+Chunk:  50s
+Cache encontrado — pulando Gemini (delete os arquivos para reprocessar).
+0 adlibs carregados do cache.

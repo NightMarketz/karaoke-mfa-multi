@@ -1,0 +1,1868 @@
+[
+  {
+    "word": "still",
+    "start": 20.2346,
+    "end": 20.7901,
+    "score": 0.307,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "breathing",
+    "start": 20.7901,
+    "end": 21.3457,
+    "score": 0.015,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "running",
+    "start": 21.3457,
+    "end": 21.9012,
+    "score": 0.012,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "on",
+    "start": 21.9012,
+    "end": 22.4568,
+    "score": 0.005,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "fumes",
+    "start": 22.4568,
+    "end": 23.0123,
+    "score": 0.016,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "sealed",
+    "start": 23.0123,
+    "end": 23.5679,
+    "score": 0.002,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "in",
+    "start": 23.5679,
+    "end": 24.1234,
+    "score": 0.0,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "the",
+    "start": 24.1234,
+    "end": 24.679,
+    "score": 0.316,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "tomb",
+    "start": 24.679,
+    "end": 25.02,
+    "score": 0.522,
+    "method": "anchor"
+  },
+  {
+    "word": "dragging",
+    "start": 37.43,
+    "end": 37.5367,
+    "score": 0.125,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "my",
+    "start": 37.5367,
+    "end": 37.6433,
+    "score": 0.2495,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "feet",
+    "start": 37.6433,
+    "end": 37.75,
+    "score": 0.408,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "to",
+    "start": 37.75,
+    "end": 37.818,
+    "score": 0.013,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "the",
+    "start": 37.818,
+    "end": 38.36,
+    "score": 0.816,
+    "method": "anchor"
+  },
+  {
+    "word": "beat",
+    "start": 40.62,
+    "end": 40.686,
+    "score": 0.0,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "taste",
+    "start": 40.686,
+    "end": 40.752,
+    "score": 0.17,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "of",
+    "start": 40.752,
+    "end": 40.818,
+    "score": 0.005,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "the",
+    "start": 40.818,
+    "end": 40.884,
+    "score": 0.001,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "rust",
+    "start": 40.884,
+    "end": 40.95,
+    "score": 0.064,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "rising",
+    "start": 40.95,
+    "end": 41.148,
+    "score": 0.206,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "above",
+    "start": 41.148,
+    "end": 43.114,
+    "score": 0.534,
+    "method": "anchor"
+  },
+  {
+    "word": "the",
+    "start": 43.66,
+    "end": 47.03,
+    "score": 0.498,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "dust",
+    "start": 47.03,
+    "end": 47.18,
+    "score": 0.483,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "cause",
+    "start": 47.006,
+    "end": 47.848,
+    "score": 0.51,
+    "method": "anchor"
+  },
+  {
+    "word": "i",
+    "start": 47.868,
+    "end": 47.888,
+    "score": 0.948,
+    "method": "anchor"
+  },
+  {
+    "word": "am",
+    "start": 48.069,
+    "end": 49.513,
+    "score": 0.78,
+    "method": "anchor"
+  },
+  {
+    "word": "still",
+    "start": 49.93,
+    "end": 52.13,
+    "score": 0.383,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "here",
+    "start": 52.13,
+    "end": 54.64,
+    "score": 0.255,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "choking",
+    "start": 54.64,
+    "end": 55.812,
+    "score": 0.389,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "on",
+    "start": 55.812,
+    "end": 55.852,
+    "score": 0.5,
+    "method": "anchor"
+  },
+  {
+    "word": "fear",
+    "start": 55.832,
+    "end": 59.042,
+    "score": 0.742,
+    "method": "anchor"
+  },
+  {
+    "word": "about",
+    "start": 59.05,
+    "end": 61.108,
+    "score": 0.497,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "to",
+    "start": 61.108,
+    "end": 64.037,
+    "score": 0.777,
+    "method": "anchor"
+  },
+  {
+    "word": "snap",
+    "start": 64.21,
+    "end": 64.217,
+    "score": 0.379,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "so",
+    "start": 64.217,
+    "end": 64.598,
+    "score": 0.759,
+    "method": "anchor"
+  },
+  {
+    "word": "burn",
+    "start": 65.882,
+    "end": 66.043,
+    "score": 0.572,
+    "method": "anchor"
+  },
+  {
+    "word": "it",
+    "start": 67.387,
+    "end": 67.487,
+    "score": 0.84,
+    "method": "anchor"
+  },
+  {
+    "word": "all",
+    "start": 67.627,
+    "end": 69.152,
+    "score": 0.52,
+    "method": "anchor"
+  },
+  {
+    "word": "leave",
+    "start": 69.192,
+    "end": 70.476,
+    "score": 0.53,
+    "method": "anchor"
+  },
+  {
+    "word": "it",
+    "start": 70.54,
+    "end": 79.27,
+    "score": 0.371,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "all",
+    "start": 79.27,
+    "end": 79.383,
+    "score": 0.1545,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "behind",
+    "start": 79.383,
+    "end": 82.692,
+    "score": 0.584,
+    "method": "anchor"
+  },
+  {
+    "word": "blinded",
+    "start": 82.71,
+    "end": 82.98,
+    "score": 0.138,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "by",
+    "start": 82.98,
+    "end": 83.2,
+    "score": 0.003,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "the",
+    "start": 83.2,
+    "end": 83.51,
+    "score": 0.017,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "hate",
+    "start": 83.51,
+    "end": 83.82,
+    "score": 0.012,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "i",
+    "start": 83.82,
+    "end": 84.21,
+    "score": 0.04,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "am",
+    "start": 84.21,
+    "end": 84.61,
+    "score": 0.024,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "taking",
+    "start": 84.61,
+    "end": 85.11,
+    "score": 0.003,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "back",
+    "start": 85.11,
+    "end": 85.2,
+    "score": 0.2,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "my",
+    "start": 85.2,
+    "end": 87.066,
+    "score": 0.698,
+    "method": "anchor"
+  },
+  {
+    "word": "fate",
+    "start": 87.788,
+    "end": 87.988,
+    "score": 0.525,
+    "method": "anchor"
+  },
+  {
+    "word": "this",
+    "start": 87.96,
+    "end": 88.56,
+    "score": 0.318,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "iron",
+    "start": 88.56,
+    "end": 88.71,
+    "score": 0.212,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "drinks",
+    "start": 88.53,
+    "end": 88.731,
+    "score": 0.567,
+    "method": "anchor"
+  },
+  {
+    "word": "the",
+    "start": 88.77,
+    "end": 95.19,
+    "score": 0.245,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "life",
+    "start": 95.19,
+    "end": 96.75,
+    "score": 0.349,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "right",
+    "start": 96.75,
+    "end": 99.85,
+    "score": 0.369,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "out",
+    "start": 99.85,
+    "end": 99.864,
+    "score": 0.335,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "of",
+    "start": 99.864,
+    "end": 99.904,
+    "score": 0.5,
+    "method": "anchor"
+  },
+  {
+    "word": "me",
+    "start": 99.884,
+    "end": 103.274,
+    "score": 0.942,
+    "method": "anchor"
+  },
+  {
+    "word": "i",
+    "start": 103.736,
+    "end": 104.879,
+    "score": 0.77,
+    "method": "anchor"
+  },
+  {
+    "word": "made",
+    "start": 108.55,
+    "end": 110.095,
+    "score": 0.825,
+    "method": "anchor"
+  },
+  {
+    "word": "this",
+    "start": 110.155,
+    "end": 110.375,
+    "score": 0.721,
+    "method": "anchor"
+  },
+  {
+    "word": "bed",
+    "start": 110.516,
+    "end": 110.917,
+    "score": 0.979,
+    "method": "anchor"
+  },
+  {
+    "word": "of",
+    "start": 111.278,
+    "end": 111.479,
+    "score": 0.869,
+    "method": "anchor"
+  },
+  {
+    "word": "stone",
+    "start": 111.599,
+    "end": 112.361,
+    "score": 0.881,
+    "method": "anchor"
+  },
+  {
+    "word": "now",
+    "start": 112.522,
+    "end": 113.063,
+    "score": 0.795,
+    "method": "anchor"
+  },
+  {
+    "word": "let",
+    "start": 113.264,
+    "end": 113.986,
+    "score": 0.805,
+    "method": "anchor"
+  },
+  {
+    "word": "me",
+    "start": 114.087,
+    "end": 114.588,
+    "score": 0.902,
+    "method": "anchor"
+  },
+  {
+    "word": "sleep",
+    "start": 114.568,
+    "end": 115.19,
+    "score": 0.543,
+    "method": "anchor"
+  },
+  {
+    "word": "it",
+    "start": 115.752,
+    "end": 115.872,
+    "score": 0.857,
+    "method": "anchor"
+  },
+  {
+    "word": "tears",
+    "start": 116.133,
+    "end": 116.353,
+    "score": 0.513,
+    "method": "anchor"
+  },
+  {
+    "word": "me",
+    "start": 116.454,
+    "end": 116.674,
+    "score": 0.899,
+    "method": "anchor"
+  },
+  {
+    "word": "down",
+    "start": 116.795,
+    "end": 117.477,
+    "score": 0.995,
+    "method": "anchor"
+  },
+  {
+    "word": "but",
+    "start": 117.517,
+    "end": 117.778,
+    "score": 0.728,
+    "method": "anchor"
+  },
+  {
+    "word": "feeds",
+    "start": 117.978,
+    "end": 119.102,
+    "score": 0.697,
+    "method": "anchor"
+  },
+  {
+    "word": "the",
+    "start": 122.091,
+    "end": 122.933,
+    "score": 0.761,
+    "method": "anchor"
+  },
+  {
+    "word": "hungry",
+    "start": 122.95,
+    "end": 129.28,
+    "score": 0.439,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "will",
+    "start": 129.28,
+    "end": 129.43,
+    "score": 0.24,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "it",
+    "start": 129.252,
+    "end": 130.436,
+    "score": 0.843,
+    "method": "anchor"
+  },
+  {
+    "word": "keeps",
+    "start": 130.44,
+    "end": 132.0,
+    "score": 0.421,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "me",
+    "start": 132.0,
+    "end": 133.17,
+    "score": 0.434,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "cool",
+    "start": 133.17,
+    "end": 133.184,
+    "score": 0.0,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "and",
+    "start": 133.184,
+    "end": 133.324,
+    "score": 0.764,
+    "method": "anchor"
+  },
+  {
+    "word": "keeps",
+    "start": 133.37,
+    "end": 136.8,
+    "score": 0.388,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "me",
+    "start": 136.8,
+    "end": 140.08,
+    "score": 0.465,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "standing",
+    "start": 140.08,
+    "end": 143.94,
+    "score": 0.117,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "still",
+    "start": 143.94,
+    "end": 144.09,
+    "score": 0.194,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "a",
+    "start": 143.936,
+    "end": 143.956,
+    "score": 1.0,
+    "method": "anchor"
+  },
+  {
+    "word": "wrench",
+    "start": 143.94,
+    "end": 148.269,
+    "score": 0.441,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "in",
+    "start": 148.269,
+    "end": 148.59,
+    "score": 0.762,
+    "method": "anchor"
+  },
+  {
+    "word": "the",
+    "start": 148.71,
+    "end": 149.232,
+    "score": 0.805,
+    "method": "anchor"
+  },
+  {
+    "word": "gears",
+    "start": 151.06,
+    "end": 151.55,
+    "score": 0.359,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "grinding",
+    "start": 151.55,
+    "end": 152.29,
+    "score": 0.478,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "the",
+    "start": 152.29,
+    "end": 153.86,
+    "score": 0.331,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "fear",
+    "start": 153.86,
+    "end": 154.01,
+    "score": 0.336,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "out",
+    "start": 153.826,
+    "end": 153.926,
+    "score": 0.654,
+    "method": "anchor"
+  },
+  {
+    "word": "of",
+    "start": 154.046,
+    "end": 154.187,
+    "score": 0.677,
+    "method": "anchor"
+  },
+  {
+    "word": "my",
+    "start": 154.22,
+    "end": 157.4,
+    "score": 0.184,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "mind",
+    "start": 157.4,
+    "end": 160.78,
+    "score": 0.438,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "crossing",
+    "start": 160.78,
+    "end": 160.786,
+    "score": 0.274,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "the",
+    "start": 160.786,
+    "end": 166.504,
+    "score": 0.852,
+    "method": "anchor"
+  },
+  {
+    "word": "line",
+    "start": 166.61,
+    "end": 168.17,
+    "score": 0.455,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "the",
+    "start": 168.17,
+    "end": 170.31,
+    "score": 0.22,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "vision",
+    "start": 170.31,
+    "end": 171.76,
+    "score": 0.432,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "dies",
+    "start": 171.76,
+    "end": 171.91,
+    "score": 0.236,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "i",
+    "start": 171.739,
+    "end": 171.759,
+    "score": 0.943,
+    "method": "anchor"
+  },
+  {
+    "word": "am",
+    "start": 171.76,
+    "end": 175.42,
+    "score": 0.494,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "going",
+    "start": 175.42,
+    "end": 178.0,
+    "score": 0.358,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "blind",
+    "start": 178.0,
+    "end": 178.15,
+    "score": 0.379,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "but",
+    "start": 177.978,
+    "end": 178.54,
+    "score": 0.548,
+    "method": "anchor"
+  },
+  {
+    "word": "i",
+    "start": 178.56,
+    "end": 178.861,
+    "score": 0.78,
+    "method": "anchor"
+  },
+  {
+    "word": "am",
+    "start": 179.081,
+    "end": 179.242,
+    "score": 0.642,
+    "method": "anchor"
+  },
+  {
+    "word": "still",
+    "start": 179.322,
+    "end": 179.964,
+    "score": 0.636,
+    "method": "anchor"
+  },
+  {
+    "word": "here",
+    "start": 179.96,
+    "end": 187.49,
+    "score": 0.46,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "building",
+    "start": 187.49,
+    "end": 187.64,
+    "score": 0.346,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "up",
+    "start": 187.466,
+    "end": 187.687,
+    "score": 0.713,
+    "method": "anchor"
+  },
+  {
+    "word": "past",
+    "start": 187.707,
+    "end": 187.928,
+    "score": 0.706,
+    "method": "anchor"
+  },
+  {
+    "word": "the",
+    "start": 187.99,
+    "end": 188.14,
+    "score": 0.333,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "fear",
+    "start": 187.988,
+    "end": 190.556,
+    "score": 0.599,
+    "method": "anchor"
+  },
+  {
+    "word": "dressed",
+    "start": 191.218,
+    "end": 192.341,
+    "score": 0.588,
+    "method": "anchor"
+  },
+  {
+    "word": "to",
+    "start": 193.103,
+    "end": 193.324,
+    "score": 0.819,
+    "method": "anchor"
+  },
+  {
+    "word": "kill",
+    "start": 193.28,
+    "end": 199.82,
+    "score": 0.25,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "let",
+    "start": 199.82,
+    "end": 199.924,
+    "score": 0.431,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "it",
+    "start": 199.924,
+    "end": 200.586,
+    "score": 0.847,
+    "method": "anchor"
+  },
+  {
+    "word": "burn",
+    "start": 200.967,
+    "end": 201.509,
+    "score": 0.563,
+    "method": "anchor"
+  },
+  {
+    "word": "no",
+    "start": 201.529,
+    "end": 201.709,
+    "score": 0.798,
+    "method": "anchor"
+  },
+  {
+    "word": "return",
+    "start": 201.75,
+    "end": 202.65,
+    "score": 0.175,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "standing",
+    "start": 202.65,
+    "end": 202.672,
+    "score": 0.33,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "still",
+    "start": 202.672,
+    "end": 204.698,
+    "score": 0.512,
+    "method": "anchor"
+  },
+  {
+    "word": "by",
+    "start": 204.939,
+    "end": 205.079,
+    "score": 0.57,
+    "method": "anchor"
+  },
+  {
+    "word": "sheer",
+    "start": 205.04,
+    "end": 210.455,
+    "score": 0.198,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "force",
+    "start": 210.455,
+    "end": 213.805,
+    "score": 0.629,
+    "method": "anchor"
+  },
+  {
+    "word": "of",
+    "start": 213.946,
+    "end": 214.187,
+    "score": 0.75,
+    "method": "anchor"
+  },
+  {
+    "word": "will",
+    "start": 214.307,
+    "end": 215.109,
+    "score": 0.608,
+    "method": "anchor"
+  },
+  {
+    "word": "piece",
+    "start": 215.11,
+    "end": 215.97,
+    "score": 0.171,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "by",
+    "start": 215.97,
+    "end": 216.77,
+    "score": 0.003,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "piece",
+    "start": 216.77,
+    "end": 216.92,
+    "score": 0.0,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "bone",
+    "start": 216.734,
+    "end": 217.376,
+    "score": 0.594,
+    "method": "anchor"
+  },
+  {
+    "word": "by",
+    "start": 217.356,
+    "end": 219.081,
+    "score": 0.911,
+    "method": "anchor"
+  },
+  {
+    "word": "bone",
+    "start": 219.12,
+    "end": 220.104,
+    "score": 0.406,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "i",
+    "start": 220.104,
+    "end": 220.285,
+    "score": 0.541,
+    "method": "anchor"
+  },
+  {
+    "word": "build",
+    "start": 220.29,
+    "end": 222.993,
+    "score": 0.305,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "this",
+    "start": 222.993,
+    "end": 223.735,
+    "score": 0.896,
+    "method": "anchor"
+  },
+  {
+    "word": "hell",
+    "start": 223.7,
+    "end": 225.61,
+    "score": 0.471,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "on",
+    "start": 225.61,
+    "end": 227.14,
+    "score": 0.254,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "my",
+    "start": 227.14,
+    "end": 228.82,
+    "score": 0.0,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "own",
+    "start": 228.82,
+    "end": 232.03,
+    "score": 0.26,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "piece",
+    "start": 232.03,
+    "end": 232.04,
+    "score": 0.2,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "by",
+    "start": 232.04,
+    "end": 232.461,
+    "score": 0.766,
+    "method": "anchor"
+  },
+  {
+    "word": "piece",
+    "start": 232.5,
+    "end": 233.34,
+    "score": 0.186,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "skin",
+    "start": 233.34,
+    "end": 235.39,
+    "score": 0.231,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "for",
+    "start": 235.39,
+    "end": 235.671,
+    "score": 0.493,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "skin",
+    "start": 235.671,
+    "end": 236.533,
+    "score": 0.618,
+    "method": "anchor"
+  },
+  {
+    "word": "let",
+    "start": 236.694,
+    "end": 238.64,
+    "score": 0.58,
+    "method": "anchor"
+  },
+  {
+    "word": "the",
+    "start": 238.66,
+    "end": 239.061,
+    "score": 0.592,
+    "method": "anchor"
+  },
+  {
+    "word": "nightmare",
+    "start": 239.08,
+    "end": 246.73,
+    "score": 0.472,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "begin",
+    "start": 246.73,
+    "end": 246.88,
+    "score": 0.106,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "oh",
+    "start": 246.704,
+    "end": 246.744,
+    "score": 0.5,
+    "method": "anchor"
+  },
+  {
+    "word": "fuck",
+    "start": 246.73,
+    "end": 247.31,
+    "score": 0.117,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "it",
+    "start": 247.31,
+    "end": 247.69,
+    "score": 0.007,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "hurts",
+    "start": 247.69,
+    "end": 247.95,
+    "score": 0.006,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "like",
+    "start": 247.95,
+    "end": 248.12,
+    "score": 0.005,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "hell",
+    "start": 248.12,
+    "end": 248.3,
+    "score": 0.004,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "cannot",
+    "start": 248.3,
+    "end": 248.58,
+    "score": 0.003,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "catch",
+    "start": 248.58,
+    "end": 248.76,
+    "score": 0.004,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "a",
+    "start": 248.76,
+    "end": 248.99,
+    "score": 0.008,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "breath",
+    "start": 248.99,
+    "end": 249.65,
+    "score": 0.005,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "lights",
+    "start": 249.65,
+    "end": 261.408,
+    "score": 0.16,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "go",
+    "start": 261.408,
+    "end": 268.309,
+    "score": 0.732,
+    "method": "anchor"
+  },
+  {
+    "word": "low",
+    "start": 268.87,
+    "end": 269.071,
+    "score": 0.536,
+    "method": "anchor"
+  },
+  {
+    "word": "pulse",
+    "start": 269.05,
+    "end": 270.03,
+    "score": 0.333,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "comes",
+    "start": 270.03,
+    "end": 271.29,
+    "score": 0.42,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "loose",
+    "start": 271.29,
+    "end": 274.72,
+    "score": 0.204,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "it",
+    "start": 274.72,
+    "end": 274.728,
+    "score": 0.0,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "calls",
+    "start": 274.728,
+    "end": 275.53,
+    "score": 0.718,
+    "method": "anchor"
+  },
+  {
+    "word": "my",
+    "start": 275.53,
+    "end": 280.81,
+    "score": 0.001,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "name",
+    "start": 280.81,
+    "end": 281.54,
+    "score": 0.227,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "i",
+    "start": 281.54,
+    "end": 282.4,
+    "score": 0.079,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "must",
+    "start": 282.4,
+    "end": 283.41,
+    "score": 0.237,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "refuse",
+    "start": 283.41,
+    "end": 283.56,
+    "score": 0.35,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "cause",
+    "start": 283.374,
+    "end": 286.543,
+    "score": 0.608,
+    "method": "anchor"
+  },
+  {
+    "word": "i",
+    "start": 286.563,
+    "end": 286.583,
+    "score": 0.838,
+    "method": "anchor"
+  },
+  {
+    "word": "am",
+    "start": 286.58,
+    "end": 287.02,
+    "score": 0.002,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "still",
+    "start": 287.02,
+    "end": 287.4,
+    "score": 0.19,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "here",
+    "start": 287.4,
+    "end": 287.88,
+    "score": 0.149,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "breathing",
+    "start": 287.88,
+    "end": 288.52,
+    "score": 0.094,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "through",
+    "start": 288.52,
+    "end": 290.74,
+    "score": 0.43,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "the",
+    "start": 290.74,
+    "end": 290.776,
+    "score": 0.338,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "fear",
+    "start": 290.776,
+    "end": 292.26,
+    "score": 0.552,
+    "method": "anchor"
+  },
+  {
+    "word": "about",
+    "start": 294.146,
+    "end": 294.648,
+    "score": 0.772,
+    "method": "anchor"
+  },
+  {
+    "word": "to",
+    "start": 294.79,
+    "end": 296.61,
+    "score": 0.48,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "snap",
+    "start": 296.61,
+    "end": 298.17,
+    "score": 0.0,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "falcons",
+    "start": 298.17,
+    "end": 299.6,
+    "score": 0.004,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "call",
+    "start": 299.6,
+    "end": 300.99,
+    "score": 0.384,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "fuck",
+    "start": 300.99,
+    "end": 301.027,
+    "score": 0.002,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "it",
+    "start": 301.027,
+    "end": 301.107,
+    "score": 0.586,
+    "method": "anchor"
+  },
+  {
+    "word": "all",
+    "start": 301.09,
+    "end": 304.65,
+    "score": 0.008,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "i",
+    "start": 304.65,
+    "end": 307.4,
+    "score": 0.005,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "will",
+    "start": 307.4,
+    "end": 307.406,
+    "score": 0.21,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "not",
+    "start": 307.406,
+    "end": 309.091,
+    "score": 0.846,
+    "method": "anchor"
+  },
+  {
+    "word": "fall",
+    "start": 309.211,
+    "end": 309.793,
+    "score": 0.745,
+    "method": "anchor"
+  },
+  {
+    "word": "i",
+    "start": 310.254,
+    "end": 310.274,
+    "score": 0.991,
+    "method": "anchor"
+  },
+  {
+    "word": "must",
+    "start": 311.257,
+    "end": 311.719,
+    "score": 0.726,
+    "method": "anchor"
+  },
+  {
+    "word": "carry",
+    "start": 312.341,
+    "end": 313.685,
+    "score": 0.75,
+    "method": "anchor"
+  },
+  {
+    "word": "on",
+    "start": 314.266,
+    "end": 316.573,
+    "score": 0.862,
+    "method": "anchor"
+  },
+  {
+    "word": "i",
+    "start": 316.593,
+    "end": 316.613,
+    "score": 0.992,
+    "method": "anchor"
+  },
+  {
+    "word": "will",
+    "start": 317.396,
+    "end": 318.058,
+    "score": 0.519,
+    "method": "anchor"
+  },
+  {
+    "word": "not",
+    "start": 318.04,
+    "end": 321.23,
+    "score": 0.122,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "fall",
+    "start": 321.23,
+    "end": 321.267,
+    "score": 0.408,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "for",
+    "start": 321.267,
+    "end": 321.689,
+    "score": 0.747,
+    "method": "anchor"
+  },
+  {
+    "word": "that",
+    "start": 322.471,
+    "end": 322.892,
+    "score": 0.868,
+    "method": "anchor"
+  },
+  {
+    "word": "i",
+    "start": 322.912,
+    "end": 322.932,
+    "score": 0.991,
+    "method": "anchor"
+  },
+  {
+    "word": "must",
+    "start": 323.855,
+    "end": 324.317,
+    "score": 0.794,
+    "method": "anchor"
+  },
+  {
+    "word": "carry",
+    "start": 324.417,
+    "end": 326.483,
+    "score": 0.863,
+    "method": "anchor"
+  },
+  {
+    "word": "on",
+    "start": 327.245,
+    "end": 329.332,
+    "score": 0.7,
+    "method": "anchor"
+  },
+  {
+    "word": "i",
+    "start": 331.458,
+    "end": 331.879,
+    "score": 0.749,
+    "method": "anchor"
+  },
+  {
+    "word": "will",
+    "start": 332.12,
+    "end": 332.782,
+    "score": 0.829,
+    "method": "anchor"
+  },
+  {
+    "word": "not",
+    "start": 332.91,
+    "end": 338.93,
+    "score": 0.324,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "fall",
+    "start": 338.93,
+    "end": 344.1,
+    "score": 0.468,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "for",
+    "start": 344.1,
+    "end": 344.25,
+    "score": 0.334,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "that",
+    "start": 344.096,
+    "end": 344.698,
+    "score": 0.784,
+    "method": "anchor"
+  },
+  {
+    "word": "i",
+    "start": 344.93,
+    "end": 345.5867,
+    "score": 0.0,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "must",
+    "start": 345.5867,
+    "end": 346.2433,
+    "score": 0.327,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "carry",
+    "start": 346.2433,
+    "end": 346.9,
+    "score": 0.453,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "on",
+    "start": 346.9,
+    "end": 347.05,
+    "score": 0.499,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "i",
+    "start": 346.864,
+    "end": 346.924,
+    "score": 0.695,
+    "method": "anchor"
+  },
+  {
+    "word": "will",
+    "start": 346.9,
+    "end": 356.51,
+    "score": 0.358,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "not",
+    "start": 356.51,
+    "end": 358.52,
+    "score": 0.332,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "fall",
+    "start": 358.52,
+    "end": 359.65,
+    "score": 0.353,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "for",
+    "start": 359.65,
+    "end": 360.73,
+    "score": 0.299,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  },
+  {
+    "word": "that",
+    "start": 360.73,
+    "end": 362.01,
+    "score": 0.008,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "i",
+    "start": 362.01,
+    "end": 362.16,
+    "score": 0.013,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "must",
+    "start": 361.969,
+    "end": 362.23,
+    "score": 0.713,
+    "method": "anchor"
+  },
+  {
+    "word": "carry",
+    "start": 362.33,
+    "end": 363.935,
+    "score": 0.708,
+    "method": "anchor"
+  },
+  {
+    "word": "on",
+    "start": 363.92,
+    "end": 365.05,
+    "score": 0.002,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "i",
+    "start": 365.05,
+    "end": 366.37,
+    "score": 0.017,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "will",
+    "start": 366.37,
+    "end": 367.66,
+    "score": 0.008,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "not",
+    "start": 367.66,
+    "end": 369.16,
+    "score": 0.312,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "fall",
+    "start": 369.16,
+    "end": 371.63,
+    "score": 0.12,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "fuck",
+    "start": 371.63,
+    "end": 373.13,
+    "score": 0.178,
+    "interpolated": true,
+    "method": "dtw"
+  },
+  {
+    "word": "that",
+    "start": 373.13,
+    "end": 393.935,
+    "score": 0.25,
+    "interpolated": true,
+    "vad_clamped": true,
+    "method": "dtw"
+  }
+]

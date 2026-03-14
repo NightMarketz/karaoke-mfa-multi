@@ -1,0 +1,79 @@
+[
+  {
+    "text": "Hm-hm-hm-hm-hm-hm",
+    "start": 11.8,
+    "end": 23.4,
+    "type": "adlib",
+    "coverage": 0.0
+  },
+  {
+    "text": "Ooh...",
+    "start": 50.0,
+    "end": 53.2,
+    "type": "adlib",
+    "coverage": 0.0
+  },
+  {
+    "text": "Ah-ah-ah-ah-ah",
+    "start": 70.4,
+    "end": 76.3,
+    "type": "adlib",
+    "coverage": 0.0
+  },
+  {
+    "text": "Yeah, yeah, yeah, yeah, yeah",
+    "start": 83.5,
+    "end": 88.0,
+    "type": "adlib",
+    "coverage": 0.0
+  },
+  {
+    "text": "Ooh-ooh-ooh",
+    "start": 95.0,
+    "end": 100.0,
+    "type": "adlib",
+    "coverage": 0.0
+  },
+  {
+    "text": "whoa!",
+    "start": 181.1,
+    "end": 182.4,
+    "type": "adlib",
+    "coverage": 0.0
+  },
+  {
+    "text": "Oh fuck",
+    "start": 209.5,
+    "end": 211.5,
+    "type": "adlib",
+    "coverage": 1.0
+  },
+  {
+    "text": "Please stop moving",
+    "start": 215.0,
+    "end": 218.5,
+    "type": "adlib",
+    "coverage": 0.0
+  },
+  {
+    "text": "[heavy breathing]",
+    "start": 350.0,
+    "end": 355.0,
+    "type": "adlib",
+    "coverage": 0.5
+  },
+  {
+    "text": "Ooooooooooh",
+    "start": 355.0,
+    "end": 365.2,
+    "type": "adlib",
+    "coverage": 0.0
+  },
+  {
+    "text": "how scary",
+    "start": 365.2,
+    "end": 368.2,
+    "type": "adlib",
+    "coverage": 0.0
+  }
+]

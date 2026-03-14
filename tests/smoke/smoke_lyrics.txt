@@ -1,0 +1,1 @@
+Hello this is a smoke testing script test.

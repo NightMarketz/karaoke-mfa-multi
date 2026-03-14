@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Studio Karaoke MFA | Alinhamento Profissional</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+    <header id="topbar">
+        <div class="topbar-brand">
+            <div class="brand-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 18V5l12-2v13"></path>
+                    <circle cx="6" cy="18" r="3"></circle>
+                    <circle cx="18" cy="16" r="3"></circle>
+                </svg>
+            </div>
+            <div class="brand-name">KARAOKE<span>MFA</span></div>
+        </div>
+
+        <div class="topbar-transport">
+            <button class="btn-transport" title="Toggle Sidebar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                </svg>
+            </button>
+            <button class="btn-transport" title="Settings">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+            </button>
+        </div>
+
+        <div class="topbar-time" id="time-display">00:00:00</div>
+    </header>
+
+    <div id="app">
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                </svg>
+                Pipeline MFA
+            </div>
+            
+            <div class="pipeline-steps">
+                <div class="step-item done" id="step-audio">
+                    <span class="step-name">Audio Processing</span>
+                    <span class="step-status">Pronto</span>
+                </div>
+                <div class="step-item active" id="step-lyrics">
+                    <span class="step-name">Lyrics Alignment</span>
+                    <span class="step-status">Editando...</span>
+                </div>
+                <div class="step-item" id="step-mfa">
+                    <span class="step-name">Forced Alignment</span>
+                    <span class="step-status">Pendente</span>
+                </div>
+                <div class="step-item" id="step-export">
+                    <span class="step-name">Exportação Final</span>
+                    <span class="step-status">Pendente</span>
+                </div>
+            </div>
+        </aside>
+
+        <main id="workspace">
+            <div id="workflow-stepper">
+                <div class="step-stage active">
+                    <div class="stage-num">1</div>
+                    <span>Arquivos</span>
+                </div>
+                <div class="stage-connector"></div>
+                <div class="step-stage">
+                    <div class="stage-num">2</div>
+                    <span>Alinhamento</span>
+                </div>
+                <div class="stage-connector"></div>
+                <div class="step-stage">
+                    <div class="stage-num">3</div>
+                    <span>Export</span>
+                </div>
+            </div>
+
+            <!-- Stage 1: Uploads -->
+            <section class="stage-panel active" id="stage-1">
+                <div class="input-three-col">
+                    <div class="daw-section">
+                        <div class="daw-section-header">
+                            <span class="section-num">01</span>
+                            Entrada de Áudio (MP3/WAV)
+                        </div>
+                        <div class="daw-section-body">
+                            <div class="upload-zone" id="drop-audio">
+                                <div class="upload-zone-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="17 8 12 3 7 8"></polyline>
+                                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                                    </svg>
+                                </div>
+                                <div class="upload-zone-title">Arraste o áudio aqui</div>
+                                <div class="upload-zone-hint">Suporta MP3, WAV, M4A</div>
+                                <input type="file" id="input-audio" accept="audio/*">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="daw-section">
+                        <div class="daw-section-header">
+                            <span class="section-num">1.5</span>
+                            Stems Isolados (Opcional)
+                        </div>
+                        <div class="daw-section-body">
+                            <div class="upload-zone" id="stems-multi-area">
+                                <div class="upload-zone-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 5v14m-7-7h14"></path>
+                                    </svg>
+                                </div>
+                                <div class="upload-zone-title">Arraste os stems aqui</div>
+                                <div class="upload-zone-hint">Vocal, Instrumental, Drums...</div>
+                                <input type="file" id="stems-input" accept="audio/*" multiple style="display: none;">
+                            </div>
+                            <div id="stems-list"></div>
+                        </div>
+                    </div>
+
+                    <div class="daw-section">
+                        <div class="daw-section-header">
+                            <span class="section-num">02</span>
+                            Configurações MFA
+                        </div>
+                        <div class="daw-section-body">
+                            <div style="margin-bottom: 16px;">
+                                <label style="font-size: 11px; color: var(--text-dim); display: block; margin-bottom: 6px;">IDIOMA:</label>
+                                <select class="daw-select" id="select-lang">
+                                    <option value="pt">Português (Brasil)</option>
+                                    <option value="en">Inglês (US)</option>
+                                    <option value="ja">Japonês (Hiragana/Katakana)</option>
+                                    <option value="ja_romaji">Japonês (Romaji)</option>
+                                </select>
+                            </div>
+                            <button class="btn-generate" id="btn-start-pipeline">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px;">
+                                    <path d="M5 3l14 9-14 9V3z"></path>
+                                </svg>
+                                Iniciar Processamento
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="daw-section" style="margin-top: 24px;">
+                    <div class="daw-section-header">
+                        <span class="section-num">03</span>
+                        Letra da Música (Texto Puro)
+                    </div>
+                    <div class="daw-section-body">
+                        <textarea class="daw-textarea" id="text-lyrics" rows="10" placeholder="Cole a letra aqui..."></textarea>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Promote Banner -->
+            <div id="promote-banner" style="display: none; background: rgba(0, 212, 255, 0.1); border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin-top: 16px; align-items: center; justify-content: space-between;">
+                <div>
+                    <h4 style="margin: 0; color: var(--accent); font-size: 14px;">Prévia Concluída</h4>
+                    <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--text-dim);">Gostou do alinhamento? Promova para gerar a música completa. (O processo continuará de onde parou)</p>
+                </div>
+                <button id="btn-promote" class="btn-generate" style="padding: 8px 16px; font-size: 13px; width: auto; margin-top: 0;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; margin-right: 6px; display: inline-block; vertical-align: middle;">
+                        <path d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    Promover para Completa
+                </button>
+            </div>
+
+            <!-- Player & Logs (General UI) -->
+            <div id="player-container" style="display: flex; flex-direction: column; gap: 12px; margin-top: 24px;">
+
+                <div class="player-stage">
+                    <div class="lyrics-viewport" id="lyrics-display">
+                        <div class="lyrics-line active">Carregue um projeto para começar</div>
+                    </div>
+                </div>
+                
+                <div class="timeline-area">
+                    <div class="waveform-area" id="waveform-container">
+                        <!-- Waveform.js will render here -->
+                        <div class="playhead" id="playhead"></div>
+                    </div>
+                </div>
+
+                <div class="player-controls">
+                    <button class="btn-play-main" id="btn-play">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M8 5v14l11-7z"></path>
+                        </svg>
+                    </button>
+                    <div class="ctrl-time" id="current-time">00:00</div>
+                    <div class="seek-wrap">
+                        <input type="range" class="daw-range" id="seek-bar" value="0">
+                    </div>
+                    <div class="ctrl-time" id="duration">00:00</div>
+                </div>
+            </div>
+
+            <!-- Logs Panel -->
+            <div class="log-panel">
+                <div class="log-header">
+                    <span>CONSOLE DE LOGS</span>
+                    <span style="color: var(--text-dim);">SYSTEM_READY</span>
+                </div>
+                <div class="log-output" id="log-content">
+                    <div class="log-line info">> Inicializando Studio Karaoke MFA...</div>
+                    <div class="log-line info">> Pronto para processar áudio.</div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="/static/karaoke-player.js"></script>
+    <script src="/static/pipeline-client.js"></script>
+</body>
+</html>

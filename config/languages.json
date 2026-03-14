@@ -1,0 +1,32 @@
+{
+    "en": {
+        "acoustic": "english_mfa",
+        "dictionary": "english_us_mfa",
+        "g2p": "english_us_mfa"
+    },
+    "pt": {
+        "acoustic": "portuguese_mfa",
+        "dictionary": "portuguese_brazil_mfa",
+        "g2p": "portuguese_brazil_mfa"
+    },
+    "es": {
+        "acoustic": "spanish_mfa",
+        "dictionary": "spanish_latin_america_mfa",
+        "g2p": "spanish_latin_america_mfa"
+    },
+    "ja": {
+    "acoustic": "japanese_mfa",
+    "dictionary": "japanese_mfa",
+    "g2p": "japanese_mfa"
+  },
+  "ja_romaji": {
+    "acoustic": "japanese_mfa",
+    "dictionary": "japanese_mfa",
+    "g2p": "japanese_mfa"
+  },
+    "fr": {
+        "acoustic": "french_mfa",
+        "dictionary": "french_mfa",
+        "g2p": "french_mfa"
+    }
+}
