@@ -50,7 +50,7 @@ def run_command(cmd, shell=False):
         print(f"\n[ERROR] Exception during execution: {e}")
         return 1
 
-def build_steps(job_id, lang, romanization):
+def build_steps(job_id, lang, romanization, aligner="mfa"):
     python = sys.executable
     
     steps = [
@@ -77,8 +77,8 @@ def build_steps(job_id, lang, romanization):
             "cmd": [python, _p("scripts", "03_prepare_corpus.py"), "--job-id", job_id]
         },
         {
-            "id": 4, "name": "CTC Forced Alignment",
-            "cmd": [python, _p("scripts", "03_forced_align.py"), "--job-id", job_id]
+            "id": 4, "name": "Audio Alignment",
+            "cmd": [python, _p("scripts", "03_forced_align_sofa.py" if aligner == "sofa" else "03_forced_align.py"), "--job-id", job_id]
         },
         {
             "id": 5, "name": "WhisperX Rescue",
@@ -173,7 +173,7 @@ def main():
     lang = job_data.get("lang", args.lang)
     romanization = args.romanization # We don't track romanization in state_store usually
     
-    steps = build_steps(job_id, lang, romanization)
+    steps = build_steps(job_id, lang, romanization, args.aligner)
     
     # 3. Resume logic
     steps_to_skip = []
