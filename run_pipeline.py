@@ -55,64 +55,83 @@ def build_steps(job_id, lang, romanization, aligner="mfa"):
     
     steps = [
         {
-            "id": 1, "name": "Audio Preprocessing",
-            "cmd": [
-                "powershell.exe", "-ExecutionPolicy", "Bypass", "-File", _p("scripts", "01_preprocess_audio.ps1"),
-                "-InputAudio", str(kpaths.input_dir(job_id) / "song.mp3"),
-                "-OutputDir", str(kpaths.wav_dir(job_id)),
-                "-JobId", job_id
-            ]
+            "id": 1, "name": "Media Prep",
+            "cmd": [python, _p("scripts", "01_media_prep.py"), "--job-id", job_id]
         },
         {
-            "id": 2, "name": "Vocal Separation (Demucs)",
-            "cmd": [
-                "powershell.exe", "-ExecutionPolicy", "Bypass", "-File", _p("scripts", "02_demucs_separate.ps1"),
-                "-WavPath", str(kpaths.song_wav(job_id)),
-                "-OutputDir", str(kpaths.separation_dir(job_id)),
-                "-JobId", job_id
-            ]
+            "id": 2, "name": "Vocal Isolation",
+            "cmd": [python, _p("scripts", "02_vocal_isolation.py"), "--job-id", job_id]
         },
         {
-            "id": 3, "name": "Corpus Preparation",
-            "cmd": [python, _p("scripts", "03_prepare_corpus.py"), "--job-id", job_id]
-        },
-        {
-            "id": 4, "name": "Audio Alignment",
-            "cmd": [python, _p("scripts", "03_forced_align_sofa.py" if aligner == "sofa" else "03_forced_align.py"), "--job-id", job_id]
-        },
-        {
-            "id": 5, "name": "WhisperX Rescue",
-            "cmd": [python, _p("scripts", "03b_whisperx_rescue.py"), "--job-id", job_id]
-        },
-        {
-            "id": 6, "name": "Gemini Adlib Detection",
-            "cmd": [python, _p("scripts", "03c_gemini_transcribe.py"), "--job-id", job_id]
-        },
-        {
-            "id": 7, "name": "VAD Clamping & Correction",
-            "cmd": [python, _p("scripts", "05b_correct_alignment.py"), "--job-id", job_id, "--lang", lang]
-        },
-        {
-            "id": 8, "name": "Onset DTW Fine-tuning",
-            "cmd": [python, _p("scripts", "05c_onset_dtw_align.py"), "--job-id", job_id]
-        },
-        {
-            "id": 9, "name": "TextGrid to ASS Conversion",
-            "cmd": [python, _p("scripts", "06_textgrid_to_ass.py"), "--job-id", job_id, "--romanization", romanization]
-        },
-        {
-            "id": 10, "name": "Quality Control Report",
-            "cmd": [python, _p("scripts", "07_qc_report.py"), "--job-id", job_id]
-        },
-        {
-            "id": 11, "name": "Audio Post-Mixing",
-            "cmd": [python, _p("scripts", "09_audio_mixing.py"), "--job-id", job_id]
-        },
-        {
-            "id": 12, "name": "Final Video Rendering",
-            "cmd": [python, _p("scripts", "08_render_video.py"), "--job-id", job_id]
+            "id": 3, "name": "Vocal Cleaning",
+            "cmd": [python, _p("scripts", "03_vocal_cleaning.py"), "--job-id", job_id]
         }
     ]
+
+    # --- ALIGNMENT PATH ---
+    if aligner == "mfa":
+        steps.extend([
+            {
+                "id": 4, "name": "MFA Corpus Prep",
+                "cmd": [python, _p("scripts", "03_prepare_corpus.py"), "--job-id", job_id]
+            },
+            {
+                "id": 5, "name": "MFA Alignment",
+                "cmd": [python, _p("scripts", "04_mfa_alignment.py"), "--job-id", job_id]
+            },
+            {
+                "id": 6, "name": "Convert MFA to JSON",
+                "cmd": [python, _p("scripts", "05_mfa_to_json.py"), "--job-id", job_id]
+            }
+        ])
+    else: # SOFA / ROSVOT
+        steps.extend([
+            {
+                "id": 4, "name": "SOFA Alignment",
+                "cmd": [python, _p("scripts", "03_forced_align_sofa.py"), "--job-id", job_id]
+            },
+            {
+                "id": 5, "name": "ROSVOT Inference",
+                "cmd": [python, _p("scripts", "03b_rosvot_inference.py"), "--job-id", job_id]
+            },
+            {
+                "id": 6, "name": "Fuse SOFA/ROSVOT",
+                "cmd": [python, _p("scripts", "fuse_sofa_rosvot.py"), "--job-id", job_id]
+            }
+        ])
+
+    # --- POST-ALIGNMENT / RESCUE ---
+    steps.extend([
+        {
+            "id": 7, "name": "Gap Analysis & Sync",
+            "cmd": [python, _p("scripts", "05_gap_analysis.py"), "--job-id", job_id]
+        },
+        {
+            "id": 8, "name": "Alignment Rescue",
+            "cmd": [python, _p("scripts", "06_alignment_rescue.py"), "--job-id", job_id]
+        },
+        {
+            "id": 9, "name": "Gemini Alignment",
+            "cmd": [python, _p("scripts", "07_gemini_alignment.py"), "--job-id", job_id]
+        },
+        {
+            "id": 10, "name": "Onset DTW",
+            "cmd": [python, _p("scripts", "08_onset_dtw.py"), "--job-id", job_id]
+        },
+        {
+            "id": 11, "name": "Video Rendering",
+            "cmd": [python, _p("scripts", "09_video_rendering.py"), "--job-id", job_id]
+        },
+        {
+            "id": 12, "name": "System Cleanup",
+            "cmd": [python, _p("scripts", "11_system_cleanup.py"), "--job-id", job_id]
+        },
+        {
+            "id": 13, "name": "Process Conclusion",
+            "cmd": [python, _p("scripts", "13_process_conclusion.py"), "--job-id", job_id]
+        }
+    ])
+    
     return steps
 
 def main():
@@ -193,6 +212,10 @@ def main():
         step_name = step["name"]
         cmd = step["cmd"]
         
+        if "condition" in step and not step["condition"]:
+            print(f"⏩ [STEP {step_id}/{len(steps)}] {step_name} - SKIPPED (Condição não atendida)")
+            continue
+
         if step_name in steps_to_skip and not args.start_at:
             print(f"⏩ [STEP {step_id}/{len(steps)}] {step_name} - SKIPPED (Already completed)")
             continue

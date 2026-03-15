@@ -86,135 +86,129 @@ def _p(*parts, job_id=None) -> str:
 
 
 # ── Step definitions ──────────────────────────────────────────────────────────
-def _build_steps(audio_path, lang, job_id, preview_mode=False):
+def _build_steps(audio_path, lang, job_id, preview_mode=False, aligner="mfa"):
     python = WORKER_PYTHON
     steps = [
         {
-            "id": 1, "name": "Preprocess Audio",
-            "cmd": ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File",
-                    _p("scripts", "01_preprocess_audio.ps1"),
-                    "-InputAudio", str(Path(audio_path).resolve()),
-                    "-OutputDir",  str(kpaths.wav_dir(job_id).resolve()),
-                    "-JobId", job_id],
+            "id": 1, "name": "Media Preparation",
+            "cmd": [python, _p("scripts", "01_media_prep.py"), "--job-id", job_id],
             "outputs": {"wav": str(kpaths.song_wav(job_id).resolve())},
             "timeout": 300,
         },
         {
-            "id": 2, "name": "Demucs Vocal Separation",
-            "cmd": ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File",
-                    _p("scripts", "02_demucs_separate.ps1"),
-                    "-WavPath",   str(kpaths.song_wav(job_id).resolve()),
-                    "-OutputDir", str(kpaths.separation_dir(job_id).resolve()),
-                    "-JobId", job_id],
+            "id": 2, "name": "Vocal Isolation",
+            "cmd": [python, _p("scripts", "02_vocal_isolation.py"), "--job-id", job_id],
             "outputs": {
                 "vocals_raw":    str(kpaths.vocals_raw(job_id).resolve()),
                 "vocals_listen": str(kpaths.vocals_listen(job_id).resolve()),
-                "drums": str((kpaths.step_output(job_id, "02_stems") / "htdemucs_ft" / "song" / "drums.wav").resolve()),
-                "bass":  str((kpaths.step_output(job_id, "02_stems") / "htdemucs_ft" / "song" / "bass.wav").resolve()),
-                "other": str((kpaths.step_output(job_id, "02_stems") / "htdemucs_ft" / "song" / "other.wav").resolve()),
             },
             "timeout": 3600,
         },
         {
-            "id": 3, "name": "Prepare Corpus",
-            "cmd": [python, _p("scripts", "03_prepare_corpus.py"), "--job-id", job_id],
-            "outputs": {"corpus_lab": str((kpaths.corpus_dir(job_id) / "song.lab").resolve())},
-            "timeout": 120,
+            "id": 3, "name": "Vocal Cleaning",
+            "cmd": [python, _p("scripts", "03_vocal_cleaning.py"), "--job-id", job_id],
+            "outputs": {"vocals_clean": str(kpaths.vocals_raw(job_id).resolve())},
+            "timeout": 300,
+        }
+    ]
+
+    # --- ALIGNMENT PATH ---
+    if aligner == "sofa":
+        steps.extend([
+            {
+                "id": 4, "name": "SOFA Alignment",
+                "cmd": [python, _p("scripts", "run_sofa.py"), "--job-id", job_id],
+                "outputs": {"sofa_tg": str(kpaths.sofa_textgrid(job_id).resolve())},
+                "timeout": 600,
+            },
+            {
+                "id": 5, "name": "ROSVOT Inference",
+                "cmd": [python, _p("scripts", "run_rosvot.py"), "--job-id", job_id],
+                "outputs": {"rosvot_json": str(kpaths.rosvot_json(job_id).resolve())},
+                "timeout": 600,
+            },
+            {
+                "id": 6, "name": "Sync & Fuse",
+                "cmd": [python, _p("scripts", "fuse_sofa_rosvot.py"), "--job-id", job_id],
+                "outputs": {"word_timing": str(kpaths.word_timing_json(job_id).resolve())},
+                "timeout": 300,
+            }
+        ])
+    else: # Default: MFA
+        steps.append({
+            "id": 4, "name": "MFA Forced Alignment",
+            "cmd": [python, _p("scripts", "04_mfa_alignment.py"), "--job-id", job_id],
+            "outputs": {"textgrid": str(kpaths.mfa_textgrid(job_id).resolve())},
+            "timeout": 600,
+        })
+
+    # --- POST-ALIGNMENT / RESCUE ---
+    steps.extend([
+        {
+            "id": 7, "name": "Gap Analysis & Transition",
+            "cmd": [python, _p("scripts", "05_gap_analysis.py"), "--job-id", job_id],
+            "outputs": {"word_timing": str(kpaths.word_timing_json(job_id).resolve())},
+            "timeout": 300,
         },
         {
-            "id": 4, "name": "CTC Forced Alignment",
-            "cmd": [python, _p("scripts", "03_forced_align.py"), "--job-id", job_id],
-            "outputs": {
-                "word_timing":       str((kpaths.alignment_dir(job_id) / "word_timing.json").resolve()),
-                "char_timing":       str((kpaths.alignment_dir(job_id) / "char_timing.json").resolve()),
-                "confidence_report": str((kpaths.alignment_dir(job_id) / "confidence_report.json").resolve()),
-            },
+            "id": 8, "name": "Alignment Rescue",
+            "cmd": [python, _p("scripts", "06_alignment_rescue.py"), "--job-id", job_id],
+            "outputs": {"word_timing": str(kpaths.word_timing_json(job_id).resolve())},
+            "timeout": 300,
+        },
+        {
+            "id": 9, "name": "Gemini Alignment",
+            "cmd": [python, _p("scripts", "07_gemini_alignment.py"), "--job-id", job_id],
+            "outputs": {"refined_timing": str(kpaths.word_timing_json(job_id).resolve())},
             "timeout": 600,
         },
         {
-            "id": 5, "name": "WhisperX Rescue",
-            "cmd": [python, _p("scripts", "03b_whisperx_rescue.py"), "--job-id", job_id],
-            "outputs": {
-                "word_timing": str((kpaths.alignment_dir(job_id) / "word_timing.json").resolve()),
-                "char_timing": str((kpaths.alignment_dir(job_id) / "char_timing.json").resolve()),
-            },
-            "timeout": 3600,
-        },
-        {
-            "id": 6, "name": "Gemini Adlib Detection",
-            "cmd": [python, _p("scripts", "03c_gemini_transcribe.py"), "--job-id", job_id] + 
-                   (["--api-key", os.environ["GEMINI_API_KEY"]] if "GEMINI_API_KEY" in os.environ else []),
-            "outputs": {
-                "adlibs": str((kpaths.alignment_dir(job_id) / "adlibs_timing.json").resolve()),
-            },
-            "timeout": 600,
-        },
-        {
-            "id": 7, "name": "VAD Clamping",
-            "cmd": [python, _p("scripts", "05b_correct_alignment.py"), "--job-id", job_id],
-            "outputs": {
-                "word_timing": str((kpaths.alignment_dir(job_id) / "word_timing.json").resolve()),
-            },
+            "id": 10, "name": "Onset DTW Alignment",
+            "cmd": [python, _p("scripts", "08_onset_dtw.py"), "--job-id", job_id],
+            "outputs": {"word_timing_fixed": str(kpaths.word_timing_json(job_id).resolve())},
             "timeout": 300,
         },
         {
-            "id": 8.5, "name": "Preview Trim",
-            "cmd": [python, _p("scripts", "02b_trim_preview.py"), "--job-id", job_id],
-            "outputs": {"vocals_raw": str(kpaths.vocals_raw(job_id).resolve())},
-            "timeout": 120,
-            "preview_only": True,
-        },
-        {
-            "id": 8, "name": "Onset DTW Alignment",
-            "cmd": [python, _p("scripts", "05c_onset_dtw_align.py"),
-                    str(kpaths.vocals_raw(job_id).resolve()),
-                    str((kpaths.alignment_dir(job_id) / "word_timing.json").resolve()),
-                    str((kpaths.alignment_dir(job_id) / "word_timing_fixed.json").resolve())],
-            "outputs": {
-                "word_timing": str((kpaths.alignment_dir(job_id) / "word_timing_fixed.json").resolve()),
-            },
-            "timeout": 300,
-        },
-        {
-            "id": 9, "name": "Generate ASS",
-            "cmd": [python, _p("scripts", "06_textgrid_to_ass.py"), "--job-id", job_id],
-            "outputs": {"ass": str(kpaths.final_ass(job_id).resolve())},
-            "timeout": 120,
-        },
-        {
-            "id": 10, "name": "QC Report",
-            "cmd": [python, _p("scripts", "07_qc_report.py"), "--job-id", job_id],
-            "outputs": {"qc": str((kpaths.ass_dir(job_id) / "qc.json").resolve())},
-            "timeout": 120,
-        },
-        {
-            "id": 11, "name": "Audio Mixing",
-            "cmd": [python, _p("scripts", "09_audio_mixing.py"), "--job-id", job_id],
-            "outputs": {
-                "instrumental": str((kpaths.mixing_dir(job_id) / "instrumental.mp3").resolve()),
-                "guide":        str((kpaths.mixing_dir(job_id) / "guide.mp3").resolve()),
-            },
-            "timeout": 300,
-        },
-        {
-            "id": 12, "name": "Render Video",
-            "cmd": [python, _p("scripts", "08_render_video.py"), "--job-id", job_id],
+            "id": 11, "name": "Video Rendering",
+            "cmd": [python, _p("scripts", "09_video_rendering.py"), "--job-id", job_id],
             "outputs": {"video": str(kpaths.final_video(job_id).resolve())},
             "timeout": 3600,
         },
-    ]
+        {
+            "id": 12, "name": "Quality Assurance",
+            "cmd": [python, _p("scripts", "10_quality_assurance.py"), "--job-id", job_id],
+            "outputs": {"qc": str((kpaths.ass_dir(job_id) / "qc.json").resolve())},
+            "timeout": 300,
+        },
+        {
+            "id": 13, "name": "System Cleanup",
+            "cmd": [python, _p("scripts", "11_system_cleanup.py"), "--job-id", job_id],
+            "outputs": {"cleanup": "done"},
+            "timeout": 120,
+        },
+        {
+            "id": 14, "name": "User Notification",
+            "cmd": [python, _p("scripts", "12_user_notification.py"), "--job-id", job_id],
+            "outputs": {"notified": "done"},
+            "timeout": 60,
+        },
+        {
+            "id": 15, "name": "Process Conclusion",
+            "cmd": [python, _p("scripts", "13_process_conclusion.py"), "--job-id", job_id],
+            "outputs": {"completed": "true"},
+            "timeout": 60,
+        }
+    ])
 
-    # Sem GPU: pula CTC (step 4 — wav2vec2 precisa de CUDA para funcionar bem)
-    if not _HAS_CUDA:
-        for s in steps:
-            if s["id"] == 4:
-                s["skipped"] = "No GPU — skipping CTC, using WhisperX only"
+    # Handle CUDA availability for Primay Alignment if necessary
+    # (Optional: the script 04_mfa_alignment.py already handles CPU, but we can set flags here if needed)
 
-    # Remove step preview_only se não for modo preview
-    steps = [s for s in steps if not (s.get("preview_only") and not preview_mode)]
-    # Renumera ids para sequência limpa
+    # Re-normalize IDs just in case
     for i, s in enumerate(steps):
         s["id"] = i + 1
+
+    return steps
+
 
     return steps
 
@@ -259,6 +253,8 @@ def api_generate():
     preview_mode     = request.form.get("preview_mode") == "true"
     preview_duration = float(request.form.get("preview_duration", "60"))
     preview_start    = float(request.form.get("preview_start", "0"))
+
+    aligner     = request.form.get("aligner", "mfa")
 
     if not audio_file:
         raise APIError("Áudio não enviado", status_code=400, code="MISSING_AUDIO")
@@ -326,7 +322,7 @@ def api_generate():
                            status_code=409, code="ALREADY_RUNNING", details={"job_id": job_id})
         job_states[job_id] = {
             "state": "running", "error": None, "step": 0,
-            "steps_total": 13 if preview_mode else 12,
+            "steps_total": 13,
             "preview_mode": preview_mode,
         }
         if job_id not in job_queues:
@@ -391,7 +387,7 @@ def api_generate():
 
     t = threading.Thread(
         target=_run_pipeline_thread,
-        args=(audio_path, lang, job_id, job_data, stems_preloaded, preview_mode),
+        args=(audio_path, lang, job_id, job_data, stems_preloaded, preview_mode, aligner),
         daemon=True,
     )
     t.start()
@@ -524,7 +520,46 @@ def api_result_word_timing():
     path = _p("05_alignment", "word_timing.json", job_id=job_id)
     if os.path.exists(path):
         return send_file(path, mimetype="application/json")
+    # Tenta resgatar da etapa 07 ou 08 se houver
+    path_fixed = _p("07_dtw", "word_timing_fixed.json", job_id=job_id)
+    if os.path.exists(path_fixed):
+        return send_file(path_fixed, mimetype="application/json")
     raise APIError("Not found", status_code=404, code="NOT_FOUND")
+
+
+@app.route("/api/karaoke/data")
+def api_karaoke_data():
+    job_id = request.args.get("job_id")
+    if not job_id:
+        raise APIError("Missing job_id", status_code=400, code="MISSING_PARAM")
+    
+    # Verifica se o áudio existe
+    audio_url = f"/api/result/audio?job_id={job_id}"
+    
+    # Pega a letra
+    lyrics = ""
+    lp = Path("input", "jobs", job_id) / "lyrics.txt"
+    if os.path.exists(lp):
+        with open(lp, "r", encoding="utf-8", errors="replace") as f:
+            lyrics = f.read()
+
+    # Tenta pegar timings
+    timings = None
+    tp = _p("05_alignment", "word_timing.json", job_id=job_id)
+    if not os.path.exists(tp):
+        tp = _p("07_dtw", "word_timing_fixed.json", job_id=job_id)
+    
+    if os.path.exists(tp):
+        with open(tp, "r", encoding="utf-8") as f:
+            timings = json.load(f)
+
+    return jsonify({
+        "job_id": job_id,
+        "audio_url": audio_url,
+        "lyrics": lyrics,
+        "timings": timings,
+        "ass_url": f"/api/result/ass?job_id={job_id}"
+    })
 
 
 # FIX: rota estava sem @app.route — nunca era registrada no Flask
@@ -607,14 +642,14 @@ def _parse_subprocess_error(output_text):
     return "SUBPROCESS_ERROR", "Erro de execução de script. Verifique os detalhes do log abaixo."
 
 
-def _run_pipeline_thread(audio_path, lang, job_id, job_data, stems_preloaded=False, preview_mode=False):
+def _run_pipeline_thread(audio_path, lang, job_id, job_data, stems_preloaded=False, preview_mode=False, aligner="mfa"):
     try:
         env = os.environ.copy()
         env["PYTHONIOENCODING"]            = "utf-8"
         env["PYTHONUTF8"]                  = "1"
         env["PYTHONLEGACYWINDOWSSTDIO"]    = "0"
 
-        steps = _build_steps(audio_path, lang, job_id, preview_mode)
+        steps = _build_steps(audio_path, lang, job_id, preview_mode, aligner)
 
         if stems_preloaded:
             for s in steps:

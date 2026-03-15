@@ -29,7 +29,10 @@ ENV/
 # Project Specific
 tmp/
 work/
-input/jobs/
+input/
+uploads/
+examples/
+test_*
 *.mp4
 *.wav
 *.mid

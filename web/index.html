@@ -1,12 +1,19 @@
 <!DOCTYPE html>
 <html lang="pt-br">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Studio Karaoke MFA | Alinhamento Profissional</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+
+<body data-stage="ingest">
+
+    <!-- FIX #4: Notification container (posição fixa, fora do layout) -->
+    <div id="notification"
+        style="position: fixed; top: 80px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 8px;">
+    </div>
 
     <header id="topbar">
         <div class="topbar-brand">
@@ -21,21 +28,38 @@
         </div>
 
         <div class="topbar-transport">
-            <button class="btn-transport" title="Toggle Sidebar">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                    <line x1="9" y1="3" x2="9" y2="21"></line>
+            <button class="btn-transport" id="tp-rewind" title="Rewind">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />
                 </svg>
             </button>
-            <button class="btn-transport" title="Settings">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="3"></circle>
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            <button class="btn-transport main" id="tp-play" title="Play/Pause">
+                <div id="tp-play-icon"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M8 5v14l11-7z" />
+                    </svg></div>
+            </button>
+            <button class="btn-transport" id="tp-stop" title="Stop">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 6h12v12H6z" />
                 </svg>
             </button>
         </div>
 
-        <div class="topbar-time" id="time-display">00:00:00</div>
+        <div class="topbar-time" id="topbar-time">0:00.00</div>
+
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 16px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    style="width: 14px; color: var(--text-dim);">
+                    <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                </svg>
+                <input type="range" id="volume-bar" class="daw-range" style="width: 80px;" value="80">
+            </div>
+            <div class="user-profile">
+                <div class="user-avatar">LU</div>
+            </div>
+        </div>
     </header>
 
     <div id="app">
@@ -45,48 +69,51 @@
                     <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                 </svg>
                 Pipeline MFA
+                <!-- FIX #5: Status dot e text -->
+                <div style="margin-left: auto; display: flex; align-items: center; gap: 6px;">
+                    <div id="status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #444;"></div>
+                    <span id="status-text" style="font-size: 10px; color: var(--text-dim);">AGUARDANDO</span>
+                </div>
             </div>
-            
-            <div class="pipeline-steps">
-                <div class="step-item done" id="step-audio">
-                    <span class="step-name">Audio Processing</span>
-                    <span class="step-status">Pronto</span>
+
+            <div class="sidebar-progress" style="padding: 0 0 16px 0;">
+                <div
+                    style="font-size: 10px; color: var(--text-dim); margin-bottom: 4px; display: flex; justify-content: space-between;">
+                    <span>PROGRESSO GERAL</span>
+                    <span id="master-progress-text">0%</span>
                 </div>
-                <div class="step-item active" id="step-lyrics">
-                    <span class="step-name">Lyrics Alignment</span>
-                    <span class="step-status">Editando...</span>
+                <div style="height: 4px; background: #222; border-radius: 2px; overflow: hidden;">
+                    <div id="master-progress-fill"
+                        style="width: 0%; height: 100%; background: var(--accent); transition: width 0.3s ease;"></div>
                 </div>
-                <div class="step-item" id="step-mfa">
-                    <span class="step-name">Forced Alignment</span>
-                    <span class="step-status">Pendente</span>
-                </div>
-                <div class="step-item" id="step-export">
-                    <span class="step-name">Exportação Final</span>
-                    <span class="step-status">Pendente</span>
-                </div>
+            </div>
+
+            <!-- FIX #7: Sidebar steps hidden until pipeline starts -->
+            <div class="sidebar-steps" id="sidebar-steps">
+                <!-- Dynamically populated by pipeline-client.js -->
             </div>
         </aside>
 
         <main id="workspace">
             <div id="workflow-stepper">
-                <div class="step-stage active">
+                <div class="step-stage active" data-stage="ingest">
                     <div class="stage-num">1</div>
                     <span>Arquivos</span>
                 </div>
                 <div class="stage-connector"></div>
-                <div class="step-stage">
+                <div class="step-stage" data-stage="process">
                     <div class="stage-num">2</div>
                     <span>Alinhamento</span>
                 </div>
                 <div class="stage-connector"></div>
-                <div class="step-stage">
+                <div class="step-stage" data-stage="view">
                     <div class="stage-num">3</div>
                     <span>Export</span>
                 </div>
             </div>
 
-            <!-- Stage 1: Uploads -->
-            <section class="stage-panel active" id="stage-1">
+            <!-- ═══ Stage 1: Uploads ═══ -->
+            <section class="stage-panel active" id="stage-ingest">
                 <div class="input-three-col">
                     <div class="daw-section">
                         <div class="daw-section-header">
@@ -94,7 +121,8 @@
                             Entrada de Áudio (MP3/WAV)
                         </div>
                         <div class="daw-section-body">
-                            <div class="upload-zone" id="drop-audio">
+                            <!-- FIX #8: Removido input overlay, JS controla o click -->
+                            <div class="upload-zone" id="upload-area">
                                 <div class="upload-zone-icon">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -102,9 +130,13 @@
                                         <line x1="12" y1="3" x2="12" y2="15"></line>
                                     </svg>
                                 </div>
-                                <div class="upload-zone-title">Arraste o áudio aqui</div>
-                                <div class="upload-zone-hint">Suporta MP3, WAV, M4A</div>
-                                <input type="file" id="input-audio" accept="audio/*">
+                                <div id="upload-text">
+                                    <div class="upload-zone-title">Arraste o áudio aqui</div>
+                                    <div class="upload-zone-hint">Suporta MP3, WAV, M4A</div>
+                                </div>
+                                <!-- FIX #1: Badge element exists for JS -->
+                                <span class="upload-zone-badge" style="display:none;"></span>
+                                <input type="file" id="audio-input" accept="audio/*" style="display:none;">
                             </div>
                         </div>
                     </div>
@@ -135,8 +167,9 @@
                             Configurações MFA
                         </div>
                         <div class="daw-section-body">
-                            <div style="margin-bottom: 16px;">
-                                <label style="font-size: 11px; color: var(--text-dim); display: block; margin-bottom: 6px;">IDIOMA:</label>
+                            <div style="margin-bottom: 12px;">
+                                <label
+                                    style="font-size: 11px; color: var(--text-dim); display: block; margin-bottom: 6px;">IDIOMA:</label>
                                 <select class="daw-select" id="select-lang">
                                     <option value="pt">Português (Brasil)</option>
                                     <option value="en">Inglês (US)</option>
@@ -144,8 +177,18 @@
                                     <option value="ja_romaji">Japonês (Romaji)</option>
                                 </select>
                             </div>
-                            <button class="btn-generate" id="btn-start-pipeline">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px;">
+                            <div style="margin-bottom: 16px;">
+                                <label
+                                    style="font-size: 11px; color: var(--text-dim); display: block; margin-bottom: 6px;">ALINHADOR:</label>
+                                <select class="daw-select" id="select-aligner">
+                                    <option value="mfa">MFA (Padrão)</option>
+                                    <option value="sofa">SOFA + ROSVOT (Beta)</option>
+                                </select>
+                            </div>
+
+                            <button class="btn-generate" id="btn-generate" disabled>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    style="width: 16px;">
                                     <path d="M5 3l14 9-14 9V3z"></path>
                                 </svg>
                                 Iniciar Processamento
@@ -158,39 +201,68 @@
                     <div class="daw-section-header">
                         <span class="section-num">03</span>
                         Letra da Música (Texto Puro)
+                        <div style="margin-left: auto; display: flex; gap: 8px;">
+                            <span id="word-count" style="font-size: 10px; color: var(--text-dim);">0 palavras</span>
+                            <button id="btn-clean-lyrics"
+                                style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:10px;">LIMPAR</button>
+                        </div>
                     </div>
                     <div class="daw-section-body">
-                        <textarea class="daw-textarea" id="text-lyrics" rows="10" placeholder="Cole a letra aqui..."></textarea>
+                        <textarea class="daw-textarea" id="lyrics-input" rows="10"
+                            placeholder="Cole a letra aqui..."></textarea>
                     </div>
                 </div>
             </section>
 
-            <!-- Promote Banner -->
-            <div id="promote-banner" style="display: none; background: rgba(0, 212, 255, 0.1); border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin-top: 16px; align-items: center; justify-content: space-between;">
-                <div>
-                    <h4 style="margin: 0; color: var(--accent); font-size: 14px;">Prévia Concluída</h4>
-                    <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--text-dim);">Gostou do alinhamento? Promova para gerar a música completa. (O processo continuará de onde parou)</p>
-                </div>
-                <button id="btn-promote" class="btn-generate" style="padding: 8px 16px; font-size: 13px; width: auto; margin-top: 0;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; margin-right: 6px; display: inline-block; vertical-align: middle;">
-                        <path d="M5 13l4 4L19 7"></path>
-                    </svg>
-                    Promover para Completa
-                </button>
-            </div>
-
-            <!-- Player & Logs (General UI) -->
-            <div id="player-container" style="display: flex; flex-direction: column; gap: 12px; margin-top: 24px;">
-
-                <div class="player-stage">
-                    <div class="lyrics-viewport" id="lyrics-display">
-                        <div class="lyrics-line active">Carregue um projeto para começar</div>
+            <!-- ═══ Stage 2: Processing ═══ -->
+            <section class="stage-panel" id="stage-process">
+                <div class="daw-section">
+                    <div class="daw-section-header">Monitor de Processamento</div>
+                    <div class="daw-section-body">
+                        <div id="pipeline-tracks">
+                            <!-- Dynamically populated by pipeline-client.js -->
+                        </div>
                     </div>
                 </div>
-                
+
+                <!-- FIX #6: Error detail panel -->
+                <div id="error-detail" style="margin-top: 16px; display: none;">
+                    <div class="daw-section" style="border-color: var(--danger);">
+                        <div class="daw-section-header" style="color: var(--danger);">Detalhes do Erro</div>
+                        <div class="daw-section-body">
+                            <pre id="error-detail-text"
+                                style="font-family: var(--font-mono); font-size: 11px; color: var(--danger); white-space: pre-wrap; max-height: 300px; overflow-y: auto;"></pre>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══ Stage 3: View/Export ═══ -->
+            <section class="stage-panel" id="stage-view">
+                <div id="promote-banner"
+                    style="display: none; background: rgba(0, 212, 255, 0.1); border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin-bottom: 16px; align-items: center; justify-content: space-between;">
+                    <div>
+                        <h4 style="margin: 0; color: var(--accent); font-size: 14px;">Prévia Concluída</h4>
+                        <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--text-dim);">Gostou do alinhamento?
+                            Promova para gerar a música completa.</p>
+                    </div>
+                    <button id="btn-promote" class="btn-generate"
+                        style="padding: 8px 16px; font-size: 13px; width: auto;">
+                        Promover para Completa
+                    </button>
+                </div>
+
+                <div class="player-stage">
+                    <div class="lyrics-viewport" id="lyrics-viewport">
+                        <div id="lyrics-container">
+                            <div class="lyrics-line active">Carregue um projeto para começar</div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="timeline-area">
-                    <div class="waveform-area" id="waveform-container">
-                        <!-- Waveform.js will render here -->
+                    <div class="waveform-area" id="waveform-area">
+                        <canvas id="waveform-canvas" style="width: 100%; height: 100%;"></canvas>
                         <div class="playhead" id="playhead"></div>
                     </div>
                 </div>
@@ -201,28 +273,47 @@
                             <path d="M8 5v14l11-7z"></path>
                         </svg>
                     </button>
-                    <div class="ctrl-time" id="current-time">00:00</div>
+                    <div class="ctrl-time" id="time-current">00:00</div>
                     <div class="seek-wrap">
                         <input type="range" class="daw-range" id="seek-bar" value="0">
                     </div>
-                    <div class="ctrl-time" id="duration">00:00</div>
+                    <div class="ctrl-time" id="time-total">00:00</div>
+                    <div style="width: 1px; height: 20px; background: #333; margin: 0 8px;"></div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 10px; color: var(--text-dim); white-space: nowrap;">OFFSET</span>
+                        <input type="range" id="offset-slider" class="daw-range" min="-1000" max="1000" value="0"
+                            style="width: 60px;">
+                        <span id="offset-value" style="font-size: 10px; color: var(--accent); width: 40px;">0ms</span>
+                    </div>
                 </div>
-            </div>
 
-            <!-- Logs Panel -->
+                <audio id="audio-player" style="display: none;"></audio>
+            </section>
+
+            <!-- FIX #3: Log panel with all required buttons -->
             <div class="log-panel">
                 <div class="log-header">
                     <span>CONSOLE DE LOGS</span>
-                    <span style="color: var(--text-dim);">SYSTEM_READY</span>
+                    <div style="display: flex; gap: 8px;">
+                        <button id="btn-clear-cache" class="btn-secondary"
+                            style="padding: 4px 8px; font-size: 10px; color: var(--danger);">LIMPAR CACHE</button>
+                        <button id="btn-copy-log" class="btn-secondary"
+                            style="padding: 4px 8px; font-size: 10px;">COPIAR</button>
+                        <button id="btn-clear-log" class="btn-secondary"
+                            style="padding: 4px 8px; font-size: 10px;">LIMPAR</button>
+                    </div>
                 </div>
-                <div class="log-output" id="log-content">
+                <!-- FIX #2: ID matches what JS expects -->
+                <div class="log-output" id="log-output">
                     <div class="log-line info">> Inicializando Studio Karaoke MFA...</div>
                     <div class="log-line info">> Pronto para processar áudio.</div>
                 </div>
             </div>
         </main>
     </div>
+
     <script src="/static/karaoke-player.js"></script>
     <script src="/static/pipeline-client.js"></script>
 </body>
+
 </html>

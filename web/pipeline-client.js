@@ -3,19 +3,19 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 const STEPS = [
-    { id: 1, name: 'Pré-processar Áudio' },
-    { id: 2, name: 'Separar Stems (Demucs)' },
-    { id: 3, name: 'Preparar Corpus' },
-    { id: 4, name: 'Alinhamento CTC' },
-    { id: 5, name: 'Resgate WhisperX' },
-    { id: 6, name: 'Detecção Adlibs' },
-    { id: 7, name: 'VAD Clamping' },
-    { id: 8, name: 'Filtro de Preview/Onsets' },
-    { id: 9, name: 'Refinamento de Onsets' },
-    { id: 10, name: 'Gerar Subtitles (ASS)' },
-    { id: 11, name: 'Controle de Qualidade' },
-    { id: 12, name: 'Mixagem Final' },
-    { id: 13, name: 'Renderizar Vídeo' },
+    { id: 1, name: 'Preparação de Mídia' },
+    { id: 2, name: 'Isolamento Vocal' },
+    { id: 3, name: 'Limpeza Vocal' },
+    { id: 4, name: 'Alinhamento MFA' },
+    { id: 5, name: 'Análise de Gaps' },
+    { id: 6, name: 'Resgate de Alinhamento' },
+    { id: 7, name: 'Refinamento Gemini' },
+    { id: 8, name: 'Alinhamento Onset DTW' },
+    { id: 9, name: 'Renderização de Vídeo' },
+    { id: 10, name: 'Controle de Qualidade' },
+    { id: 11, name: 'Limpeza de Sistema' },
+    { id: 12, name: 'Notificação' },
+    { id: 13, name: 'Conclusão Processo' }
 ];
 
 // ── Global Error Handling ──────────────────────────────────────────────
@@ -35,17 +35,20 @@ const state = {
     selectedFile: null,
     stems: [],
     pipelineRunning: false,
-    stepStates: {},    // id → { status, elapsed }
-    stepTimers: {},    // id → interval
-    stepStartTime: {}, // id → Date
+    stepStates: {},
+    stepTimers: {},
+    stepStartTime: {},
     logLines: [],
     currentJobId: null,
-    currentStage: 'ingest' // ingest | process | view
+    currentStage: 'ingest'
 };
 
 // ── Stage Management ──────────────────────────────────────────────────
 function switchStage(stage) {
     state.currentStage = stage;
+
+    // FIX #7: Controla visibilidade dos sidebar steps via CSS
+    document.body.setAttribute('data-stage', stage);
 
     // Update Stepper
     document.querySelectorAll('.step-stage').forEach(el => {
@@ -128,15 +131,6 @@ function updateStep(id, status, detail, elapsed) {
 
     if (!sstep || !ptrack) return;
 
-    // Fix name if provided by server
-    if (detail && typeof detail === 'string' && !name) { /* ignore */ }
-    if (name) {
-        const n1 = sstep.querySelector('.step-label');
-        if (n1) n1.textContent = name;
-        const n2 = ptrack.querySelector('.p-track-name');
-        if (n2) n2.textContent = name;
-    }
-
     // Remove all state classes
     ['pending', 'running', 'done', 'error', 'skipped'].forEach(c => {
         sstep.classList.remove(c);
@@ -158,18 +152,17 @@ function updateStep(id, status, detail, elapsed) {
     if (elapsedEl && elapsed) elapsedEl.textContent = `${elapsed}s`;
     if (sstime && elapsed) sstime.textContent = `${elapsed}s`;
 
-    // Update fill bar for running
+    // Update fill bar
     const fill = document.getElementById(`ptrack-fill-${id}`);
     if (fill) {
         let pct = 0;
         let showText = labels[status] || status;
 
         if (status === 'running') {
-            pct = 60; // Indeterminate fallback
+            pct = 60;
             showText = 'processing...';
 
-            if (detail && detail.startsWith('[')) {
-                // Parses "[50%] Doing X"
+            if (detail && typeof detail === 'string' && detail.startsWith('[')) {
                 const match = detail.match(/^\[(\d+)%\]\s*(.*)/);
                 if (match) {
                     pct = parseInt(match[1], 10);
@@ -177,7 +170,7 @@ function updateStep(id, status, detail, elapsed) {
                 } else {
                     showText = detail;
                 }
-            } else if (detail) {
+            } else if (detail && typeof detail === 'string') {
                 showText = detail;
             }
             if (statusEl) statusEl.textContent = showText;
@@ -197,7 +190,8 @@ function updateStep(id, status, detail, elapsed) {
     // Update master progress
     const doneCount = Object.values(state.stepStates).filter(s => s.status === 'done' || s.status === 'skipped').length;
     const pct = (doneCount / STEPS.length) * 100;
-    document.getElementById('master-progress-fill').style.width = pct + '%';
+    const masterFill = document.getElementById('master-progress-fill');
+    if (masterFill) masterFill.style.width = pct + '%';
 }
 
 function setStepStatus(id, status, detail, elapsed) {
@@ -205,14 +199,17 @@ function setStepStatus(id, status, detail, elapsed) {
     updateStep(id, status, detail, elapsed);
 }
 
-// ── Events ──────────────────────────────────────────────────────────── (Replaced by switchStage)
-
 // ── Upload Area ────────────────────────────────────────────────────────
 const uploadArea = document.getElementById('upload-area');
 const audioInput = document.getElementById('audio-input');
 const uploadText = document.getElementById('upload-text');
 
-uploadArea.addEventListener('click', () => audioInput.click());
+// FIX #8: Click handler sem double-trigger (input está display:none, JS controla)
+uploadArea.addEventListener('click', (e) => {
+    if (e.target !== audioInput) {
+        audioInput.click();
+    }
+});
 uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
 uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
 uploadArea.addEventListener('drop', e => {
@@ -231,9 +228,13 @@ function setMainFile(file) {
     <div class="upload-zone-filename">${file.name}</div>
     <div class="upload-zone-hint">${(file.size / 1024 / 1024).toFixed(1)} MB</div>
   `;
-    // Update badge
-    uploadArea.querySelector('.upload-zone-badge').className = 'upload-zone-badge badge-ready';
-    uploadArea.querySelector('.upload-zone-badge').textContent = 'ready';
+    // FIX #1: Badge exists in HTML, safe to update
+    const badge = uploadArea.querySelector('.upload-zone-badge');
+    if (badge) {
+        badge.className = 'upload-zone-badge badge-ready';
+        badge.textContent = 'ready';
+        badge.style.display = '';
+    }
     checkReady();
 }
 
@@ -260,7 +261,12 @@ const stemMultiArea = document.getElementById('stems-multi-area');
 const stemsInput = document.getElementById('stems-input');
 const stemsList = document.getElementById('stems-list');
 
-stemMultiArea.addEventListener('click', () => stemsInput.click());
+// FIX #8: Click handler sem double-trigger para stems
+stemMultiArea.addEventListener('click', (e) => {
+    if (e.target !== stemsInput) {
+        stemsInput.click();
+    }
+});
 stemMultiArea.addEventListener('dragover', e => { e.preventDefault(); stemMultiArea.classList.add('dragover'); });
 stemMultiArea.addEventListener('dragleave', () => stemMultiArea.classList.remove('dragover'));
 stemMultiArea.addEventListener('drop', e => {
@@ -305,7 +311,7 @@ function renderStems() {
         const badge = isVocals ? `<span class="stem-li-badge req">req</span>` : `<span class="stem-li-badge opt">opt</span>`;
 
         el.innerHTML = `
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="var(--green)" style="flex-shrink:0"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="var(--success)" style="flex-shrink:0"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
             <div class="stem-li-name" title="${stem.file.name}">${stem.file.name}</div>
             <select class="stem-li-cat" onchange="updateStemCat(${stem.id}, this.value)">
                 <option value="vocals" ${stem.category === 'vocals' ? 'selected' : ''}>vocals</option>
@@ -337,12 +343,9 @@ lyricsInput.addEventListener('input', () => {
     checkReady();
 });
 
-// End of standard listeners block
-
 document.getElementById('btn-clean-lyrics').addEventListener('click', async () => {
     const text = lyricsInput.value.trim();
     if (!text) return;
-    // Preserve original lyrics (with parentheticals) for adlib hint extraction
     if (!state.rawLyrics) {
         state.rawLyrics = text;
     }
@@ -364,8 +367,8 @@ document.getElementById('btn-clean-lyrics').addEventListener('click', async () =
             const msg = data.error || `Erro ${res.status}`;
             notify('Falha ao limpar letra', 'error', msg);
         }
-    } catch (e) { 
-        notify('Falha ao limpar letra', 'error', e.message); 
+    } catch (e) {
+        notify('Falha ao limpar letra', 'error', e.message);
     }
     finally { btn.disabled = false; }
 });
@@ -398,7 +401,6 @@ function _uploadWithProgress(url, formData, onProgress) {
                 const parsed = JSON.parse(xhr.responseText);
                 resp = { ...resp, ...parsed };
                 if (!resp.ok) {
-                    // Normalize standard backend APIError format
                     resp.error = parsed.error || `HTTP ${xhr.status}`;
                     resp.code = parsed.code || 'UNKNOWN_ERROR';
                     resp.details = parsed.details || null;
@@ -406,9 +408,8 @@ function _uploadWithProgress(url, formData, onProgress) {
             } catch (e) {
                 if (!resp.ok) {
                     const raw = xhr.responseText;
-                    // Use raw response if it looks like a short message, otherwise generic error
-                    resp.error = (raw && raw.length < 200 && !raw.includes('<!DOCTYPE')) 
-                        ? raw 
+                    resp.error = (raw && raw.length < 200 && !raw.includes('<!DOCTYPE'))
+                        ? raw
                         : `HTTP ${xhr.status}: Erro Interno (veja console)`;
                 }
             }
@@ -435,7 +436,11 @@ document.getElementById('btn-generate').addEventListener('click', async () => {
 
     // Reset steps
     STEPS.forEach(s => setStepStatus(s.id, 'pending'));
-    document.getElementById('error-detail').classList.remove('visible');
+
+    // FIX #6: Usar style.display em vez de classList
+    const errorPanel = document.getElementById('error-detail');
+    if (errorPanel) errorPanel.style.display = 'none';
+
     clearLog();
 
     // Status
@@ -446,23 +451,21 @@ document.getElementById('btn-generate').addEventListener('click', async () => {
         const form = new FormData();
         form.append('audio', state.selectedFile);
         form.append('lyrics', lyricsInput.value);
-        // Send raw lyrics (with parentheticals) for adlib hint extraction
         if (state.rawLyrics) {
             form.append('lyrics_raw', state.rawLyrics);
         }
-        form.append('lang', document.getElementById('lang-select').value);
+        form.append('lang', document.getElementById('select-lang').value);
+        form.append('aligner', document.getElementById('select-aligner').value);
 
-        // Include stems in the main request
+        // Include stems
         const hasStems = state.stems.length > 0;
         if (hasStems) {
             addLog(`Preparando ${state.stems.length} stems para upload...`, 'info');
             for (const stem of state.stems) {
-                // Determine form key based on category for backend mapping
                 let key = 'stem_other';
                 if (stem.category === 'vocals') key = 'stem_vocals';
                 else if (stem.category === 'drums') key = 'stem_drums';
                 else if (stem.category === 'bass') key = 'stem_bass';
-
                 form.append(key, stem.file);
             }
         }
@@ -479,7 +482,8 @@ document.getElementById('btn-generate').addEventListener('click', async () => {
         }
 
         const res = await _uploadWithProgress('/api/generate', form, (pct) => {
-            document.getElementById('ptrack-status-1').textContent = `Upload: ${pct}%`;
+            const statusEl = document.getElementById('ptrack-status-1');
+            if (statusEl) statusEl.textContent = `Upload: ${pct}%`;
         });
 
         if (!res.ok) {
@@ -489,13 +493,11 @@ document.getElementById('btn-generate').addEventListener('click', async () => {
 
         state.currentJobId = res.job_id;
 
-        // If stems were preloaded, backend skips 1 and 2
         if (res.stems_preloaded) {
             addLog('Stems fornecidos. Pulando etapas de separação.', 'success');
             setStepStatus(1, 'skipped', 'fornecido');
             setStepStatus(2, 'skipped', 'fornecido');
         }
-
 
         if (res.preview_mode) {
             state.previewMode = true;
@@ -519,16 +521,15 @@ function listenProgress() {
 
         if (data.type === 'step') {
             const { step, status: dataStatus, state: dataState, detail, name } = data;
-            const status = dataStatus || dataState; // Backend uses status or state sometimes
+            const status = dataStatus || dataState;
 
-            // Mark all past steps as done (only if pending)
+            // Mark past steps as done
             for (let i = 1; i < step; i++) {
                 if (state.stepStates[i] && state.stepStates[i].status === 'pending') {
                     setStepStatus(i, 'done');
                 }
             }
 
-            // Start timer for running steps
             if (status === 'running') {
                 if (state.stepStates[step]?.status !== 'running') {
                     state.stepStartTime[step] = state.stepStartTime[step] || Date.now();
@@ -599,7 +600,6 @@ async function onPipelineDone() {
         const ok = await window.karaokePlayer.loadFromServer(state.currentJobId);
         if (ok) {
             window.history.pushState({}, '', `/karaoke/${state.currentJobId}`);
-            // Auto-advance to player
             switchStage('view');
         } else {
             onPipelineError("Resultados não encontrados no servidor para o job atual.");
@@ -616,16 +616,18 @@ function onPipelineError(msg) {
     checkReady();
 }
 
+// FIX #6: Usar style.display em vez de classList
 function showErrorDetail(detail) {
     const el = document.getElementById('error-detail');
     const textEl = document.getElementById('error-detail-text');
+
+    if (!el || !textEl) return;
 
     if (!detail) {
         textEl.textContent = "Erro desconhecido e sem detalhes.";
     } else if (typeof detail === 'string') {
         textEl.textContent = detail;
     } else {
-        // Structured error representation
         let out = `Mensagem: ${detail.message || 'Sem mensagem'}\n`;
         if (detail.code) out += `Código: ${detail.code}\n`;
         if (detail.script) out += `Script: ${detail.script}\n`;
@@ -637,15 +639,15 @@ function showErrorDetail(detail) {
         textEl.textContent = out;
     }
 
-    el.classList.add('visible');
+    el.style.display = 'block';
 }
 
 // ── Status ─────────────────────────────────────────────────────────────
 function setStatus(state_, text) {
     const dot = document.getElementById('status-dot');
     const txt = document.getElementById('status-text');
-    dot.className = `status-dot ${state_}`;
-    txt.textContent = text;
+    if (dot) dot.className = `status-dot ${state_}`;
+    if (txt) txt.textContent = text;
 }
 
 // ── Log ────────────────────────────────────────────────────────────────
@@ -653,16 +655,18 @@ function addLog(text, type = 'info') {
     const now = new Date();
     const ts = `${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     const out = document.getElementById('log-output');
+    if (!out) return;
     const line = document.createElement('div');
     line.className = `log-line ${type}`;
-    line.innerHTML = `<span class="log-time">${ts}</span><span class="log-text">${text}</span>`;
+    line.innerHTML = `<span class="log-time">${ts}</span> <span class="log-text">${text}</span>`;
     out.appendChild(line);
     out.scrollTop = out.scrollHeight;
     state.logLines.push({ ts, text, type });
 }
 
 function clearLog() {
-    document.getElementById('log-output').innerHTML = '';
+    const out = document.getElementById('log-output');
+    if (out) out.innerHTML = '';
     state.logLines = [];
 }
 
@@ -695,6 +699,11 @@ document.getElementById('btn-clear-cache').addEventListener('click', async () =>
 
 // ── Notification ────────────────────────────────────────────────────────
 function notify(title, type = 'info', msg = '') {
+    const container = document.getElementById('notification');
+    if (!container) {
+        console.warn('notify: #notification container not found');
+        return;
+    }
     const icons = {
         success: '<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>',
         error: '<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
@@ -703,55 +712,39 @@ function notify(title, type = 'info', msg = '') {
     const el = document.createElement('div');
     el.className = `notif ${type}`;
     el.innerHTML = `
-    <div class="notif-icon">${icons[type]}</div>
+    <div class="notif-icon">${icons[type] || icons.info}</div>
     <div class="notif-body">
       <div class="notif-title">${title}</div>
       ${msg ? `<div class="notif-msg">${msg}</div>` : ''}
     </div>
   `;
-    document.getElementById('notification').appendChild(el);
+    container.appendChild(el);
     setTimeout(() => el.remove(), 4000);
 }
 
 // ── Init Routing ────────────────────────────────────────────────────────
 async function _init() {
+    if (typeof KaraokePlayer !== 'undefined') {
+        window.karaokePlayer = new KaraokePlayer();
+    }
     initPipelineUI();
 
-    const path = window.location.pathname; // "/", "/process/xxx", "/karaoke/xxx"
+    const path = window.location.pathname;
     const parts = path.split('/').filter(Boolean);
 
     if (parts[0] === 'process' && parts[1]) {
         state.currentJobId = parts[1];
-
-        // Switch to process stage
         switchStage('process');
-
         listenProgress();
         return;
     }
 
     if (parts[0] === 'karaoke' && parts[1]) {
         state.currentJobId = parts[1];
-
-        try {
-            const res = await fetch(`/api/result/check?job_id=${state.currentJobId}`);
-            if (res.ok) {
-                const data = await res.json();
-                if (data.lyrics) {
-                    lyricsInput.value = data.lyrics;
-                    lyricsInput.dispatchEvent(new Event('input'));
-                }
-                if (data.has_results) {
-                    // Switch to player automatically after validating
-                    if (window.karaokePlayer) {
-                        const ok = await window.karaokePlayer.loadFromServer(state.currentJobId);
-                        if (ok) {
-                            switchStage('view');
-                        }
-                    }
-                }
-            }
-        } catch (e) { }
+        switchStage('view');
+        if (window.karaokePlayer) {
+            window.karaokePlayer.loadFromServer(state.currentJobId);
+        }
         return;
     }
 
@@ -768,23 +761,19 @@ async function _init() {
         state.previewMode = false;
         state.currentJobId = e.detail.jobId;
 
-        // Reset sidebar and tracks
         STEPS.forEach(s => setStepStatus(s.id, 'pending', ''));
-
         setStatus('running', 'Processando Música Completa...');
         addLog('🚀 Promovido para Pipeline Full. Retomando processamento...', 'info');
-
-        // Restart SSE
         listenProgress();
     });
 }
 
 // ── Promote UI ──────────────────────────────────────────────────────────
-window.showPromoteButton = function(jobId) {
+window.showPromoteButton = function (jobId) {
     const banner = document.getElementById('promote-banner');
     if (!banner) return;
     banner.style.display = 'flex';
-    
+
     const btn = document.getElementById('btn-promote');
     btn.onclick = async () => {
         btn.disabled = true;
@@ -796,12 +785,11 @@ window.showPromoteButton = function(jobId) {
                 body: JSON.stringify({ job_id: jobId })
             });
             if (!res.ok) throw new Error(await res.text());
-            
+
             banner.style.display = 'none';
             btn.disabled = false;
-            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; margin-right: 6px; display: inline-block; vertical-align: middle;"><path d="M5 13l4 4L19 7"></path></svg> Promover para Completa';
-            
-            // Dispatch event for UI to reset and listen to progress
+            btn.innerHTML = 'Promover para Completa';
+
             window.dispatchEvent(new CustomEvent('karaoke:promoted', { detail: { jobId } }));
         } catch (e) {
             btn.disabled = false;
@@ -811,5 +799,4 @@ window.showPromoteButton = function(jobId) {
     };
 };
 
-// Run init on dom load
 document.addEventListener('DOMContentLoaded', _init);
