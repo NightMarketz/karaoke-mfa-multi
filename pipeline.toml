@@ -1,0 +1,107 @@
+# pipeline.toml — Karaoke Pipeline Configuration
+# Zero-cloud. All processing runs locally on the ROG Flow Z13.
+#
+# Hardware profile selection:
+#   "auto"     — hw_detect.py probes DirectML + AMF at startup (recommended)
+#   "z13"      — force Z13 defaults without probing (faster startup)
+#   "cpu_only" — disable all GPU paths (safe fallback, slower)
+
+[general]
+jobs_dir  = "jobs"
+log_level = "INFO"   # DEBUG | INFO | WARNING | ERROR
+
+[hardware]
+profile = "auto"
+
+# Z13 defaults — used when profile = "z13", or as reference for "auto".
+# hw_detect.py may override any of these based on runtime probe results.
+[hardware.z13]
+
+# Stage 02 · Demucs
+# PyTorch supports DirectML via torch-directml.
+# segment=4 keeps peak shared VRAM at ~1.2GB (vs ~2.4GB at default 7.8s).
+demix_device   = "directml"
+demix_compute  = "float16"
+demix_segment  = 4
+demix_jobs     = 1
+
+# Stage 03 · faster-whisper (CTranslate2)
+# IMPORTANT: CTranslate2 has NO DirectML backend.
+# Setting device to anything other than "cpu" causes a RuntimeError on load.
+# int8 gives ~4x CPU speedup with negligible WER impact for karaoke.
+transcribe_device    = "cpu"
+transcribe_compute   = "int8"
+transcribe_beam_size = 1
+transcribe_vad       = false
+
+# Stage 04 · HubertFA
+# PyTorch — DirectML supported.
+align_device     = "directml"
+align_batch_size = 16
+
+# Stage 05 · Gemma 4 via Ollama
+# Ollama manages its own GPU allocation — do not override device here.
+ollama_model      = "gemma4:27b"
+ollama_num_ctx    = 4096
+ollama_num_thread = 6      # leaves 2 cores for OS + Ollama GPU scheduler
+ollama_temperature = 0.3
+
+# Stage 07 · ffmpeg
+# h264_amf = AMD hardware encoder (~3x faster than libx264 on Z13).
+# Falls back to libx264 if AMF not available in the ffmpeg build.
+ffmpeg_vcodec  = "h264_amf"
+ffmpeg_quality = 23        # 0-51; 23 ≈ libx264 crf=23 (visually transparent)
+
+# CPU-only fallback profile — all GPU paths disabled.
+[hardware.cpu_only]
+demix_device         = "cpu"
+demix_compute        = "float32"
+demix_segment        = 8
+demix_jobs           = 2
+transcribe_device    = "cpu"
+transcribe_compute   = "int8"
+transcribe_beam_size = 1
+transcribe_vad       = false
+align_device         = "cpu"
+align_batch_size     = 8
+ollama_model         = "gemma4:27b"
+ollama_num_ctx       = 2048
+ollama_num_thread    = 8
+ollama_temperature   = 0.3
+ffmpeg_vcodec        = "libx264"
+ffmpeg_quality       = 23
+
+
+# ── Pipeline stage configs ─────────────────────────────────────────────────
+
+[demix]
+model = "htdemucs"
+# Path to the Python executable in demucs_env.
+# Demucs runs in its own conda env to isolate its heavy dependencies.
+python = "C:/Users/Katz/miniforge3/envs/demucs_env/python.exe"
+
+[transcribe]
+mode            = "auto"     # "auto" | "whisper" | "forced"
+                             # "auto": uses forced alignment if lyrics.txt exists,
+                             #         falls back to Whisper otherwise
+model_size      = "large-v3"
+language        = "auto"     # Whisper language code: "auto" | "en" | "ja" | "pt"
+forced_language = "eng"      # ISO-639-3 for MMS forced aligner: eng | jpn | por | zho
+
+[align]
+hubertfa_dir = "vendor/HubertFA"
+checkpoint   = "models/hubertfa/model.onnx"
+language     = "auto"
+
+[analyze]
+# ollama_model and num_ctx come from [hardware.*] — not duplicated here.
+max_tokens   = 4096
+
+[generate]
+style_preset = "default"   # "default" | "neon" | "minimal"
+resolution   = "1920x1080"
+
+[output]
+audio_codec    = "aac"
+audio_bitrate  = "192k"
+# video codec and quality come from [hardware.*]

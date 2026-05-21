@@ -1,0 +1,42 @@
+# Jobs (runtime data)
+jobs/
+
+# Agent/runtime scratch
+.agents/
+tmp*/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environments
+.env
+*.env
+
+# Models (too large for git)
+models/hubertfa/*.onnx
+models/hubertfa/*.ckpt
+
+# Vendored external checkout
+vendor/
+
+# Node
+web/node_modules/
+web/package-lock.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log

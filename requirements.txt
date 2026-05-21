@@ -1,0 +1,26 @@
+# Core pipeline
+setuptools
+faster-whisper>=1.0.0
+pysubs2>=1.7.0
+phonemizer>=3.3.0
+requests>=2.31.0
+
+# Server
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# HubertFA ONNX inference
+onnxruntime-gpu>=1.17.0
+numpy>=1.24.0
+textgrid>=1.6.1
+
+# CTC forced alignment (Stage 03b)
+ctc-forced-aligner @ git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git@e23e1525bae810f0582b6e539ce7aec63fd01196
+torchcrepe
+
+# Config
+tomli>=2.0.0
+
+# Audio processing
+soundfile>=0.12.0
+librosa>=0.10.0

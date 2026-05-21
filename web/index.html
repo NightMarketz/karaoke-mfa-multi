@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Local karaoke subtitle pipeline — SOFA alignment + Gemma 4 analysis, zero cloud.">
+    <title>Karaoke Studio — Local Pipeline</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- ─── Header ─────────────────────────────────────────── -->
+    <header id="app-header">
+        <div class="header-inner">
+            <div class="logo">
+                <div class="logo-icon">♪</div>
+                <div class="logo-text">
+                    <h1>Karaoke Studio</h1>
+                    <span class="logo-sub">HubertFA · Gemma 4 · Zero Cloud</span>
+                </div>
+            </div>
+            <div class="header-status">
+                <span class="status-dot" id="ollamaStatus"></span>
+                <span class="status-label" id="ollamaLabel">Checking Ollama...</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ─── Main Content ───────────────────────────────────── -->
+    <main id="app-main">
+        <!-- Upload Section -->
+        <section id="upload-section" class="card">
+            <div class="card-header">
+                <h2>Upload</h2>
+            </div>
+            <div id="dropZone" class="drop-zone">
+                <div class="drop-zone-content">
+                    <div class="drop-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                    </div>
+                    <p class="drop-text">Drop audio/video here</p>
+                    <p class="drop-hint">MP3, WAV, FLAC, MP4, MKV — or click to browse</p>
+                </div>
+                <input type="file" id="fileInput" accept=".mp3,.wav,.flac,.ogg,.m4a,.mp4,.mkv,.webm,.avi,.mov" hidden>
+            </div>
+            <div id="uploadProgress" class="upload-progress hidden">
+                <div class="upload-info">
+                    <span id="uploadFileName"></span>
+                    <span id="uploadPercent">0%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="uploadFill"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Jobs Dashboard -->
+        <section id="jobs-section" class="card">
+            <div class="card-header">
+                <h2>Jobs</h2>
+                <button id="refreshBtn" class="btn btn-ghost" title="Refresh">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"/>
+                        <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="jobsList" class="jobs-list">
+                <div class="empty-state">
+                    <p>No jobs yet. Upload a file to get started.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Preview Player -->
+        <section id="preview-section" class="card hidden">
+            <div class="card-header">
+                <h2>Preview</h2>
+                <div class="preview-controls">
+                    <button id="downloadAss" class="btn btn-sm" title="Download .ass">ASS</button>
+                    <button id="downloadMp4" class="btn btn-sm" title="Download .mp4">MP4</button>
+                    <button id="closePreview" class="btn btn-ghost btn-sm" title="Close">✕</button>
+                </div>
+            </div>
+            <div class="player-wrapper">
+                <video id="videoPlayer" controls></video>
+                <div id="jassubCanvas" class="jassub-overlay"></div>
+            </div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

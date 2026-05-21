@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Karaoke Pipeline{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">SYSTEM DASHBOARD</h1>
+  <p class="page-sub mono dim">// ACTIVE AND HISTORICAL PIPELINE JOBS</p>
+</div>
+
+<div class="jobs-grid">
+  {% if jobs %}
+    {% for job in jobs %}
+    <a href="/job/{{ job.job_id }}" class="job-card status-{{ job.status.stage if job.status.stage in ['done', 'failed'] else 'running' }}">
+      <div class="hud-corner hud-tl"></div>
+      <div class="hud-corner hud-tr"></div>
+      
+      <div class="job-card-header">
+        <span class="job-name">{{ job.song_name }}</span>
+        <div class="job-status-dot"></div>
+      </div>
+
+      <div class="job-card-meta">
+        <span class="tag tag-purple">{{ job.preset | upper }}</span>
+        {% if job.has_lyrics %}
+        <span class="tag tag-cyan">FORCED</span>
+        {% else %}
+        <span class="tag">WHISPER</span>
+        {% endif %}
+        {% if job.duration_s %}
+        <span class="mono dim">{{ "%.0f"|format(job.duration_s // 60) }}:{{ "%02.0f"|format(job.duration_s % 60) }}</span>
+        {% endif %}
+      </div>
+
+      <div class="job-card-status">
+        <div class="status-row">
+          <span class="stage-label {{ job.status.stage }} mono">
+            {% if job.status.stage == 'done' %}✓ COMPLETE{% elif job.status.stage == 'failed' %}✗ FAILED{% else %}{{ job.status.stage.upper().replace('_',' ') }}{% endif %}
+          </span>
+          <span class="mono dim">{{ job.status.progress }}%</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill {% if job.status.stage == 'done' %}done{% elif job.status.stage == 'failed' %}failed{% else %}animated{% endif %}"
+               style="width: {{ job.status.progress }}%"></div>
+        </div>
+      </div>
+
+      <div class="job-card-footer">
+        <span class="mono dim" style="font-size: 0.6rem;">ID: {{ job.job_id[:8] }}</span>
+        <span class="mono accent" style="font-size: 0.65rem;">VIEW DETAILS →</span>
+      </div>
+    </a>
+    {% endfor %}
+  {% else %}
+    <div class="empty-state">
+      <div class="empty-icon">📂</div>
+      <p class="empty-text">NO TERMINAL RECORDS FOUND</p>
+      <a href="/job/new" class="btn btn-primary">INITIALIZE NEW PIPELINE</a>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
