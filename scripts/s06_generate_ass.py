@@ -1,4 +1,4 @@
-"""
+r"""
 s06_generate_ass.py — Generate ASS karaoke subtitles via pysubs2.
 
 Produces Aegisub-quality karaoke using dual-layer technique:
@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class KaraokeStyle:
-    """
+    r"""
     One ASS style definition.
     primary_color   = not-yet-sung text color   (\1c)  &HBBGGRR& format
     secondary_color = progressive fill color    (\2c)  filled by \kf
@@ -281,10 +281,120 @@ CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
     "ad_lib": DEFAULT_STYLES["ad_lib"],
 }
 
+SECTION_CODED_STYLES: dict[str, KaraokeStyle] = {
+    "intro": KaraokeStyle(
+        name="Intro",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(190, 220, 220),
+        secondary_color=_c(90, 210, 220),
+        outline_color=_c(0, 40, 48),
+        back_color=_c(0, 0, 0, 90),
+        outline=2.0,
+        shadow=1.0,
+        alignment=2,
+        margin_v=42,
+    ),
+    "verse": KaraokeStyle(
+        name="Verse",
+        fontname="Segoe UI Bold",
+        fontsize=52,
+        bold=True,
+        italic=False,
+        primary_color=_c(245, 245, 245),
+        secondary_color=_c(255, 255, 255),
+        outline_color=_c(20, 20, 20),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.4,
+        shadow=1.2,
+        alignment=2,
+        margin_v=42,
+    ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Segoe UI Bold",
+        fontsize=54,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 245, 190),
+        secondary_color=_c(255, 220, 40),
+        outline_color=_c(70, 54, 0),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.5,
+        shadow=1.2,
+        alignment=2,
+        margin_v=42,
+    ),
+    "chorus": KaraokeStyle(
+        name="Chorus",
+        fontname="Segoe UI Bold",
+        fontsize=64,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 235, 248),
+        secondary_color=_c(255, 70, 190),
+        outline_color=_c(90, 0, 52),
+        back_color=_c(0, 0, 0, 70),
+        outline=3.0,
+        shadow=1.6,
+        alignment=2,
+        margin_v=42,
+    ),
+    "bridge": KaraokeStyle(
+        name="Bridge",
+        fontname="Segoe UI Bold",
+        fontsize=52,
+        bold=True,
+        italic=True,
+        primary_color=_c(220, 255, 225),
+        secondary_color=_c(80, 220, 120),
+        outline_color=_c(0, 55, 20),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.5,
+        shadow=1.2,
+        alignment=2,
+        margin_v=42,
+    ),
+    "drop": KaraokeStyle(
+        name="Drop",
+        fontname="Segoe UI Bold",
+        fontsize=60,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 235, 210),
+        secondary_color=_c(255, 130, 40),
+        outline_color=_c(80, 34, 0),
+        back_color=_c(0, 0, 0, 80),
+        outline=3.0,
+        shadow=1.4,
+        alignment=2,
+        margin_v=42,
+    ),
+    "outro": KaraokeStyle(
+        name="Outro",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(190, 205, 235),
+        secondary_color=_c(110, 150, 220),
+        outline_color=_c(0, 25, 70),
+        back_color=_c(0, 0, 0, 90),
+        outline=2.0,
+        shadow=1.0,
+        alignment=2,
+        margin_v=42,
+    ),
+    "ad_lib": DEFAULT_STYLES["ad_lib"],
+}
+
 PRESETS = {
-    "default":   DEFAULT_STYLES,
-    "neon":      NEON_STYLES,
-    "cyberpunk": CYBERPUNK_STYLES,
+    "default":       DEFAULT_STYLES,
+    "neon":          NEON_STYLES,
+    "cyberpunk":     CYBERPUNK_STYLES,
+    "section-coded": SECTION_CODED_STYLES,
 }
 
 
@@ -301,8 +411,18 @@ def _ms_to_ass(ms: int) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
+def _escape_ass_text(text: str) -> str:
+    return (
+        text.replace("{", "")
+        .replace("}", "")
+        .replace("\\", "")
+        .replace("\n", " ")
+        .strip()
+    )
+
+
 def _build_karaoke_text(words: list[dict], line_start_ms: int, effect: str, use_flash_default: bool = False) -> str:
-    """
+    r"""
     Build the \kf tagged text for one karaoke line.
 
     Format: {\kf<duration_cs>}word {\kf<duration_cs>}word2 ...
@@ -321,6 +441,7 @@ def _build_karaoke_text(words: list[dict], line_start_ms: int, effect: str, use_
     prev_end_ms = line_start_ms
 
     for word in words:
+        visible_word = _escape_ass_text(str(word["word"]))
         start_ms = int(word["start"] * 1000)
         end_ms   = int(word["end"]   * 1000)
 
@@ -336,18 +457,18 @@ def _build_karaoke_text(words: list[dict], line_start_ms: int, effect: str, use_
         duration_cs = max(1, (end_ms - start_ms) // 10)
         
         if effect == "fade_in":
-            parts.append(f"{{\\fad(500,0)\\be1\\kf{duration_cs}}}{word['word']}")
+            parts.append(f"{{\\fad(500,0)\\be1\\kf{duration_cs}}}{visible_word}")
         elif effect == "bounce":
-            parts.append(f"{{\\be1\\t(\\fscx115\\fscy115)\\t(\\fscx100\\fscy100)\\kf{duration_cs}}}{word['word']}")
+            parts.append(f"{{\\be1\\t(\\fscx115\\fscy115)\\t(\\fscx100\\fscy100)\\kf{duration_cs}}}{visible_word}")
         elif effect == "flash" or (effect == "highlight" and use_flash_default):
             # Glitch/Digital flash: large border shrinks fast to normal
-            parts.append(f"{{\\bord8\\t(0,200,\\bord2)\\be1\\kf{duration_cs}}}{word['word']}")
+            parts.append(f"{{\\bord8\\t(0,200,\\bord2)\\be1\\kf{duration_cs}}}{visible_word}")
         elif effect == "none":
-            parts.append(f"{{\\k{duration_cs}}}{word['word']}")
+            parts.append(f"{{\\k{duration_cs}}}{visible_word}")
         else:
             # Default: clean \kf fill, no flash
             # (flash branch above already handles effect=="flash" and use_flash_default)
-            parts.append(f"{{\\be1\\kf{duration_cs}}}{word['word']}")
+            parts.append(f"{{\\be1\\kf{duration_cs}}}{visible_word}")
 
         prev_end_ms = end_ms
 
@@ -368,7 +489,7 @@ def _generate_ass(
     fade_in_ms:  int,
     fade_out_ms: int,
 ) -> str:
-    """
+    r"""
     Build complete ASS file content as a string.
 
     Uses dual-layer technique:
@@ -458,7 +579,7 @@ YCbCr Matrix: TV.601
         start_ts      = _ms_to_ass(display_start_ms)
         end_ts        = _ms_to_ass(display_end_ms)
         fade_tag      = f"{{\\fad({fade_in_ms},{fade_out_ms})}}"
-        plain_text    = line["text"]
+        plain_text    = _escape_ass_text(str(line["text"]))
 
         kf_text = _build_karaoke_text(
             line["words"],

@@ -34,8 +34,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.validation import normalize_words
 
 # Fix Windows encoding issues for checkmark/cross symbols
 if sys.platform == "win32":
@@ -371,7 +373,9 @@ def main() -> int:
             logger.error("HubertFA Batch failed:\n%s", res.stderr)
             # Global fallback if batch inference crashes
             for seg in segments:
-                all_aligned_words.extend(_fallback(seg.get("words", [])))
+                words = _fallback(seg.get("words", []))
+                words = normalize_words(words, seg["start"], seg["end"])
+                all_aligned_words.extend(words)
         else:
             elapsed = time.time() - start_time
             logger.info("Batch Inference OK (%.2fs for %d segments)", elapsed, len(segments))
@@ -394,14 +398,17 @@ def main() -> int:
                         
                         # Apply linear interpolation for missing/inverted words
                         words = _linear_interpolate_words(words, seg["start"], seg["end"])
-                        
+                        words = normalize_words(words, seg["start"], seg["end"])
+                         
                         all_aligned_words.extend(words)
                         continue
                     except Exception as e:
                         logger.warning("Parse failed for %s: %s", stem, e)
                 
                 # Fallback for individual missing/failed segments
-                all_aligned_words.extend(_fallback(seg.get("words", [])))
+                words = _fallback(seg.get("words", []))
+                words = normalize_words(words, seg["start"], seg["end"])
+                all_aligned_words.extend(words)
 
     # Save output
     aligned = {"words": all_aligned_words}

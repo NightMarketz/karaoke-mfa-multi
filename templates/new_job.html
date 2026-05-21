@@ -1,16 +1,14 @@
 {% extends "base.html" %}
-{% block title %}New Job — Karaoke Pipeline{% endblock %}
+{% block title %}New Job - Karaoke Pipeline{% endblock %}
 
 {% block content %}
 <div class="page-header">
-  <div class="back-link"><a href="/" class="mono dim">← BACK TO DASHBOARD</a></div>
+  <div class="back-link"><a href="/" class="mono dim">&lt;- BACK TO DASHBOARD</a></div>
   <h1 class="page-title">INITIALIZE NEW JOB</h1>
   <p class="page-sub mono dim">// UPLOAD SUNO STEMS AND CONFIGURE ALIGNMENT</p>
 </div>
 
 <form action="/job/new" method="POST" enctype="multipart/form-data" class="upload-form" id="uploadForm">
-
-  <!-- ── 1. Metadata ─────────────────────────────────────────── -->
   <div class="section">
     <div class="hud-corner hud-tl"></div>
     <div class="hud-corner hud-br"></div>
@@ -21,102 +19,97 @@
     </div>
   </div>
 
-  <!-- ── 2. Audio stems ──────────────────────────────────────── -->
   <div class="section">
     <h2 class="section-title">2. AUDIO STEMS</h2>
-
     <div class="tab-bar">
-      <button type="button" class="tab-btn active" data-tab="zip">
-        📦 SUNO ZIP
-      </button>
-      <button type="button" class="tab-btn" data-tab="files">
-        🎚 INDIVIDUAL FILES
-      </button>
+      <button type="button" class="tab-btn active" data-tab="zip">SUNO ZIP</button>
+      <button type="button" class="tab-btn" data-tab="files">INDIVIDUAL FILES</button>
     </div>
 
-    <!-- Tab: ZIP -->
     <div class="tab-panel active" id="tab-zip">
       <p class="tab-hint mono dim">
-        No Suno: More Actions (...) &rarr; Get Stems &rarr; Extract Stems &rarr; Download All
+        Suno: More Actions (...) -&gt; Get Stems -&gt; Extract Stems -&gt; Download All
       </p>
       <div class="file-drop" id="drop-zip">
         <input type="file" name="suno_zip" accept=".zip" onchange="updateDrop(this)">
-        <div class="drop-icon">📦</div>
+        <div class="drop-icon">ZIP</div>
         <div class="drop-text">SUNO_STEMS.ZIP</div>
-        <div class="drop-sub mono">ZIP com vocals + instrumental (WAV ou MP3)</div>
+        <div class="drop-sub mono">ZIP with vocals + instrumental (WAV or MP3)</div>
       </div>
       <p class="mono dim" style="font-size:0.65rem; margin-top:0.75rem;">
-        O pipeline detecta automaticamente <span class="accent">vocals</span> e
-        <span class="accent">instrumental</span> pelo nome do arquivo dentro do ZIP.
-        Formatos aceitos: WAV, MP3, FLAC.
+        The pipeline detects <span class="accent">vocals</span> and
+        <span class="accent">instrumental</span> from filenames inside the ZIP.
+        Accepted formats: WAV, MP3, FLAC.
       </p>
     </div>
 
-    <!-- Tab: Individual files -->
     <div class="tab-panel" id="tab-files">
       <p class="tab-hint mono dim">
-        Aceita WAV ou MP3. O ffmpeg converte automaticamente para WAV 16-bit PCM.
+        Accepts WAV or MP3. ffmpeg converts automatically to 16-bit PCM WAV.
       </p>
       <div class="file-drop-container">
         <div class="file-drop" id="drop-vocals">
           <input type="file" name="vocals" accept=".wav,.mp3,.flac" onchange="updateDrop(this)">
-          <div class="drop-icon">🎙</div>
+          <div class="drop-icon">VOC</div>
           <div class="drop-text">VOCALS.WAV / .MP3</div>
-          <div class="drop-sub mono">Stem vocal separado</div>
+          <div class="drop-sub mono">Separate vocal stem</div>
         </div>
         <div class="file-drop" id="drop-instrumental">
           <input type="file" name="instrumental" accept=".wav,.mp3,.flac" onchange="updateDrop(this)">
-          <div class="drop-icon">🎹</div>
+          <div class="drop-icon">INS</div>
           <div class="drop-text">INSTRUMENTAL.WAV / .MP3</div>
-          <div class="drop-sub mono">Backing track para o output</div>
+          <div class="drop-sub mono">Backing track for the output</div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ── 3. Lyrics textarea ──────────────────────────────────── -->
   <div class="section">
-    <h2 class="section-title">3. LETRA</h2>
+    <h2 class="section-title">3. LYRICS</h2>
     <p class="mono dim" style="font-size: 0.72rem; margin-bottom: 1rem;">
-      Se fornecida, usa <span class="accent">CTC forced alignment</span> (mais preciso que Whisper).
-      Cole diretamente a letra do Suno com os marcadores de seção.
+      This MVP requires Suno lyrics for <span class="accent">CTC forced alignment</span>.
+      Paste the Suno lyrics with section markers.
     </p>
     <div class="form-section">
       <label class="form-label">
         LYRICS
-        <span class="optional">opcional — recomendado para melhor alinhamento</span>
+        <span class="optional">required for MVP alignment</span>
       </label>
       <textarea
         name="lyrics_text"
         class="form-input lyrics-textarea"
-        placeholder="[Intro]&#10;Hmmmmm&#10;&#10;[Verse]&#10;Breathing&#10;Running on fumes&#10;sealed in the tomb&#10;&#10;[Pre-Chorus]&#10;'Cause I'm still here&#10;&#10;[Chorus]&#10;So burn it all&#10;Leave it all behind&#10;&#10;// Cole a letra completa do Suno com os [Marcadores] de seção"
+        placeholder="[Intro]&#10;Hmmmmm&#10;&#10;[Verse]&#10;Breathing&#10;Running on fumes&#10;sealed in the tomb&#10;&#10;[Pre-Chorus]&#10;'Cause I'm still here&#10;&#10;[Chorus]&#10;So burn it all&#10;Leave it all behind"
         rows="16"
         spellcheck="false"
         id="lyricsTextarea"
+        required
       ></textarea>
       <span class="mono dim" id="lyricsCounter" style="font-size:0.65rem; margin-top:0.3rem;"></span>
     </div>
     <div class="lyrics-hints">
-      <span class="mono dim" style="font-size:0.65rem;">Marcadores:</span>
+      <span class="mono dim" style="font-size:0.65rem;">Markers:</span>
       <span class="tag tag-cyan">[Intro]</span>
       <span class="tag">[Verse]</span>
       <span class="tag">[Pre-Chorus]</span>
       <span class="tag">[Chorus]</span>
       <span class="tag">[Bridge]</span>
-      <span class="tag">[Outro]</span>
-      <span class="tag">[Hook]</span>
       <span class="tag">[Drop]</span>
-      <span class="tag">[Ponte]</span>
-      <span class="tag">[Refrão]</span>
+      <span class="tag">[Outro]</span>
     </div>
   </div>
 
-  <!-- ── 4. Style preset ─────────────────────────────────────── -->
   <div class="section">
     <h2 class="section-title">4. STYLE PRESET</h2>
     <div class="preset-selector">
       <label class="preset-option">
-        <input type="radio" name="preset" value="cyberpunk" checked>
+        <input type="radio" name="preset" value="section-coded" checked>
+        <div class="preset-label">
+          <div class="preset-title">SECTION CODED</div>
+          <div class="preset-desc">Distinct colors by song section</div>
+        </div>
+      </label>
+      <label class="preset-option">
+        <input type="radio" name="preset" value="cyberpunk">
         <div class="preset-label">
           <div class="preset-title">CYBERPUNK</div>
           <div class="preset-desc">Purple box / Cyan highlight</div>
@@ -141,17 +134,15 @@
 
   <div class="form-actions">
     <button type="submit" class="btn btn-primary" style="padding: 0.75rem 2.5rem;">
-      START PIPELINE ▶
+      START PIPELINE
     </button>
     <a href="/" class="btn btn-ghost">CANCEL</a>
   </div>
-
 </form>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// Tab switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const target = btn.dataset.tab;
@@ -162,7 +153,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// File drop feedback
 function updateDrop(input) {
   const container = input.closest('.file-drop');
   if (input.files && input.files[0]) {
@@ -173,23 +163,22 @@ function updateDrop(input) {
     container.classList.add('has-file');
     container.querySelector('.drop-text').textContent = file.name;
     container.querySelector('.drop-sub').textContent = size;
-    container.querySelector('.drop-icon').textContent = '\u2713';
+    container.querySelector('.drop-icon').textContent = 'OK';
   } else {
     container.classList.remove('has-file');
   }
 }
 
-// Drag & drop hover
 document.querySelectorAll('.file-drop').forEach(drop => {
   ['dragenter','dragover'].forEach(e => drop.addEventListener(e, ev => {
-    ev.preventDefault(); drop.classList.add('hover');
+    ev.preventDefault();
+    drop.classList.add('hover');
   }));
-  ['dragleave','drop'].forEach(e => drop.addEventListener(e, () =>
-    drop.classList.remove('hover')
-  ));
+  ['dragleave','drop'].forEach(e => drop.addEventListener(e, () => {
+    drop.classList.remove('hover');
+  }));
 });
 
-// Lyrics line counter
 const ta = document.getElementById('lyricsTextarea');
 const counter = document.getElementById('lyricsCounter');
 if (ta && counter) {
@@ -198,67 +187,9 @@ if (ta && counter) {
       const t = l.trim();
       return t && !t.startsWith('[') && !t.startsWith('//');
     }).length;
-    counter.textContent = n > 0 ? n + ' linhas cantáveis detectadas' : '';
+    counter.textContent = n > 0 ? n + ' singable lines detected' : '';
   };
   ta.addEventListener('input', update);
 }
 </script>
-
-<style>
-.tab-bar {
-  display: flex;
-  gap: 0;
-  margin-bottom: 1.25rem;
-  border-bottom: 1px solid var(--border);
-}
-.tab-btn {
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  padding: 0.4rem 1.2rem 0.6rem;
-  cursor: pointer;
-  transition: all 0.15s;
-  margin-bottom: -1px;
-}
-.tab-btn:hover { color: var(--text); }
-.tab-btn.active { color: var(--cyan); border-bottom-color: var(--cyan); }
-.tab-panel { display: none; }
-.tab-panel.active { display: block; }
-.tab-hint {
-  font-size: 0.7rem;
-  margin-bottom: 1rem;
-  padding: 0.5rem 0.8rem;
-  background: rgba(0,245,255,0.04);
-  border-left: 2px solid var(--cyan);
-}
-.lyrics-textarea {
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  line-height: 1.75;
-  resize: vertical;
-  min-height: 220px;
-}
-.lyrics-hints {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem;
-  margin-top: 0.6rem;
-}
-.file-drop.hover {
-  border-color: var(--cyan);
-  background: rgba(0,245,255,0.07);
-}
-.optional {
-  font-size: 0.65rem;
-  color: var(--text-dim);
-  font-weight: 300;
-  letter-spacing: 0;
-  text-transform: none;
-}
-</style>
 {% endblock %}

@@ -397,7 +397,7 @@ def _expand_contractions(text: str) -> str:
     return expanded
 
 
-def _build_full_text(lyric_lines: list[dict], expand: bool = True) -> str:
+def _build_full_text(lyric_lines: list[dict], expand: bool = False) -> str:
     """Flatten all lyric lines into a single space-separated string."""
     if expand:
         return " ".join(_expand_contractions(line["text"]) for line in lyric_lines)
@@ -1010,7 +1010,7 @@ def main() -> int:
         logger.error("No singable lines found in lyrics.txt")
         return 1
 
-    full_text = _build_full_text(lyric_lines)
+    full_text = _build_full_text(lyric_lines, expand=True)
     total_lyric_words = sum(
         len(re.findall(r"[a-zA-Z''\u00C0-\u024F]+", line["text"]))
         for line in lyric_lines

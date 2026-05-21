@@ -13,6 +13,7 @@ flask-cors>=4.0.0
 onnxruntime-gpu>=1.17.0
 numpy>=1.24.0
 textgrid>=1.6.1
+g2p_en>=2.1.0
 
 # CTC forced alignment (Stage 03b)
 ctc-forced-aligner @ git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git@e23e1525bae810f0582b6e539ce7aec63fd01196

@@ -1,4 +1,4 @@
-"""
+r"""
 s08_validate.py — Pipeline contract tests and quality metrics.
 
 Runs after a complete pipeline execution to verify correctness of every
@@ -34,6 +34,10 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scripts.common.validation import find_timestamp_errors, find_word_coverage_errors
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +83,7 @@ def _load_json(path: Path) -> dict | list | None:
         _fail(f"Empty file: {path.name}")
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as e:
         _fail(f"{path.name} is not valid JSON: {e}")
         return None
@@ -104,6 +108,54 @@ def _percentile(values: list[float], p: float) -> float:
 # ---------------------------------------------------------------------------
 # Stage 03 / 03b — transcript.json
 # ---------------------------------------------------------------------------
+def validate_job_contracts(job_dir: Path) -> None:
+    _section("Job Contracts - meta/status")
+
+    meta_path = job_dir / "meta.json"
+    meta = _load_json(meta_path) if meta_path.exists() else None
+    legacy = _load_json(job_dir / "metadata.json") if (job_dir / "metadata.json").exists() else None
+
+    if meta is None:
+        if legacy is not None:
+            _warn("metadata.json found without meta.json - legacy contract only")
+        else:
+            _fail("Missing required meta.json")
+    elif isinstance(meta, dict):
+        required_meta = {
+            "job_id",
+            "song_name",
+            "preset",
+            "created_at",
+            "duration_s",
+            "has_lyrics",
+            "source",
+        }
+        missing = required_meta - set(meta.keys())
+        if missing:
+            _fail(f"meta.json missing keys: {missing}")
+        else:
+            _ok("meta.json contract OK")
+
+    if isinstance(meta, dict) and isinstance(legacy, dict):
+        meta_id = meta.get("job_id")
+        legacy_id = legacy.get("job_id") or legacy.get("id")
+        if meta_id and legacy_id and meta_id != legacy_id:
+            _fail("meta.json and metadata.json have conflicting job identifiers")
+        else:
+            _warn("metadata.json is present as legacy metadata")
+
+    status = _load_json(job_dir / "status.json")
+    if not isinstance(status, dict):
+        _fail("status.json must be an object")
+        return
+
+    required_status = {"stage", "progress", "error", "updated_at"}
+    missing_status = required_status - set(status.keys())
+    if missing_status:
+        _fail(f"status.json missing keys: {missing_status}")
+    else:
+        _ok("status.json contract OK")
+
 
 def validate_transcript(job_dir: Path) -> dict[str, Any] | None:
     _section("Stage 03/03b — transcript.json")
@@ -220,18 +272,12 @@ def validate_aligned(job_dir: Path) -> dict[str, Any] | None:
         _ok(f"HubertFA alignment rate: {hfa}/{total} ({100*hfa//total}%)")
 
     # Timestamp monotonicity
-    inverted = 0
-    for i, w in enumerate(words):
-        start = w.get("start", 0)
-        end   = w.get("end",   0)
-        if start > end:
-            inverted += 1
-            _fail(f"Word '{w.get('word')}' inverted: {start:.4f} > {end:.4f}")
-
-    if inverted == 0:
-        _ok("All word timestamps: start <= end")
+    timestamp_errors = find_timestamp_errors(words)
+    if not timestamp_errors:
+        _ok("All word timestamps: start < end and monotonic")
     else:
-        _fail(f"{inverted} word(s) with inverted timestamps")
+        for error in timestamp_errors:
+            _fail(error)
 
     # low_confidence propagation check
     lc_words = [w for w in words if w.get("low_confidence")]
@@ -259,7 +305,7 @@ def validate_analysis(job_dir: Path, transcript: dict | None, aligned: dict | No
 
     # Schema check
     required = {"text", "start", "end", "style", "words"}
-    valid_styles = {"verse", "chorus", "bridge", "intro", "outro", "ad_lib"}
+    valid_styles = {"verse", "prechorus", "chorus", "bridge", "drop", "intro", "outro", "ad_lib"}
     bad_styles = []
 
     for i, line in enumerate(lines):
@@ -289,15 +335,16 @@ def validate_analysis(job_dir: Path, transcript: dict | None, aligned: dict | No
 
     # Word coverage: every aligned word should appear in analysis
     if aligned:
-        aligned_words = {w["word"].lower() for w in aligned.get("words", [])}
-        analysis_words = {
-            w["word"].lower()
+        aligned_words = aligned.get("words", [])
+        analysis_words = [
+            w
             for line in lines
             for w in line.get("words", [])
-        }
-        uncovered = aligned_words - analysis_words
-        if uncovered:
-            _warn(f"{len(uncovered)} aligned word(s) not in analysis.json")
+        ]
+        coverage_errors = find_word_coverage_errors(aligned_words, analysis_words)
+        if coverage_errors:
+            for error in coverage_errors:
+                _warn(error)
         else:
             _ok(f"Word coverage: all {len(aligned_words)} aligned words present")
 
@@ -502,6 +549,7 @@ def main() -> int:
     print(f"  Pipeline Validation — {job_dir.name}")
     print(f"{'=' * 60}")
 
+    validate_job_contracts(job_dir)
     transcript = validate_transcript(job_dir)
     aligned    = validate_aligned(job_dir)
     validate_analysis(job_dir, transcript, aligned)

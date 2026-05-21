@@ -306,16 +306,16 @@ def main():
 
     # ── Stage 05: Analyze ────────────────────────────────────
     print("\n--- Checking Pre-requisites (Stage 05) ---")
-    if not check_ollama():
-        validate(False, "Ollama connection", "Is Ollama running at localhost:11434?")
-        sys.exit(1)
-    else:
-        validate(True, "Ollama connection")
-
     s05_args = ["--job-dir", str(job_dir)]
     lyrics_file = job_dir / "lyrics.txt"
     if lyrics_file.exists():
         s05_args.extend(["--lyrics", str(lyrics_file)])
+        validate(True, "Ollama skipped for forced lyrics path")
+    elif not check_ollama():
+        validate(False, "Ollama connection", "Is Ollama running at localhost:11434?")
+        sys.exit(1)
+    else:
+        validate(True, "Ollama connection")
 
     if not run_script("s05_analyze.py", s05_args, timeout=600):
         sys.exit(1)

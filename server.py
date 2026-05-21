@@ -25,12 +25,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
 import uuid
 import wave
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +41,10 @@ from flask import (
     request, send_file, url_for,
 )
 
+from scripts.common.paths import is_safe_archive_member, resolve_job_dir
+from scripts.common.status import read_status, write_status
+from scripts.pipeline_runner import PipelineRunner
+
 # ── Config ────────────────────────────────────────────────────────────────────
 JOBS_DIR   = Path("jobs")
 SCRIPTS    = Path("scripts")
@@ -46,6 +52,7 @@ JOBS_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = "karaoke-local-dev"
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -58,20 +65,17 @@ _running: dict[str, threading.Thread] = {}
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _read_status(job_dir: Path) -> dict[str, Any]:
-    p = job_dir / "status.json"
-    if not p.exists():
-        return {"stage": "queued", "progress": 0, "error": ""}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {"stage": "unknown", "progress": 0, "error": ""}
+    status = read_status(job_dir)
+    return {
+        "stage": status.stage,
+        "progress": status.progress,
+        "error": status.error,
+        "updated_at": status.updated_at,
+    }
 
 
 def _write_status(job_dir: Path, stage: str, progress: int, error: str = "") -> None:
-    (job_dir / "status.json").write_text(
-        json.dumps({"stage": stage, "progress": progress,
-                    "error": error, "updated_at": time.time()}, indent=2)
-    )
+    write_status(job_dir, stage, progress, error)
 
 
 def _list_jobs() -> list[dict[str, Any]]:
@@ -177,47 +181,18 @@ def _run_stage(job_dir: Path, cmd: list[str], stage_name: str, progress_start: i
 
 
 def _run_pipeline(job_id: str) -> None:
-    job_dir    = JOBS_DIR / job_id
-    meta       = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
-    py         = sys.executable
-    lyrics_txt = job_dir / "lyrics.txt"
-    preset     = meta.get("preset", "cyberpunk")
-
-    stages: list[tuple[str, list[str], int]] = []
-
-    # Stage 03: forced alignment if lyrics present, else Whisper
-    if lyrics_txt.exists():
-        stages.append((
-            "aligning_lyrics",
-            [py, str(SCRIPTS / "s03b_lyrics_align.py"),
-             "--job-dir", str(job_dir),
-             "--lyrics",  str(lyrics_txt)],
-            5,
-        ))
-    else:
-        stages.append((
-            "transcribing",
-            [py, str(SCRIPTS / "s03_transcribe.py"),
-             "--job-dir", str(job_dir)],
-            5,
-        ))
-
-    stages += [
-        ("aligning",    [py, str(SCRIPTS / "s04_align.py"),        "--job-dir", str(job_dir)], 25),
-        ("analyzing",   [py, str(SCRIPTS / "s05_analyze.py"),       "--job-dir", str(job_dir)], 50),
-        ("generating",  [py, str(SCRIPTS / "s06_generate_ass.py"),  "--job-dir", str(job_dir),
-                         "--preset", preset], 70),
-        ("rendering",   [py, str(SCRIPTS / "s07_output.py"),        "--job-dir", str(job_dir)], 85),
-    ]
-
-    _write_status(job_dir, "running", 1)
-    for stage_name, cmd, progress in stages:
-        if not _run_stage(job_dir, cmd, stage_name, progress):
-            return
-
-    _write_status(job_dir, "done", 100)
-    logger.info("Job %s complete.", job_id)
-    _running.pop(job_id, None)
+    job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
+    preset = meta.get("preset", "cyberpunk")
+    runner = PipelineRunner(
+        job_dir=job_dir,
+        python_exe=sys.executable,
+        preset=preset,
+        running_registry=_running,
+        job_id=job_id,
+    )
+    if runner.run():
+        logger.info("Job %s complete.", job_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -303,26 +278,43 @@ def _extract_suno_zip(zip_file, job_dir: Path) -> tuple[Path | None, Path | None
     Extract a Suno stem ZIP into job_dir/stems/ and classify files.
     Returns (vocals_path, instrumental_path) — either may be None if not found.
     """
-    import zipfile
-
     stems_dir = job_dir / "stems"
     stems_dir.mkdir(exist_ok=True)
 
     try:
         with zipfile.ZipFile(zip_file, "r") as zf:
-            audio_members = [
-                m for m in zf.namelist()
-                if Path(m).suffix.lower() in _AUDIO_EXTS
-                and not m.startswith("__MACOSX")
-            ]
+            audio_members = []
+            for info in zf.infolist():
+                name = info.filename
+                if info.is_dir() or name.startswith("__MACOSX"):
+                    continue
+                if Path(name).suffix.lower() not in _AUDIO_EXTS:
+                    continue
+                if not is_safe_archive_member(name):
+                    logger.error("Unsafe ZIP member rejected: %s", name)
+                    shutil.rmtree(stems_dir, ignore_errors=True)
+                    return None, None
+                audio_members.append(name)
+
             if not audio_members:
                 logger.error("ZIP contains no audio files")
                 return None, None
 
-            zf.extractall(stems_dir, members=audio_members)
+            for member in audio_members:
+                target = (stems_dir / member).resolve()
+                try:
+                    target.relative_to(stems_dir.resolve())
+                except ValueError:
+                    logger.error("ZIP member escapes stems dir: %s", member)
+                    shutil.rmtree(stems_dir, ignore_errors=True)
+                    return None, None
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member) as src, target.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
             logger.info("ZIP extracted %d audio files: %s", len(audio_members), audio_members)
     except Exception as e:
         logger.error("ZIP extraction failed: %s", e)
+        shutil.rmtree(stems_dir, ignore_errors=True)
         return None, None
 
     # Classify extracted files
@@ -377,6 +369,9 @@ def new_job_submit():
     song_name   = request.form.get("song_name", "Untitled").strip() or "Untitled"
     preset      = request.form.get("preset", "cyberpunk")
 
+    if not lyrics_text:
+        return jsonify({"error": "Lyrics are required for the MVP forced-alignment flow."}), 400
+
     job_id  = uuid.uuid4().hex[:12]
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True)
@@ -390,7 +385,7 @@ def new_job_submit():
         zip_tmp.unlink(missing_ok=True)
 
         if not vocals_src or not instrumental_src:
-            import shutil; shutil.rmtree(job_dir, ignore_errors=True)
+            shutil.rmtree(job_dir, ignore_errors=True)
             return jsonify({
                 "error": (
                     "Could not identify vocal and instrumental stems in the ZIP. "
@@ -404,7 +399,7 @@ def new_job_submit():
         instrumental_file = request.files.get("instrumental")
 
         if not vocals_file or not instrumental_file:
-            import shutil; shutil.rmtree(job_dir, ignore_errors=True)
+            shutil.rmtree(job_dir, ignore_errors=True)
             return jsonify({
                 "error": "Either upload a Suno ZIP, or provide both vocal and instrumental stems."
             }), 400
@@ -418,10 +413,10 @@ def new_job_submit():
 
     # ── Convert both stems to WAV ──────────────────────────────────────────
     if not _convert_to_wav(vocals_src, job_dir / "vocals.wav"):
-        import shutil; shutil.rmtree(job_dir, ignore_errors=True)
+        shutil.rmtree(job_dir, ignore_errors=True)
         return jsonify({"error": "Failed to convert vocals to WAV. Is ffmpeg installed?"}), 500
     if not _convert_to_wav(instrumental_src, job_dir / "instrumental.wav"):
-        import shutil; shutil.rmtree(job_dir, ignore_errors=True)
+        shutil.rmtree(job_dir, ignore_errors=True)
         return jsonify({"error": "Failed to convert instrumental to WAV. Is ffmpeg installed?"}), 500
 
     # Clean up originals after conversion (keep stems/ dir for ZIP mode)
@@ -461,7 +456,10 @@ def new_job_submit():
 
 @app.route("/job/<job_id>")
 def job_detail(job_id: str):
-    job_dir = JOBS_DIR / job_id
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
     if not job_dir.exists():
         return "Job not found", 404
 
@@ -503,7 +501,10 @@ def job_detail(job_id: str):
 
 @app.route("/job/<job_id>/stream")
 def job_stream(job_id: str):
-    job_dir = JOBS_DIR / job_id
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
     if not job_dir.exists():
         return "Job not found", 404
 
@@ -532,7 +533,10 @@ def job_stream(job_id: str):
 
 @app.route("/job/<job_id>/output.mp4")
 def job_output_mp4(job_id: str):
-    path = JOBS_DIR / job_id / "output.mp4"
+    try:
+        path = resolve_job_dir(JOBS_DIR, job_id) / "output.mp4"
+    except ValueError:
+        return "Not found", 404
     if not path.exists():
         return "Not found", 404
     return send_file(path, mimetype="video/mp4", conditional=True)
@@ -540,7 +544,10 @@ def job_output_mp4(job_id: str):
 
 @app.route("/job/<job_id>/output.ass")
 def job_output_ass(job_id: str):
-    path = JOBS_DIR / job_id / "output.ass"
+    try:
+        path = resolve_job_dir(JOBS_DIR, job_id) / "output.ass"
+    except ValueError:
+        return "Not found", 404
     if not path.exists():
         return "Not found", 404
     return send_file(path, mimetype="text/plain")
@@ -548,7 +555,11 @@ def job_output_ass(job_id: str):
 
 @app.route("/job/<job_id>/metrics")
 def job_metrics_api(job_id: str):
-    metrics = _compute_drift_metrics(JOBS_DIR / job_id)
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return jsonify({"error": "no reference data"}), 404
+    metrics = _compute_drift_metrics(job_dir)
     if metrics is None:
         return jsonify({"error": "no reference data"}), 404
     return jsonify(metrics)
@@ -556,8 +567,12 @@ def job_metrics_api(job_id: str):
 
 @app.route("/job/<job_id>/delete", methods=["POST"])
 def job_delete(job_id: str):
-    import shutil
-    job_dir = JOBS_DIR / job_id
+    if job_id in _running:
+        return jsonify({"error": "Cannot delete a running job."}), 409
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
     if job_dir.exists():
         shutil.rmtree(job_dir)
     return redirect(url_for("index"))

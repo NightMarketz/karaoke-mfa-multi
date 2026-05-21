@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}{{ meta.song_name }} — Karaoke Pipeline{% endblock %}
+{% block title %}{{ meta.song_name }} - Karaoke Pipeline{% endblock %}
 
 {% block content %}
 <div class="page-header">
-  <div class="back-link"><a href="/" class="mono dim">← JOBS</a></div>
+  <div class="back-link"><a href="/" class="mono dim">&lt;- JOBS</a></div>
   <h1 class="page-title">{{ meta.song_name | upper }}</h1>
   <div class="page-meta">
     <span class="mono dim">{{ meta.job_id[:8] }}</span>
@@ -17,64 +17,69 @@
   </div>
 </div>
 
-<!-- ── Progress ──────────────────────────────────────────────── -->
-<section class="section" id="progress-section">
+<section class="section" id="progress-section" data-job-id="{{ meta.job_id }}">
   <div class="hud-corner hud-tl"></div>
   <div class="hud-corner hud-tr"></div>
   <div class="hud-corner hud-bl"></div>
   <div class="hud-corner hud-br"></div>
   <h2 class="section-title">PIPELINE STATUS</h2>
-  <div class="pipeline-track" id="pipeline-track">
-    {% set stage = status.get('stage','queued') %}
-    {% set progress = status.get('progress', 0) %}
+  {% set stage = status.get('stage','queued') %}
+  {% set progress = status.get('progress', 0) %}
 
-    <div class="progress-bar big" id="main-progress-bar">
-      <div class="progress-fill {% if stage == 'done' %}done{% elif stage == 'failed' %}failed{% else %}animated{% endif %}"
-           id="main-progress-fill"
-           style="width:{{ progress }}%">
-      </div>
-    </div>
+  <div class="progress-bar big" id="main-progress-bar">
+    <div class="progress-fill {% if stage == 'done' %}done{% elif stage == 'failed' %}failed{% else %}animated{% endif %}"
+         id="main-progress-fill"
+         style="width:{{ progress }}%"></div>
+  </div>
 
-    <div class="status-row">
-      <span class="status-stage mono" id="status-stage">
-        {% if stage == 'done' %}✓ DONE{% elif stage == 'failed' %}✗ FAILED{% else %}{{ stage.upper().replace('_',' ') }}{% endif %}
-      </span>
-      <span class="status-pct mono" id="status-pct">{{ progress }}%</span>
-    </div>
+  <div class="status-row">
+    <span class="status-stage mono" id="status-stage">
+      {% if stage == 'done' %}DONE{% elif stage == 'failed' %}FAILED{% else %}{{ stage.upper().replace('_',' ') }}{% endif %}
+    </span>
+    <span class="status-pct mono" id="status-pct">{{ progress }}%</span>
+  </div>
 
-    {% if status.get('error') %}
-    <div class="error-box mono" id="status-error">{{ status.error }}</div>
-    {% endif %}
+  <div class="failure-message mono" id="status-error" {% if not status.get('error') %}hidden{% endif %}>
+    {{ status.get('error', '') }}
   </div>
 </section>
 
-<!-- ── Player ────────────────────────────────────────────────── -->
+{% if status.get('stage') == 'failed' %}
+<section class="section failed-panel">
+  <h2 class="section-title">FAILED</h2>
+  <p class="mono failure-message">{{ status.get('error') or 'The pipeline failed without a detailed error.' }}</p>
+  {% if has_ass %}
+  <div class="player-actions">
+    <a href="/job/{{ meta.job_id }}/output.ass" download="{{ meta.song_name }}.ass" class="btn btn-ghost">DOWNLOAD ASS</a>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
 {% if has_output %}
 <section class="section" id="player-section">
   <h2 class="section-title">PREVIEW</h2>
   <div class="player-wrap">
-    <video class="karaoke-player" controls preload="metadata"
-           src="/job/{{ meta.job_id }}/output.mp4">
+    <video class="karaoke-player" controls preload="metadata" src="/job/{{ meta.job_id }}/output.mp4">
       Your browser does not support HTML5 video.
     </video>
   </div>
   <div class="player-actions">
-    <a href="/job/{{ meta.job_id }}/output.mp4" download="{{ meta.song_name }}.mp4"
-       class="btn btn-primary">⬇ DOWNLOAD MP4</a>
-    <a href="/job/{{ meta.job_id }}/output.ass" download="{{ meta.song_name }}.ass"
-       class="btn btn-ghost">⬇ EXPORT ASS</a>
+    <a href="/job/{{ meta.job_id }}/output.mp4" download="{{ meta.song_name }}.mp4" class="btn btn-primary">DOWNLOAD MP4</a>
+    {% if has_ass %}
+    <a href="/job/{{ meta.job_id }}/output.ass" download="{{ meta.song_name }}.ass" class="btn btn-ghost">DOWNLOAD ASS</a>
+    {% endif %}
   </div>
 </section>
 {% elif status.get('stage') not in ('done','failed') %}
 <section class="section" id="player-section" style="opacity:0.4">
   <h2 class="section-title">PREVIEW</h2>
   <div class="player-placeholder">
-    <span class="mono dim">Video will appear when rendering finishes...</span>
+    <span class="mono dim">Video will appear when rendering finishes.</span>
   </div>
 </section>
 {% endif %}
 
-<!-- ── Transcript info ───────────────────────────────────────── -->
 {% if transcript %}
 <section class="section">
   <h2 class="section-title">ALIGNMENT DATA</h2>
@@ -89,11 +94,11 @@
     </div>
     <div class="stat-card">
       <span class="stat-val">{{ transcript.alignment_mode | upper }}</span>
-      <span class="stat-label mono">ALGN MODE</span>
+      <span class="stat-label mono">ALIGN MODE</span>
     </div>
     <div class="stat-card">
       <span class="stat-val">{{ transcript.pitch_engine | upper }}</span>
-      <span class="stat-label mono">PITCH ENG</span>
+      <span class="stat-label mono">PITCH ENGINE</span>
     </div>
   </div>
 
@@ -104,8 +109,7 @@
       <span class="dist-label mono">{{ section }}</span>
       <div class="dist-bar">
         {% set pct = (count / transcript.segment_count * 100)|round|int %}
-        <div class="dist-fill style-{{ section }}"
-             style="width: {{ pct }}%"></div>
+        <div class="dist-fill style-{{ section }}" style="width: {{ pct }}%"></div>
       </div>
       <span class="dist-count mono dim">{{ count }}</span>
     </div>
@@ -115,10 +119,10 @@
 
   {% if transcript.unknown_markers %}
   <div class="warn-box">
-    <span class="mono warn">⚠ UNKNOWN MARKERS (MAPPED TO VERSE):</span>
+    <span class="mono warn">UNKNOWN MARKERS MAPPED TO VERSE:</span>
     <ul style="margin: 0.5rem 0 0 1rem;">
-      {% for m in transcript.unknown_markers %}
-      <li class="mono dim">{{ m }}</li>
+      {% for marker in transcript.unknown_markers %}
+      <li class="mono dim">{{ marker }}</li>
       {% endfor %}
     </ul>
   </div>
@@ -126,20 +130,19 @@
 </section>
 {% endif %}
 
-<!-- ── Drift metrics ─────────────────────────────────────────── -->
 {% if metrics %}
 <section class="section">
-  <h2 class="section-title">DRIFT CALIBRATION</h2>
+  <h2 class="section-title">VALIDATION SUMMARY</h2>
   <div class="stat-grid">
     <div class="stat-card">
       <span class="stat-val accent">{{ metrics.p50 }}s</span>
-      <span class="stat-label mono">MEDIAN p50</span>
+      <span class="stat-label mono">MEDIAN P50</span>
     </div>
     <div class="stat-card">
       <span class="stat-val {% if metrics.p95 > 5 %}failed{% elif metrics.p95 > 2 %}warn{% else %}accent{% endif %}">
         {{ metrics.p95 }}s
       </span>
-      <span class="stat-label mono">TAIL p95</span>
+      <span class="stat-label mono">TAIL P95</span>
     </div>
     <div class="stat-card">
       <span class="stat-val">{{ metrics.mean }}s</span>
@@ -147,58 +150,23 @@
     </div>
     <div class="stat-card">
       <span class="stat-val">{{ metrics.within_3s }}/{{ metrics.matched }}</span>
-      <span class="stat-label mono">STABLE LINE %</span>
+      <span class="stat-label mono">WITHIN 3S</span>
     </div>
   </div>
-
   <div class="chart-container">
     <canvas id="driftChart"></canvas>
   </div>
-
-  {% if metrics.outliers %}
-  <div class="outliers">
-    <h3 class="subsection-title mono accent">OUTLIER ANALYSIS (DRIFT &gt; 3s)</h3>
-    <div class="outlier-table-container">
-      <table class="outlier-table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>CONTENT</th>
-            <th>REF</th>
-            <th>CTC</th>
-            <th>DIFF</th>
-            <th>NOTE</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for o in metrics.outliers %}
-          <tr>
-            <td class="mono dim">{{ o.idx }}</td>
-            <td class="mono">{{ o.text }}</td>
-            <td class="mono dim">{{ o.ref }}s</td>
-            <td class="mono dim">{{ o.ctc }}s</td>
-            <td class="mono warn">{{ o.drift }}s</td>
-            <td class="mono dim italic">{{ o.annotation or '---' }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-  {% endif %}
 </section>
 {% elif has_reference %}
 <section class="section">
-  <div class="hud-corner hud-tl"></div>
-  <h2 class="section-title">DRIFT CALIBRATION</h2>
-  <p class="mono dim">Reference data found. Metrics will be calculated upon completion.</p>
+  <h2 class="section-title">VALIDATION SUMMARY</h2>
+  <p class="mono dim">Reference data found. Metrics will be calculated when outputs are complete.</p>
 </section>
 {% endif %}
 
-<!-- ── Actions ───────────────────────────────────────────────── -->
 <section class="section section-actions" style="border-top: 1px solid var(--red); background: rgba(255,45,85,0.02);">
   <form method="POST" action="/job/{{ meta.job_id }}/delete"
-        onsubmit="return confirm('CRITICAL: Delete all job assets? This cannot be undone.')">
+        onsubmit="return confirm('Delete all job assets? This cannot be undone.')">
     <button type="submit" class="btn btn-danger">PURGE JOB ASSETS</button>
   </form>
 </section>

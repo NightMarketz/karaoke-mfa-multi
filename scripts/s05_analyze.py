@@ -60,8 +60,10 @@ import urllib.error
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.validation import find_timestamp_errors
 
 logger = logging.getLogger(__name__)
 
@@ -188,12 +190,14 @@ def _correct_low_confidence(
 SECTION_TO_STYLE: dict[str, str] = {
     "intro":         "intro",
     "verse":         "verse",
-    "pre-chorus":    "verse",
-    "pre-chorus 2":  "verse",
+    "pre-chorus":    "prechorus",
+    "prechorus":     "prechorus",
+    "pre-chorus 2":  "prechorus",
     "chorus":        "chorus",
     "chorus 2":      "chorus",
     "interlude":     "bridge",
     "bridge":        "bridge",
+    "drop":          "drop",
     "outro chorus":  "outro",
     "outro hook":    "outro",
     "outro":         "outro",
@@ -203,8 +207,10 @@ SECTION_TO_STYLE: dict[str, str] = {
 STYLE_DEFAULTS: dict[str, dict[str, str]] = {
     "intro":   {"color": "soft",    "effect": "fade_in"},
     "verse":   {"color": "default", "effect": "highlight"},
+    "prechorus": {"color": "warm",  "effect": "highlight"},
     "chorus":  {"color": "intense", "effect": "highlight"},
     "bridge":  {"color": "cool",    "effect": "highlight"},
+    "drop":    {"color": "warm",    "effect": "highlight"},
     "outro":   {"color": "warm",    "effect": "fade_in"},
     "ad_lib":  {"color": "soft",    "effect": "none"},
 }
@@ -492,16 +498,29 @@ def _validate_analysis(data: dict) -> list[str]:
     if "lines" not in data or not data["lines"]:
         return ["'lines' is missing or empty"]
 
-    first = data["lines"][0]
-    for key in ("text", "start", "end", "style", "words"):
-        if key not in first:
-            errors.append(f"First line missing key: '{key}'")
+    valid_styles = {"verse", "prechorus", "chorus", "bridge", "drop", "intro", "outro", "ad_lib"}
+    bad_styles = []
 
-    valid_styles = {"verse", "chorus", "bridge", "intro", "outro", "ad_lib"}
-    bad_styles = [
-        l["style"] for l in data["lines"]
-        if l.get("style") not in valid_styles
-    ]
+    for index, line in enumerate(data["lines"]):
+        for key in ("text", "start", "end", "style", "words"):
+            if key not in line:
+                errors.append(f"Line {index} missing key: '{key}'")
+        if "start" in line and "end" in line and line["end"] <= line["start"]:
+            errors.append(f"Line {index} end <= start: {line['start']} -> {line['end']}")
+        if line.get("style") not in valid_styles:
+            bad_styles.append(line.get("style"))
+
+        words = line.get("words")
+        if not isinstance(words, list) or not words:
+            continue
+        errors.extend(f"Line {index}: {error}" for error in find_timestamp_errors(words))
+        first_word = words[0]
+        last_word = words[-1]
+        if abs(float(line.get("start", 0.0)) - float(first_word.get("start", 0.0))) > 0.001:
+            errors.append(f"Line {index} start does not match first word")
+        if abs(float(line.get("end", 0.0)) - float(last_word.get("end", 0.0))) > 0.001:
+            errors.append(f"Line {index} end does not match last word")
+
     if bad_styles:
         errors.append(f"Unknown style values: {set(bad_styles)}")
 
@@ -709,4 +728,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

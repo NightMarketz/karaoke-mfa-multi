@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — Karaoke Pipeline{% endblock %}
+{% block title %}Dashboard - Karaoke Pipeline{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -10,10 +10,12 @@
 <div class="jobs-grid">
   {% if jobs %}
     {% for job in jobs %}
-    <a href="/job/{{ job.job_id }}" class="job-card status-{{ job.status.stage if job.status.stage in ['done', 'failed'] else 'running' }}">
+    <a href="/job/{{ job.job_id }}"
+       class="job-card status-{{ job.status.stage if job.status.stage in ['done', 'failed'] else 'running' }}"
+       data-job-id="{{ job.job_id }}">
       <div class="hud-corner hud-tl"></div>
       <div class="hud-corner hud-tr"></div>
-      
+
       <div class="job-card-header">
         <span class="job-name">{{ job.song_name }}</span>
         <div class="job-status-dot"></div>
@@ -34,7 +36,7 @@
       <div class="job-card-status">
         <div class="status-row">
           <span class="stage-label {{ job.status.stage }} mono">
-            {% if job.status.stage == 'done' %}✓ COMPLETE{% elif job.status.stage == 'failed' %}✗ FAILED{% else %}{{ job.status.stage.upper().replace('_',' ') }}{% endif %}
+            {% if job.status.stage == 'done' %}DONE{% elif job.status.stage == 'failed' %}FAILED{% else %}{{ job.status.stage.upper().replace('_',' ') }}{% endif %}
           </span>
           <span class="mono dim">{{ job.status.progress }}%</span>
         </div>
@@ -44,15 +46,19 @@
         </div>
       </div>
 
+      {% if job.status.error %}
+      <div class="failure-message mono">{{ job.status.error }}</div>
+      {% endif %}
+
       <div class="job-card-footer">
         <span class="mono dim" style="font-size: 0.6rem;">ID: {{ job.job_id[:8] }}</span>
-        <span class="mono accent" style="font-size: 0.65rem;">VIEW DETAILS →</span>
+        <span class="mono accent" style="font-size: 0.65rem;">VIEW DETAILS -&gt;</span>
       </div>
     </a>
     {% endfor %}
   {% else %}
     <div class="empty-state">
-      <div class="empty-icon">📂</div>
+      <div class="empty-icon">--</div>
       <p class="empty-text">NO TERMINAL RECORDS FOUND</p>
       <a href="/job/new" class="btn btn-primary">INITIALIZE NEW PIPELINE</a>
     </div>
