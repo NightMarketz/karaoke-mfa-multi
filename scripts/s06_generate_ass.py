@@ -46,7 +46,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
+
+from scripts.common.observability import record_artifact, write_event
 
 logger = logging.getLogger(__name__)
 
@@ -637,6 +640,31 @@ def _validate_ass(content: str) -> list[str]:
     return errors
 
 
+def _ass_metrics(content: str) -> dict[str, int]:
+    return {
+        "dialogue_count": content.count("\nDialogue:"),
+        "kf_count": content.count("\\kf"),
+    }
+
+
+def _display_window_clamp_count(lines: list[dict]) -> int:
+    display_windows: list[tuple[int, int]] = []
+    for line in lines:
+        start_ms = int(line["start"] * 1000)
+        end_ms = int(line["end"] * 1000)
+        display_windows.append((max(0, start_ms - 200), end_ms + 300))
+
+    clamp_count = 0
+    for i in range(len(display_windows) - 1):
+        dstart_curr, dend_curr = display_windows[i]
+        dstart_next, _ = display_windows[i + 1]
+        if dend_curr > dstart_next - 50:
+            clamped_end = max(dstart_curr + 100, dstart_next - 50)
+            if clamped_end != dend_curr:
+                clamp_count += 1
+    return clamp_count
+
+
 def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") -> None:
     status_path = job_dir / "status.json"
     existing: dict[str, Any] = {}
@@ -650,6 +678,40 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
         "error": error, "updated_at": time.time(),
     })
     status_path.write_text(json.dumps(existing, indent=2))
+
+
+def _stage06_event(
+    job_dir: Path,
+    event: str,
+    level: str = "info",
+    message: str = "",
+    **details: Any,
+) -> None:
+    write_event(
+        job_dir,
+        event,
+        "generating",
+        level=level,
+        message=message,
+        details=details,
+    )
+
+
+def _stage06_missing_job_event(
+    job_dir: Path,
+    level: str,
+    message: str,
+    **details: Any,
+) -> None:
+    parent = job_dir.parent if job_dir.parent != job_dir else Path.cwd()
+    write_event(
+        parent / "_stage06",
+        "stage06.failed",
+        "generating",
+        level=level,
+        message=message,
+        details={"missing_job_dir": str(job_dir), **details},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -676,32 +738,96 @@ def main() -> int:
     args = parser.parse_args()
 
     job_dir: Path = args.job_dir.resolve()
+    log_handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if job_dir.exists():
+        log_handlers.append(logging.FileHandler(job_dir / "pipeline.log", mode="a"))
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(job_dir / "pipeline.log", mode="a"),
-        ],
+        force=True,
+        handlers=log_handlers,
     )
 
     if not job_dir.exists():
-        logger.error("Job directory does not exist: %s", job_dir)
+        message = f"Job directory does not exist: {job_dir}"
+        logger.error(message)
+        _stage06_missing_job_event(
+            job_dir,
+            level="error",
+            message=message,
+            reason="job_dir_missing",
+            path=str(job_dir),
+        )
         return 1
 
     logger.info("Stage 06 · Generate ASS  preset=%s  resolution=%s",
                 args.preset, args.resolution)
 
     # ── Validate input ─────────────────────────────────────────────────────
+    _stage06_event(
+        job_dir,
+        "stage06.started",
+        preset=args.preset,
+        resolution=args.resolution,
+        fade_in_ms=args.fade_in,
+        fade_out_ms=args.fade_out,
+    )
+    _stage06_event(
+        job_dir,
+        "stage06.preset_selected",
+        preset=args.preset,
+        style_count=len(PRESETS[args.preset]),
+    )
+
     analysis_path = job_dir / "analysis.json"
     if not analysis_path.exists() or analysis_path.stat().st_size == 0:
-        logger.error("analysis.json missing or empty. Run Stage 05 first.")
+        message = "analysis.json missing or empty. Run Stage 05 first."
+        logger.error(message)
+        _stage06_event(
+            job_dir,
+            "stage06.input_missing",
+            level="error",
+            message=message,
+            reason="missing_input",
+            artifact="analysis.json",
+        )
+        _stage06_event(
+            job_dir,
+            "stage06.failed",
+            level="error",
+            message=message,
+            reason="missing_input",
+            artifact="analysis.json",
+        )
         return 1
 
-    analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    try:
+        analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        message = f"analysis.json is not valid JSON: {exc}"
+        logger.error(message)
+        _stage06_event(
+            job_dir,
+            "stage06.failed",
+            level="error",
+            message=message,
+            reason="invalid_input_json",
+            artifact="analysis.json",
+        )
+        return 1
+
     lines    = analysis.get("lines", [])
     if not lines:
-        logger.error("analysis.json has no lines.")
+        message = "analysis.json has no lines."
+        logger.error(message)
+        _stage06_event(
+            job_dir,
+            "stage06.failed",
+            level="error",
+            message=message,
+            reason="no_lines",
+            artifact="analysis.json",
+        )
         return 1
 
     logger.info("Lines to render: %d", len(lines))
@@ -711,6 +837,7 @@ def main() -> int:
     # They originate from LLM hallucination in s05 or timestamp corruption
     # in s04. We discard them with a WARNING so the issue is visible in logs.
     valid_lines = []
+    skipped_inverted = []
     for line in lines:
         if line.get("end", 0) <= line.get("start", 0):
             logger.warning(
@@ -718,6 +845,13 @@ def main() -> int:
                 "start=%.4f end=%.4f text='%s'",
                 line.get("start", 0), line.get("end", 0),
                 line.get("text", "")[:60],
+            )
+            skipped_inverted.append(
+                {
+                    "start": line.get("start", 0),
+                    "end": line.get("end", 0),
+                    "text": str(line.get("text", ""))[:60],
+                }
             )
         else:
             valid_lines.append(line)
@@ -727,10 +861,25 @@ def main() -> int:
             "%d/%d lines discarded due to inverted timestamps.",
             len(lines) - len(valid_lines), len(lines),
         )
+        _stage06_event(
+            job_dir,
+            "stage06.inverted_lines_skipped",
+            level="warning",
+            skipped_count=len(skipped_inverted),
+            input_line_count=len(lines),
+            examples=skipped_inverted[:5],
+        )
     lines = valid_lines
 
     if not lines:
         logger.error("All lines had inverted timestamps — nothing to render.")
+        _stage06_event(
+            job_dir,
+            "stage06.failed",
+            level="error",
+            message="All lines had inverted timestamps - nothing to render.",
+            reason="all_lines_inverted",
+        )
         return 1
 
     _update_status(job_dir, "generating", 0)
@@ -744,6 +893,18 @@ def main() -> int:
         s = line.get("style", "verse")
         style_counts[s] = style_counts.get(s, 0) + 1
     logger.info("Style distribution: %s", style_counts)
+    _stage06_event(
+        job_dir,
+        "stage06.style_distribution",
+        style_distribution=style_counts,
+        line_count=len(lines),
+    )
+    _stage06_event(
+        job_dir,
+        "stage06.timestamp_validation",
+        display_window_clamp_count=_display_window_clamp_count(lines),
+        line_count=len(lines),
+    )
 
     ass_content = _generate_ass(
         lines        = lines,
@@ -752,6 +913,8 @@ def main() -> int:
         fade_in_ms   = args.fade_in,
         fade_out_ms  = args.fade_out,
     )
+    ass_metrics = _ass_metrics(ass_content)
+    _stage06_event(job_dir, "stage06.ass_generated", **ass_metrics)
 
     _update_status(job_dir, "generating", 70)
 
@@ -760,6 +923,22 @@ def main() -> int:
     if errors:
         for e in errors:
             logger.error("ASS validation: %s", e)
+        _stage06_event(
+            job_dir,
+            "stage06.validation_failed",
+            level="error",
+            message=errors[0],
+            error_count=len(errors),
+            errors=errors,
+        )
+        _stage06_event(
+            job_dir,
+            "stage06.failed",
+            level="error",
+            message=errors[0],
+            reason="validation_failed",
+            error=errors[0],
+        )
         _update_status(job_dir, "failed", 0, errors[0])
         return 1
 
@@ -769,8 +948,23 @@ def main() -> int:
     output_path.write_bytes(ass_content.encode("utf-8-sig"))
     logger.info("Written: %s (%.1f KB)", output_path.name,
                 output_path.stat().st_size / 1e3)
+    artifact_details = record_artifact(job_dir, "generating", output_path)
+    _stage06_event(
+        job_dir,
+        "stage06.ass_written",
+        path=str(output_path),
+        size_bytes=artifact_details["size_bytes"],
+    )
 
     _update_status(job_dir, "generating", 100)
+    _stage06_event(
+        job_dir,
+        "stage06.completed",
+        line_count=len(lines),
+        dialogue_count=ass_metrics["dialogue_count"],
+        kf_count=ass_metrics["kf_count"],
+        output="output.ass",
+    )
     logger.info("Stage 06 complete.")
     return 0
 

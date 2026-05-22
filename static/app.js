@@ -51,6 +51,9 @@ function initGlobalProgress() {
             } else {
                 stageLabel.textContent = stage.replace(/_/g, ' ').toUpperCase();
             }
+            if (typeof window.refreshObservabilityTimeline === 'function') {
+                window.refreshObservabilityTimeline();
+            }
         };
 
         eventSource.onerror = () => {
@@ -66,6 +69,83 @@ function initJobDetail() {
     if (metrics && metrics.per_line) {
         renderDriftChart(metrics.per_line);
     }
+    initObservabilityTimeline();
+}
+
+function initObservabilityTimeline() {
+    const section = document.getElementById('observability-section');
+    if (!section) return;
+
+    const url = section.dataset.eventsUrl;
+    if (!url) return;
+
+    const load = () => {
+        fetch(url)
+            .then(response => {
+                if (!response.ok) throw new Error(`events ${response.status}`);
+                return response.json();
+            })
+            .then(renderObservabilityTimeline)
+            .catch(error => {
+                const summary = document.getElementById('observability-summary');
+                if (summary) summary.textContent = `EVENTS UNAVAILABLE: ${error.message}`;
+            });
+    };
+
+    load();
+    window.refreshObservabilityTimeline = load;
+}
+
+function renderObservabilityTimeline(payload) {
+    const summaryEl = document.getElementById('observability-summary');
+    const timelineEl = document.getElementById('event-timeline');
+    if (!summaryEl || !timelineEl) return;
+
+    const events = Array.isArray(payload.events) ? payload.events : [];
+    const summary = payload.summary || {};
+    const failures = Array.isArray(summary.failures) ? summary.failures.length : 0;
+    const warnings = Array.isArray(summary.warnings) ? summary.warnings.length : 0;
+
+    summaryEl.innerHTML = `
+        <span class="tag ${failures ? 'tag-red' : 'tag-green'}">${failures} FAIL</span>
+        <span class="tag ${warnings ? 'tag-warn' : 'tag-green'}">${warnings} WARN</span>
+        <span class="dim">${events.length} EVENTS</span>
+    `;
+
+    const latest = events.slice(-16).reverse();
+    timelineEl.innerHTML = latest.map(event => {
+        const level = event.level || 'info';
+        const stage = event.stage || '';
+        const name = event.event || 'event';
+        const message = event.message || '';
+        const details = event.details ? compactDetails(event.details) : '';
+        const time = event.timestamp ? new Date(event.timestamp * 1000).toLocaleTimeString() : '';
+        return `
+            <div class="event-row level-${escapeHtml(level)}">
+                <span class="event-time mono">${escapeHtml(time)}</span>
+                <span class="event-stage mono">${escapeHtml(stage)}</span>
+                <span class="event-name mono">${escapeHtml(name)}</span>
+                <span class="event-message mono">${escapeHtml(message || details)}</span>
+            </div>
+        `;
+    }).join('') || '<div class="event-row"><span class="mono dim">No structured events yet.</span></div>';
+}
+
+function compactDetails(details) {
+    const pairs = Object.entries(details)
+        .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .slice(0, 4)
+        .map(([key, value]) => `${key}=${Array.isArray(value) ? value.length : value}`);
+    return pairs.join(' ');
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 
 function renderDriftChart(data) {

@@ -1,4 +1,5 @@
 import io
+import json
 import tempfile
 import unittest
 import zipfile
@@ -137,6 +138,61 @@ class ServerContractTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 409)
             self.assertFalse((jobs_dir / job_id).exists())
+
+    def test_job_events_api_returns_timeline_and_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            job_dir.mkdir()
+            (job_dir / "meta.json").write_text(json.dumps({"job_id": job_id}), encoding="utf-8")
+            (job_dir / "status.json").write_text(
+                json.dumps({"stage": "failed", "progress": 0, "error": "boom"}),
+                encoding="utf-8",
+            )
+            (job_dir / "events.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "event": "stage_started",
+                                "stage": "analyzing",
+                                "level": "info",
+                                "details": {
+                                    "input": str(job_dir / "input.mp4"),
+                                    "command": ["ffmpeg", "-i", str(job_dir / "input.mp4")],
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "event": "stage05.failed",
+                                "stage": "analyzing",
+                                "level": "error",
+                                "details": {"missing_job_dir": str(job_dir)},
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (job_dir / "observability_summary.json").write_text(
+                json.dumps({"failures": [{"event": "stage05.failed"}], "warnings": []}),
+                encoding="utf-8",
+            )
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/events")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertEqual(payload["job_id"], job_id)
+            self.assertEqual([event["event"] for event in payload["events"]], ["stage_started", "stage05.failed"])
+            self.assertEqual(payload["events"][0]["details"]["input"], "input.mp4")
+            self.assertEqual(payload["events"][0]["details"]["command"], "3 args redacted")
+            self.assertEqual(payload["events"][1]["details"]["missing_job_dir"], job_id)
+            self.assertEqual(payload["summary"]["failures"][0]["event"], "stage05.failed")
 
 
 if __name__ == "__main__":

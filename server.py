@@ -42,7 +42,7 @@ from flask import (
 )
 
 from scripts.common.paths import is_safe_archive_member, resolve_job_dir
-from scripts.common.observability import write_event
+from scripts.common.observability import read_events, write_event
 from scripts.common.status import read_status, write_status
 from scripts.pipeline_runner import PipelineRunner
 
@@ -684,6 +684,52 @@ def job_metrics_api(job_id: str):
     if metrics is None:
         return jsonify({"error": "no reference data"}), 404
     return jsonify(metrics)
+
+
+def _sanitize_observability_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            key_lower = str(key).lower()
+            if key_lower == "command":
+                sanitized[key] = f"{len(item) if isinstance(item, list) else 1} args redacted"
+            elif key_lower in {"path", "input", "output", "missing_job_dir"} or key_lower.endswith("_path"):
+                sanitized[key] = Path(str(item)).name
+            else:
+                sanitized[key] = _sanitize_observability_value(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_observability_value(item) for item in value]
+    return value
+
+
+@app.route("/job/<job_id>/events")
+def job_events_api(job_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return jsonify({"error": "job not found"}), 404
+    if not job_dir.exists():
+        return jsonify({"error": "job not found"}), 404
+
+    summary_path = job_dir / "observability_summary.json"
+    summary: dict[str, Any] = {}
+    if summary_path.exists():
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            summary = {"error": "summary unreadable"}
+
+    events = [_sanitize_observability_value(event) for event in read_events(job_dir)]
+    limit = request.args.get("limit", default=80, type=int)
+    limit = max(1, min(limit, 300))
+    return jsonify(
+        {
+            "job_id": job_id,
+            "events": events[-limit:],
+            "summary": _sanitize_observability_value(summary),
+        }
+    )
 
 
 @app.route("/job/<job_id>/delete", methods=["POST"])

@@ -47,6 +47,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+try:
+    from scripts.common.observability import write_event
+except ModuleNotFoundError:
+    from common.observability import write_event
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +80,46 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
         "updated_at": time.time(),
     })
     status_path.write_text(json.dumps(existing, indent=2))
+
+
+def _write_event(
+    job_dir: Path,
+    event: str,
+    level: str = "info",
+    message: str = "",
+    details: dict[str, Any] | None = None,
+    artifact: str | None = None,
+) -> None:
+    try:
+        write_event(
+            job_dir,
+            event,
+            "stage03",
+            level=level,
+            message=message,
+            details=details,
+            artifact=artifact,
+        )
+    except Exception:
+        logger.debug("Failed to write observability event %s", event, exc_info=True)
+
+
+def _write_missing_job_event(job_dir: Path, message: str) -> None:
+    parent = job_dir.parent if job_dir.parent != job_dir else Path.cwd()
+    write_event(
+        parent / "_stage03",
+        "stage03.failed",
+        "stage03",
+        level="error",
+        message=message,
+        details={"reason": "job_dir_missing", "missing_job_dir": str(job_dir)},
+    )
+
+
+def _fail(job_dir: Path, event: str, message: str, details: dict[str, Any] | None = None) -> int:
+    _write_event(job_dir, event, level="error", message=message, details=details)
+    _write_event(job_dir, "stage03.failed", level="error", message=message, details=details)
+    return 1
 
 
 def _validate_device(requested: str) -> str:
@@ -240,17 +284,19 @@ def main() -> int:
     # ── Logging ────────────────────────────────────────────────────────────
     job_dir: Path = args.job_dir.resolve()
     log_file = job_dir / "pipeline.log"
+    log_handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if job_dir.exists():
+        log_handlers.append(logging.FileHandler(log_file, mode="a"))
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_file, mode="a"),
-        ],
+        force=True,
+        handlers=log_handlers,
     )
 
     if not job_dir.exists():
         logger.error("Job directory does not exist: %s", job_dir)
+        _write_missing_job_event(job_dir, f"Job directory does not exist: {job_dir}")
         return 1
 
     # ── Enforce device constraint ──────────────────────────────────────────
@@ -265,18 +311,39 @@ def main() -> int:
         "Stage 03 · Transcribe  model=%s  device=%s  compute=%s  beam=%d  vad=%s",
         args.model_size, device, args.compute_type, args.beam_size, vad_filter,
     )
+    _write_event(
+        job_dir,
+        "stage03.started",
+        message="Stage 03 transcription started",
+        details={
+            "model": args.model_size,
+            "device": device,
+            "compute_type": args.compute_type,
+            "beam_size": args.beam_size,
+            "vad_filter": vad_filter,
+        },
+    )
 
     # ── Validate input ─────────────────────────────────────────────────────
     vocals_path = job_dir / "vocals.wav"
     if not vocals_path.exists():
-        logger.error(
-            "vocals.wav not found in %s. Run Stage 02 (s02_demix.py) first.",
+        message = f"vocals.wav not found in {job_dir}. Run Stage 02 (s02_demix.py) first."
+        logger.error(message)
+        return _fail(
             job_dir,
+            "stage03.input_missing",
+            message,
+            {"artifact": "vocals.wav", "path": str(vocals_path)},
         )
-        return 1
     if vocals_path.stat().st_size == 0:
-        logger.error("vocals.wav is empty (0 bytes).")
-        return 1
+        message = "vocals.wav is empty (0 bytes)."
+        logger.error(message)
+        return _fail(
+            job_dir,
+            "stage03.input_missing",
+            message,
+            {"artifact": "vocals.wav", "path": str(vocals_path), "size_bytes": 0},
+        )
 
     logger.info("Input: %s (%.1f MB)", vocals_path.name, vocals_path.stat().st_size / 1e6)
     _update_status(job_dir, "transcribing", 0)
@@ -285,11 +352,12 @@ def main() -> int:
     try:
         from faster_whisper import WhisperModel  # type: ignore
     except ImportError:
-        logger.error(
+        message = (
             "faster-whisper is not installed. "
             "Run: pip install faster-whisper  (inside karaoke_env)"
         )
-        return 1
+        logger.error(message)
+        return _fail(job_dir, "stage03.whisper_import_failed", message)
 
     logger.info("Loading Whisper model '%s' on %s/%s...", args.model_size, device, args.compute_type)
     try:
@@ -301,7 +369,26 @@ def main() -> int:
     except Exception as e:
         logger.error("Failed to load Whisper model: %s", e)
         _update_status(job_dir, "failed", 0, str(e))
-        return 1
+        return _fail(
+            job_dir,
+            "stage03.whisper_import_failed",
+            f"Failed to load Whisper model: {e}",
+            {
+                "model": args.model_size,
+                "device": device,
+                "compute_type": args.compute_type,
+            },
+        )
+    _write_event(
+        job_dir,
+        "stage03.whisper_model_loaded",
+        message="Whisper model loaded",
+        details={
+            "model": args.model_size,
+            "device": device,
+            "compute_type": args.compute_type,
+        },
+    )
 
     _update_status(job_dir, "transcribing", 20)
 
@@ -325,7 +412,16 @@ def main() -> int:
     except Exception as e:
         logger.error("Transcription failed: %s", e)
         _update_status(job_dir, "failed", 0, str(e))
-        return 1
+        return _fail(
+            job_dir,
+            "stage03.transcribe_failed",
+            f"Transcription failed: {e}",
+            {
+                "model": args.model_size,
+                "device": device,
+                "compute_type": args.compute_type,
+            },
+        )
 
     _update_status(job_dir, "transcribing", 85)
     logger.info(
@@ -341,7 +437,12 @@ def main() -> int:
         for err in errors:
             logger.error("Transcript validation: %s", err)
         _update_status(job_dir, "failed", 0, f"Invalid transcript: {errors[0]}")
-        return 1
+        return _fail(
+            job_dir,
+            "stage03.transcribe_failed",
+            f"Invalid transcript: {errors[0]}",
+            {"errors": errors},
+        )
 
     total_words = sum(len(s["words"]) for s in transcript["segments"])
     logger.info("Total words with timestamps: %d", total_words)
@@ -374,9 +475,33 @@ def main() -> int:
     output_path = job_dir / "transcript.json"
     output_path.write_text(json.dumps(transcript, indent=2, ensure_ascii=False))
     logger.info("Written: %s (%.1f KB)", output_path.name, output_path.stat().st_size / 1e3)
+    _write_event(
+        job_dir,
+        "stage03.transcript_written",
+        message="Transcript written",
+        artifact=output_path.name,
+        details={
+            "segment_count": len(transcript["segments"]),
+            "word_count": total_words,
+            "language": transcript.get("language"),
+            "language_probability": transcript.get("language_probability"),
+            "alignment_mode": transcript.get("alignment_mode", "whisper"),
+            "size_bytes": output_path.stat().st_size,
+        },
+    )
 
     _update_status(job_dir, "transcribing", 100)
     logger.info("Stage 03 complete.")
+    _write_event(
+        job_dir,
+        "stage03.completed",
+        message="Stage 03 transcription completed",
+        details={
+            "segment_count": len(transcript["segments"]),
+            "word_count": total_words,
+            "language": transcript.get("language"),
+        },
+    )
     return 0
 
 

@@ -23,6 +23,7 @@ HubertFA CLI:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import logging
 import re
@@ -39,14 +40,14 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.observability import record_artifact, write_event
 from scripts.common.validation import normalize_words
 
 # Fix Windows encoding issues for checkmark/cross symbols
 if sys.platform == "win32":
-    import io
     try:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
     except (AttributeError, io.UnsupportedOperation):
         pass
 
@@ -63,10 +64,30 @@ def _hfa_batch_dir(job_dir: Path):
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir, ignore_errors=True)
     tmp_dir.mkdir(parents=True, exist_ok=False)
+    write_event(
+        job_dir,
+        "stage04.temp_dir_created",
+        "aligning",
+        details={"path": str(tmp_dir), "name": tmp_dir.name},
+    )
     try:
         yield tmp_dir
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        cleanup_error = ""
+        try:
+            shutil.rmtree(tmp_dir)
+        except Exception as exc:
+            cleanup_error = str(exc)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        removed = not tmp_dir.exists()
+        write_event(
+            job_dir,
+            "stage04.temp_dir_cleanup",
+            "aligning",
+            level="info" if removed else "warning",
+            message=cleanup_error,
+            details={"path": str(tmp_dir), "name": tmp_dir.name, "removed": removed},
+        )
 
 
 def _parse_textgrid(path: Path) -> list[dict[str, Any]]:
@@ -299,6 +320,49 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
     status_path.write_text(json.dumps(data, indent=2))
 
 
+def _stage04_event(
+    job_dir: Path,
+    event: str,
+    level: str = "info",
+    message: str = "",
+    **details: Any,
+) -> None:
+    write_event(
+        job_dir,
+        event,
+        "aligning",
+        level=level,
+        message=message,
+        details=details,
+    )
+
+
+def _stage04_fail(job_dir: Path, event: str, message: str, **details: Any) -> int:
+    _stage04_event(job_dir, event, level="error", message=message, **details)
+    _stage04_event(job_dir, "stage04.failed", level="error", message=message, **details)
+    return 1
+
+
+def _write_missing_job_event(job_dir: Path, message: str) -> None:
+    parent = job_dir.parent if job_dir.parent != job_dir else Path.cwd()
+    write_event(
+        parent / "_stage04",
+        "stage04.failed",
+        "aligning",
+        level="error",
+        message=message,
+        details={"reason": "job_dir_missing", "missing_job_dir": str(job_dir)},
+    )
+
+
+def _source_distribution(words: list[dict]) -> dict[str, int]:
+    source_counts: dict[str, int] = {}
+    for w in words:
+        s = w.get("source", "unknown")
+        source_counts[s] = source_counts.get(s, 0) + 1
+    return source_counts
+
+
 def main() -> int:
     hw = detect()
     parser = argparse.ArgumentParser(description="Stage 04 — Phoneme Alignment (Batch ONNX)")
@@ -311,36 +375,90 @@ def main() -> int:
     args = parser.parse_args()
 
     job_dir = args.job_dir.resolve()
+    log_handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if job_dir.exists():
+        log_handlers.append(logging.FileHandler(job_dir / "pipeline.log", mode="a"))
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(job_dir / "pipeline.log", mode="a"),
-        ],
+        force=True,
+        handlers=log_handlers,
+    )
+
+    if not job_dir.exists():
+        message = f"Job directory does not exist: {job_dir}"
+        logger.error(message)
+        _write_missing_job_event(job_dir, message)
+        return 1
+
+    _stage04_event(
+        job_dir,
+        "stage04.started",
+        alignment_mode="unknown",
+        language=args.language,
+        hubertfa_timeout=args.hubertfa_timeout,
     )
     
     vocals_path, transcript_path = job_dir / "vocals.wav", job_dir / "transcript.json"
     if not vocals_path.exists() or not transcript_path.exists():
-        logger.error("Inputs missing in %s", job_dir); return 1
+        record_artifact(job_dir, "aligning", vocals_path)
+        record_artifact(job_dir, "aligning", transcript_path)
+        message = f"Inputs missing in {job_dir}"
+        logger.error(message)
+        return _stage04_fail(
+            job_dir,
+            "stage04.input_missing",
+            message,
+            vocals_exists=vocals_path.exists(),
+            transcript_exists=transcript_path.exists(),
+        )
+    record_artifact(job_dir, "aligning", vocals_path)
+    record_artifact(job_dir, "aligning", transcript_path)
 
     model_dir = args.checkpoint.parent
     for sidecar in ("config.json", "vocab.json", "VERSION"):
         if not (model_dir / sidecar).exists():
-            logger.error("Missing HubertFA sidecar file: %s", sidecar); return 1
+            message = f"Missing HubertFA sidecar file: {sidecar}"
+            logger.error(message)
+            return _stage04_fail(
+                job_dir,
+                "stage04.sidecar_missing",
+                message,
+                sidecar=sidecar,
+                path=str(model_dir / sidecar),
+            )
 
     try:
         from g2p_en import G2p
         g2p = G2p()
-    except ImportError:
-        logger.error("pip install g2p_en required"); return 1
+    except ImportError as exc:
+        message = "pip install g2p_en required"
+        logger.error(message)
+        return _stage04_fail(
+            job_dir,
+            "stage04.import_failed",
+            message,
+            module="g2p_en",
+            error=str(exc),
+        )
 
     transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     segments = transcript.get("segments", [])
-    if not segments: logger.error("No segments found"); return 1
+    if not segments:
+        message = "No segments found"
+        logger.error(message)
+        return _stage04_fail(job_dir, "stage04.no_segments", message)
 
     alignment_mode = transcript.get("alignment_mode", "whisper")
     is_forced = alignment_mode == "forced"
+    _stage04_event(
+        job_dir,
+        "stage04.transcript_loaded",
+        alignment_mode=alignment_mode,
+        segment_count=len(segments),
+        language=args.language,
+        hubertfa_timeout=args.hubertfa_timeout,
+    )
 
     logger.info(
         "Stage 04 · Align  alignment_mode=%s  segments=%d",
@@ -360,6 +478,8 @@ def main() -> int:
 
     with _hfa_batch_dir(job_dir) as tmp_dir:
         logger.info("Batch Prep: Slicing %d segments into %s", len(segments), tmp_dir)
+        prepared_count = 0
+        skipped_count = 0
         
         for i, seg in enumerate(segments):
             stem = f"seg_{i:04d}"
@@ -367,8 +487,17 @@ def main() -> int:
                 _slice_wav(vocals_path, tmp_dir / f"{stem}.wav", seg["start"], seg["end"])
                 phs = [p.lower() for p in _phonemise_text(seg["text"], g2p)]
                 (tmp_dir / f"{stem}.lab").write_text(" ".join(phs), encoding="utf-8")
+                prepared_count += 1
             except Exception as e:
+                skipped_count += 1
                 logger.warning("Prep failed for segment %d: %s", i, e)
+        _stage04_event(
+            job_dir,
+            "stage04.batch_prepared",
+            prepared=prepared_count,
+            skipped=skipped_count,
+            segment_count=len(segments),
+        )
 
         # ── Run HubertFA ONCE for all segments ──
         logger.info("Batch Inference: Running HubertFA onnx_infer.py (Model: %s)", args.checkpoint.name)
@@ -382,6 +511,13 @@ def main() -> int:
         ]
         
         start_time = time.time()
+        _stage04_event(
+            job_dir,
+            "stage04.hubertfa_started",
+            timeout=args.hubertfa_timeout,
+            prepared=prepared_count,
+            skipped=skipped_count,
+        )
         try:
             res = subprocess.run(
                 cmd,
@@ -391,22 +527,60 @@ def main() -> int:
             )
         except subprocess.TimeoutExpired:
             logger.error("HubertFA Batch timed out after %ss; using fallback timings", args.hubertfa_timeout)
+            _stage04_event(
+                job_dir,
+                "stage04.hubertfa_timeout",
+                level="error",
+                message=f"HubertFA timed out after {args.hubertfa_timeout}s",
+                timeout=args.hubertfa_timeout,
+            )
             res = None
+            fallback_word_count = 0
             for seg in segments:
                 words = _fallback(seg.get("words", []))
                 words = normalize_words(words, seg["start"], seg["end"])
                 all_aligned_words.extend(words)
+                fallback_word_count += len(words)
+            _stage04_event(
+                job_dir,
+                "stage04.fallback_used",
+                level="warning",
+                reason="hubertfa_timeout",
+                word_count=fallback_word_count,
+            )
 
         if res is not None and res.returncode != 0:
             logger.error("HubertFA Batch failed:\n%s", res.stderr)
+            _stage04_event(
+                job_dir,
+                "stage04.hubertfa_finished",
+                level="error",
+                message=f"return code {res.returncode}",
+                returncode=res.returncode,
+            )
             # Global fallback if batch inference crashes
+            fallback_word_count = 0
             for seg in segments:
                 words = _fallback(seg.get("words", []))
                 words = normalize_words(words, seg["start"], seg["end"])
                 all_aligned_words.extend(words)
+                fallback_word_count += len(words)
+            _stage04_event(
+                job_dir,
+                "stage04.fallback_used",
+                level="warning",
+                reason="hubertfa_nonzero",
+                word_count=fallback_word_count,
+            )
         elif res is not None:
             elapsed = time.time() - start_time
             logger.info("Batch Inference OK (%.2fs for %d segments)", elapsed, len(segments))
+            _stage04_event(
+                job_dir,
+                "stage04.hubertfa_finished",
+                returncode=res.returncode,
+                duration_ms=int(elapsed * 1000),
+            )
 
             # ── Parse and map results ──
             tg_dir = tmp_dir / "TextGrid"
@@ -432,24 +606,57 @@ def main() -> int:
                         continue
                     except Exception as e:
                         logger.warning("Parse failed for %s: %s", stem, e)
+                        _stage04_event(
+                            job_dir,
+                            "stage04.parse_failed",
+                            level="warning",
+                            message=str(e),
+                            stem=stem,
+                            segment_index=i,
+                        )
                 
                 # Fallback for individual missing/failed segments
                 words = _fallback(seg.get("words", []))
                 words = normalize_words(words, seg["start"], seg["end"])
                 all_aligned_words.extend(words)
+                _stage04_event(
+                    job_dir,
+                    "stage04.fallback_used",
+                    level="warning",
+                    reason="segment_textgrid_missing_or_failed",
+                    word_count=len(words),
+                    stem=stem,
+                    segment_index=i,
+                )
 
     # Save output
     aligned = {"words": all_aligned_words}
     output_path = job_dir / "aligned.json"
+    source_counts = _source_distribution(all_aligned_words)
+    _stage04_event(
+        job_dir,
+        "stage04.source_distribution",
+        word_count=len(all_aligned_words),
+        source_distribution=source_counts,
+    )
     output_path.write_text(json.dumps(aligned, indent=2, ensure_ascii=False))
-    
-    # Count sources for logging
-    source_counts: dict[str, int] = {}
-    for w in all_aligned_words:
-        s = w.get("source", "unknown")
-        source_counts[s] = source_counts.get(s, 0) + 1
+    record_artifact(job_dir, "aligning", output_path)
+    _stage04_event(
+        job_dir,
+        "stage04.aligned_written",
+        word_count=len(all_aligned_words),
+        source_distribution=source_counts,
+        path=str(output_path),
+        size_bytes=output_path.stat().st_size,
+    )
     logger.info("Stage 04 OK: %d words, sources: %s", len(all_aligned_words), source_counts)
     _update_status(job_dir, "aligning", 100)
+    _stage04_event(
+        job_dir,
+        "stage04.completed",
+        word_count=len(all_aligned_words),
+        source_distribution=source_counts,
+    )
     return 0
 
 if __name__ == "__main__":

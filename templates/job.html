@@ -44,6 +44,14 @@
   </div>
 </section>
 
+<section class="section" id="observability-section" data-events-url="/job/{{ meta.job_id }}/events">
+  <h2 class="section-title">OBSERVABILITY</h2>
+  <div class="observability-summary mono" id="observability-summary">
+    <span class="dim">Loading event timeline...</span>
+  </div>
+  <div class="event-timeline" id="event-timeline" aria-live="polite"></div>
+</section>
+
 {% if status.get('stage') == 'failed' %}
 <section class="section failed-panel">
   <h2 class="section-title">FAILED</h2>

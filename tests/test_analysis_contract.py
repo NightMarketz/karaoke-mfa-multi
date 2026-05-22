@@ -50,8 +50,9 @@ class AnalysisContractTests(unittest.TestCase):
                 return s05_analyze.main()
         finally:
             for handler in root_logger.handlers[:]:
-                handler.close()
                 root_logger.removeHandler(handler)
+                if isinstance(handler, logging.FileHandler):
+                    handler.close()
 
     def test_line_missing_words_fails_even_when_not_first_line(self):
         data = {
