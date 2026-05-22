@@ -37,6 +37,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts.common.observability import build_observability_summary, write_event
 from scripts.common.validation import find_timestamp_errors, find_word_coverage_errors
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ _RESET  = "\033[0m"
 
 _failures: list[str] = []
 _warnings: list[str] = []
+_current_job_dir: Path | None = None
 
 
 def _ok(msg: str) -> None:
@@ -57,11 +59,15 @@ def _ok(msg: str) -> None:
 
 def _warn(msg: str) -> None:
     _warnings.append(msg)
+    if _current_job_dir is not None:
+        write_event(_current_job_dir, "validation_warning", "validating", level="warning", message=msg)
     print(f"  {_YELLOW}[WARN]{_RESET}  {msg}")
 
 
 def _fail(msg: str) -> None:
     _failures.append(msg)
+    if _current_job_dir is not None:
+        write_event(_current_job_dir, "validation_failure", "validating", level="error", message=msg)
     print(f"  {_RED}[FAIL]{_RESET}  {msg}")
 
 
@@ -531,6 +537,9 @@ def validate_drift(job_dir: Path, ref_path: Path | None, transcript: dict | None
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    global _current_job_dir
+    _failures.clear()
+    _warnings.clear()
     parser = argparse.ArgumentParser(
         description="Stage 08 — Pipeline contract tests and quality metrics.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -543,6 +552,7 @@ def main() -> int:
     args = parser.parse_args()
 
     job_dir = args.job_dir.resolve()
+    _current_job_dir = job_dir
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -552,12 +562,20 @@ def main() -> int:
     print(f"  Pipeline Validation — {job_dir.name}")
     print(f"{'=' * 60}")
 
-    validate_job_contracts(job_dir)
-    transcript = validate_transcript(job_dir)
-    aligned    = validate_aligned(job_dir)
-    validate_analysis(job_dir, transcript, aligned)
-    validate_ass(job_dir)
-    validate_drift(job_dir, args.reference, transcript)
+    write_event(job_dir, "validation_started", "validating")
+    unexpected_error = ""
+    try:
+        validate_job_contracts(job_dir)
+        transcript = validate_transcript(job_dir)
+        aligned    = validate_aligned(job_dir)
+        validate_analysis(job_dir, transcript, aligned)
+        validate_ass(job_dir)
+        validate_drift(job_dir, args.reference, transcript)
+    except Exception as exc:
+        unexpected_error = str(exc)
+        _fail(f"Unexpected validation error: {unexpected_error}")
+    finally:
+        _current_job_dir = None
 
     # -- Summary -----------------------------------------------------------
     print(f"\n{'=' * 60}")
@@ -574,7 +592,25 @@ def main() -> int:
             print(f"    {_YELLOW}[WARN]{_RESET}  {w}")
     print(f"{'=' * 60}\n")
 
-    return 1 if _failures else 0
+    exit_code = 1 if _failures else 0
+    write_event(
+        job_dir,
+        "validation_finished",
+        "validating",
+        level="error" if _failures else "info",
+        message="validation failed" if _failures else "validation passed",
+        details={
+            "exit_code": exit_code,
+            "failure_count": len(_failures),
+            "warning_count": len(_warnings),
+            "failures": list(_failures),
+            "warnings": list(_warnings),
+        },
+    )
+    build_observability_summary(job_dir)
+    if unexpected_error:
+        raise RuntimeError(unexpected_error)
+    return exit_code
 
 
 if __name__ == "__main__":

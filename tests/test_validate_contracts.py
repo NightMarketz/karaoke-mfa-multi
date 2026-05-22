@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -86,6 +87,40 @@ class ValidateContractsTests(unittest.TestCase):
                 s08_validate.validate_ass(job_dir)
 
             self.assertTrue(any("overlap" in failure for failure in s08_validate._failures))
+
+    def test_main_writes_observability_summary_for_validation_failures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "status.json").write_text(
+                '{"stage":"validating","progress":95,"error":"","updated_at":1}',
+                encoding="utf-8",
+            )
+
+            argv = ["s08_validate.py", "--job-dir", str(job_dir)]
+            with patch("sys.argv", argv), patch("builtins.print"):
+                exit_code = s08_validate.main()
+
+            self.assertEqual(exit_code, 1)
+            summary = json.loads((job_dir / "observability_summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(summary["failures"])
+            self.assertTrue(any("meta.json" in item["message"] for item in summary["failures"]))
+            self.assertEqual(summary["latest_event"]["event"], "validation_finished")
+
+    def test_main_writes_summary_when_validator_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            argv = ["s08_validate.py", "--job-dir", str(job_dir)]
+
+            with patch("sys.argv", argv), patch("builtins.print"), patch(
+                "scripts.s08_validate.validate_job_contracts",
+                side_effect=RuntimeError("validator exploded"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    s08_validate.main()
+
+            summary = json.loads((job_dir / "observability_summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(any("validator exploded" in item["message"] for item in summary["failures"]))
+            self.assertEqual(summary["latest_event"]["event"], "validation_finished")
 
 
 if __name__ == "__main__":
