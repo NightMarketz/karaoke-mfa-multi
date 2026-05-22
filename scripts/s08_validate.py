@@ -347,7 +347,7 @@ def validate_analysis(job_dir: Path, transcript: dict | None, aligned: dict | No
         coverage_errors = find_word_coverage_errors(aligned_words, analysis_words)
         if coverage_errors:
             for error in coverage_errors:
-                _warn(error)
+                _fail(error)
         else:
             _ok(f"Word coverage: all {len(aligned_words)} aligned words present")
 
@@ -435,7 +435,7 @@ def validate_ass(job_dir: Path) -> None:
         if layer0[i][1] > layer0[i + 1][0]
     )
     if layer0_overlaps:
-        _warn(f"{layer0_overlaps} display window overlap(s) in layer 0")
+        _fail(f"{layer0_overlaps} display window overlap(s) in layer 0")
     else:
         _ok("No display window overlaps in layer 0")
 

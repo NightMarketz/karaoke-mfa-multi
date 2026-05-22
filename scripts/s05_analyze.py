@@ -572,6 +572,8 @@ def main() -> int:
                             "classification, (2) used to correct low_confidence words "
                             "from transcript.json before sending to the LLM."
                         ))
+    parser.add_argument("--force-rule-based", action="store_true",
+                        help="Skip Ollama and group aligned words deterministically.")
     parser.add_argument("--log-level",   default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
@@ -580,6 +582,7 @@ def main() -> int:
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",
+        force=True,
         handlers=[
             logging.StreamHandler(),
             logging.FileHandler(job_dir / "pipeline.log", mode="a"),
@@ -639,7 +642,12 @@ def main() -> int:
     # ══════════════════════════════════════════════════════════════════════
     # PATH A: Forced alignment — deterministic, no LLM
     # ══════════════════════════════════════════════════════════════════════
-    if alignment_mode == "forced" and segments:
+    if args.force_rule_based:
+        logger.info("Rule-based analysis forced by CLI; Ollama skipped")
+        _update_status(job_dir, "analyzing", 50)
+        lines = _rule_based_grouper(words)
+
+    elif alignment_mode == "forced" and segments:
         logger.info(
             "Forced alignment detected — using deterministic segment grouper "
             "(%d segments, LLM skipped)",
@@ -703,7 +711,9 @@ def main() -> int:
     errors   = _validate_analysis(analysis)
     if errors:
         for e in errors:
-            logger.warning("Analysis validation: %s", e)
+            logger.error("Analysis validation: %s", e)
+        _update_status(job_dir, "failed", 0, errors[0])
+        return 1
 
     # Log style distribution for quick verification
     style_dist: dict[str, int] = {}
