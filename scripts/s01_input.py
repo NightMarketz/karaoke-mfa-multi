@@ -16,6 +16,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+FFPROBE_TIMEOUT_S = 30
+FFMPEG_TIMEOUT_S = 300
+
 
 SUPPORTED_AUDIO = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".wma"}
 SUPPORTED_VIDEO = {".mp4", ".mkv", ".webm", ".avi", ".mov"}
@@ -30,7 +33,12 @@ def probe_media(filepath: str) -> dict:
         "-show_format", "-show_streams",
         filepath
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=FFPROBE_TIMEOUT_S,
+    )
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {result.stderr}")
     return json.loads(result.stdout)
@@ -47,7 +55,12 @@ def extract_audio(input_path: str, output_path: str) -> None:
         "-ac", "2",               # stereo
         output_path
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=FFMPEG_TIMEOUT_S,
+    )
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg extraction failed: {result.stderr}")
 

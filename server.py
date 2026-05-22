@@ -159,27 +159,6 @@ def _compute_drift_metrics(job_dir: Path) -> dict | None:
 # Pipeline runner
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _run_stage(job_dir: Path, cmd: list[str], stage_name: str, progress_start: int) -> bool:
-    logger.info("Stage: %s → %s", stage_name, " ".join(cmd))
-    _write_status(job_dir, stage_name, progress_start)
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=900,
-        )
-        if result.returncode != 0:
-            error = (result.stderr or result.stdout or "unknown error")[-500:]
-            logger.error("Stage %s failed:\n%s", stage_name, error)
-            _write_status(job_dir, "failed", progress_start, error)
-            return False
-        return True
-    except subprocess.TimeoutExpired:
-        _write_status(job_dir, "failed", progress_start, "timeout after 15m")
-        return False
-    except Exception as e:
-        _write_status(job_dir, "failed", progress_start, str(e))
-        return False
-
-
 def _run_pipeline(job_id: str) -> None:
     job_dir = resolve_job_dir(JOBS_DIR, job_id)
     meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))

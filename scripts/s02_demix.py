@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 DEMUCS_PYTHON_DEFAULT = (
     "C:/Users/Katz/miniforge3/envs/demucs_env/python.exe"
 )
+DEMUCS_TIMEOUT_S = 1800
 
 # Accepted input extensions that Demucs can handle directly.
 # Stage 01 should have already normalised video → WAV, but we handle both.
@@ -90,6 +91,7 @@ def _run_demucs(
     jobs: int,
     input_path: Path,
     output_dir: Path,
+    timeout: int,
 ) -> None:
     """
     Invoke Demucs as a subprocess in the demucs_env.
@@ -110,7 +112,11 @@ def _run_demucs(
 
     logger.info("Running Demucs: %s", " ".join(cmd))
 
-    result = subprocess.run(cmd, capture_output=False)
+    try:
+        result = subprocess.run(cmd, capture_output=False, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Demucs timed out after {timeout}s") from exc
+
     if result.returncode != 0:
         raise RuntimeError(
             f"Demucs exited with code {result.returncode}. "
@@ -189,6 +195,10 @@ def main() -> int:
         help="Python executable inside demucs_env.",
     )
     parser.add_argument(
+        "--demucs-timeout", type=int, default=DEMUCS_TIMEOUT_S,
+        help="Maximum seconds to wait for Demucs before failing the stage.",
+    )
+    parser.add_argument(
         "--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
@@ -248,6 +258,7 @@ def main() -> int:
             jobs          = args.jobs,
             input_path    = input_path,
             output_dir    = demucs_tmp,
+            timeout       = args.demucs_timeout,
         )
         _update_status(job_dir, "demixing", 80)
 

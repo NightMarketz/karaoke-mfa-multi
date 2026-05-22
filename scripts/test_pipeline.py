@@ -25,6 +25,7 @@ SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 JOBS_DIR = PROJECT_ROOT / "jobs"
 DEFAULT_TEST_JOB = JOBS_DIR / "test-struggle"
 DEFAULT_INPUT = DEFAULT_TEST_JOB / "input.wav"
+FFPROBE_TIMEOUT_S = 30
 
 def validate(condition, message, hint=""):
     """Standardized validation reporting."""
@@ -65,7 +66,12 @@ def _get_wav_duration(path: Path) -> float:
         "-of", "default=noprint_wrappers=1:nokey=1", 
         str(path)
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=FFPROBE_TIMEOUT_S
+        )
+    except subprocess.TimeoutExpired:
+        return 0.0
     try:
         return float(result.stdout.strip())
     except Exception:
