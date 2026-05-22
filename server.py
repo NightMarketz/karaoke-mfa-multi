@@ -42,6 +42,7 @@ from flask import (
 )
 
 from scripts.common.paths import is_safe_archive_member, resolve_job_dir
+from scripts.common.observability import write_event
 from scripts.common.status import read_status, write_status
 from scripts.pipeline_runner import PipelineRunner
 
@@ -58,6 +59,17 @@ logger = logging.getLogger(__name__)
 
 # Track running pipelines: job_id → thread
 _running: dict[str, threading.Thread] = {}
+
+
+def _write_server_event(event: str, level: str = "info", message: str = "", **details: Any) -> None:
+    write_event(
+        JOBS_DIR / "_server",
+        event,
+        "server",
+        level=level,
+        message=message,
+        details=details,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +173,7 @@ def _compute_drift_metrics(job_dir: Path) -> dict | None:
 
 def _run_pipeline(job_id: str) -> None:
     job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    write_event(job_dir, "pipeline_thread_started", "running", details={"job_id": job_id})
     meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
     preset = meta.get("preset", "cyberpunk")
     runner = PipelineRunner(
@@ -271,12 +284,27 @@ def _extract_suno_zip(zip_file, job_dir: Path) -> tuple[Path | None, Path | None
                     continue
                 if not is_safe_archive_member(name):
                     logger.error("Unsafe ZIP member rejected: %s", name)
+                    write_event(
+                        job_dir,
+                        "zip_member_rejected",
+                        "preparing",
+                        level="error",
+                        message=f"Unsafe ZIP member rejected: {name}",
+                        details={"member": name, "reason": "unsafe_path"},
+                    )
                     shutil.rmtree(stems_dir, ignore_errors=True)
                     return None, None
                 audio_members.append(name)
 
             if not audio_members:
                 logger.error("ZIP contains no audio files")
+                write_event(
+                    job_dir,
+                    "zip_rejected",
+                    "preparing",
+                    level="error",
+                    message="ZIP contains no audio files",
+                )
                 return None, None
 
             for member in audio_members:
@@ -285,14 +313,36 @@ def _extract_suno_zip(zip_file, job_dir: Path) -> tuple[Path | None, Path | None
                     target.relative_to(stems_dir.resolve())
                 except ValueError:
                     logger.error("ZIP member escapes stems dir: %s", member)
+                    write_event(
+                        job_dir,
+                        "zip_member_rejected",
+                        "preparing",
+                        level="error",
+                        message=f"ZIP member escapes stems dir: {member}",
+                        details={"member": member, "reason": "resolved_escape"},
+                    )
                     shutil.rmtree(stems_dir, ignore_errors=True)
                     return None, None
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member) as src, target.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
             logger.info("ZIP extracted %d audio files: %s", len(audio_members), audio_members)
+            write_event(
+                job_dir,
+                "zip_extracted",
+                "preparing",
+                details={"audio_member_count": len(audio_members), "audio_members": audio_members},
+            )
     except Exception as e:
         logger.error("ZIP extraction failed: %s", e)
+        write_event(
+            job_dir,
+            "zip_rejected",
+            "preparing",
+            level="error",
+            message=f"ZIP extraction failed: {e}",
+            details={"exception_type": type(e).__name__},
+        )
         shutil.rmtree(stems_dir, ignore_errors=True)
         return None, None
 
@@ -339,6 +389,17 @@ def _extract_suno_zip(zip_file, job_dir: Path) -> tuple[Path | None, Path | None
         vocals_path.name if vocals_path else None,
         instrumental_path.name if instrumental_path else None,
     )
+    write_event(
+        job_dir,
+        "zip_stems_classified",
+        "preparing",
+        level="info" if vocals_path and instrumental_path else "error",
+        details={
+            "vocals": vocals_path.name if vocals_path else None,
+            "instrumental": instrumental_path.name if instrumental_path else None,
+            "unclassified": unclassified,
+        },
+    )
     return vocals_path, instrumental_path
 
 
@@ -354,16 +415,34 @@ def new_job_submit():
     job_id  = uuid.uuid4().hex[:12]
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True)
+    write_event(
+        job_dir,
+        "job_request_received",
+        "preparing",
+        details={"song_name": song_name, "preset": preset, "has_lyrics": bool(lyrics_text)},
+    )
 
     # ── Mode A: Suno ZIP upload ────────────────────────────────────────────
     suno_zip = request.files.get("suno_zip")
     if suno_zip and suno_zip.filename.lower().endswith(".zip"):
+        write_event(
+            job_dir,
+            "suno_zip_received",
+            "preparing",
+            details={"filename": Path(suno_zip.filename).name},
+        )
         zip_tmp = job_dir / "suno_stems.zip"
         suno_zip.save(zip_tmp)
         vocals_src, instrumental_src = _extract_suno_zip(zip_tmp, job_dir)
         zip_tmp.unlink(missing_ok=True)
 
         if not vocals_src or not instrumental_src:
+            _write_server_event(
+                "suno_zip_rejected",
+                level="error",
+                message="Could not identify vocal and instrumental stems in the ZIP.",
+                job_id=job_id,
+            )
             shutil.rmtree(job_dir, ignore_errors=True)
             return jsonify({
                 "error": (
@@ -378,11 +457,36 @@ def new_job_submit():
         instrumental_file = request.files.get("instrumental")
 
         if not vocals_file or not instrumental_file:
+            _write_server_event(
+                "individual_stems_missing",
+                level="error",
+                message="Missing vocal or instrumental upload",
+                job_id=job_id,
+                has_vocals=bool(vocals_file),
+                has_instrumental=bool(instrumental_file),
+            )
+            write_event(
+                job_dir,
+                "individual_stems_missing",
+                "preparing",
+                level="error",
+                message="Missing vocal or instrumental upload",
+                details={"has_vocals": bool(vocals_file), "has_instrumental": bool(instrumental_file)},
+            )
             shutil.rmtree(job_dir, ignore_errors=True)
             return jsonify({
                 "error": "Either upload a Suno ZIP, or provide both vocal and instrumental stems."
             }), 400
 
+        write_event(
+            job_dir,
+            "individual_stems_received",
+            "preparing",
+            details={
+                "vocals_filename": Path(vocals_file.filename).name,
+                "instrumental_filename": Path(instrumental_file.filename).name,
+            },
+        )
         ext_v = Path(vocals_file.filename).suffix.lower() or ".wav"
         ext_i = Path(instrumental_file.filename).suffix.lower() or ".wav"
         vocals_src      = job_dir / f"vocals_orig{ext_v}"
@@ -391,12 +495,47 @@ def new_job_submit():
         instrumental_file.save(instrumental_src)
 
     # ── Convert both stems to WAV ──────────────────────────────────────────
+    write_event(job_dir, "stem_conversion_started", "preparing", details={"stem": "vocals"})
     if not _convert_to_wav(vocals_src, job_dir / "vocals.wav"):
+        _write_server_event(
+            "stem_conversion_failed",
+            level="error",
+            message="Failed to convert vocals to WAV",
+            job_id=job_id,
+            stem="vocals",
+        )
+        write_event(
+            job_dir,
+            "stem_conversion_failed",
+            "preparing",
+            level="error",
+            message="Failed to convert vocals to WAV",
+            details={"stem": "vocals"},
+        )
         shutil.rmtree(job_dir, ignore_errors=True)
         return jsonify({"error": "Failed to convert vocals to WAV. Is ffmpeg installed?"}), 500
+    write_event(job_dir, "stem_conversion_finished", "preparing", details={"stem": "vocals"})
+
+    write_event(job_dir, "stem_conversion_started", "preparing", details={"stem": "instrumental"})
     if not _convert_to_wav(instrumental_src, job_dir / "instrumental.wav"):
+        _write_server_event(
+            "stem_conversion_failed",
+            level="error",
+            message="Failed to convert instrumental to WAV",
+            job_id=job_id,
+            stem="instrumental",
+        )
+        write_event(
+            job_dir,
+            "stem_conversion_failed",
+            "preparing",
+            level="error",
+            message="Failed to convert instrumental to WAV",
+            details={"stem": "instrumental"},
+        )
         shutil.rmtree(job_dir, ignore_errors=True)
         return jsonify({"error": "Failed to convert instrumental to WAV. Is ffmpeg installed?"}), 500
+    write_event(job_dir, "stem_conversion_finished", "preparing", details={"stem": "instrumental"})
 
     # Clean up originals after conversion (keep stems/ dir for ZIP mode)
     if vocals_src.suffix.lower() != ".wav" and vocals_src.exists():
@@ -420,10 +559,13 @@ def new_job_submit():
         "source": "zip" if suno_zip and suno_zip.filename else "files",
     }
     (job_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    write_event(job_dir, "meta_written", "preparing", details=meta)
     _write_status(job_dir, "queued", 0)
+    write_event(job_dir, "status_initialized", "queued", details={"stage": "queued", "progress": 0})
 
     t = threading.Thread(target=_run_pipeline, args=(job_id,), daemon=True)
     _running[job_id] = t
+    write_event(job_dir, "pipeline_thread_queued", "queued", details={"job_id": job_id})
     t.start()
 
     return redirect(url_for("job_detail", job_id=job_id))
@@ -547,6 +689,26 @@ def job_metrics_api(job_id: str):
 @app.route("/job/<job_id>/delete", methods=["POST"])
 def job_delete(job_id: str):
     if job_id in _running:
+        try:
+            job_dir = resolve_job_dir(JOBS_DIR, job_id)
+            if job_dir.exists():
+                write_event(
+                    job_dir,
+                    "running_job_deletion_blocked",
+                    "running",
+                    level="warning",
+                    message="Cannot delete a running job.",
+                )
+            else:
+                _write_server_event(
+                    "running_job_deletion_blocked",
+                    level="warning",
+                    message="Cannot delete a running job.",
+                    job_id=job_id,
+                    stale_registry=True,
+                )
+        except ValueError:
+            pass
         return jsonify({"error": "Cannot delete a running job."}), 409
     try:
         job_dir = resolve_job_dir(JOBS_DIR, job_id)
