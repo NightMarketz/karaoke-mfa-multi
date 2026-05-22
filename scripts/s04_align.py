@@ -31,7 +31,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from uuid import uuid4
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -53,6 +55,18 @@ logger = logging.getLogger(__name__)
 # Silence phoneme labels emitted by HubertFA
 _SILENCE_LABELS = {"SIL", "SP", "AP", "sil", "sp", "ap", "<SIL>", "<SP>"}
 _STRESS_RE = re.compile(r"\d+$")
+
+
+@contextmanager
+def _hfa_batch_dir(job_dir: Path):
+    tmp_dir = job_dir / f".hfa_batch_{uuid4().hex[:8]}"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    tmp_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        yield tmp_dir
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _parse_textgrid(path: Path) -> list[dict[str, Any]]:
@@ -292,6 +306,7 @@ def main() -> int:
     parser.add_argument("--hubertfa-dir", default="vendor/HubertFA", type=Path)
     parser.add_argument("--checkpoint", default="models/hubertfa/model.onnx", type=Path)
     parser.add_argument("--language", default="en")
+    parser.add_argument("--hubertfa-timeout", default=180, type=int)
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"])
     args = parser.parse_args()
 
@@ -343,8 +358,7 @@ def main() -> int:
     # Determine the correct fallback function based on alignment mode
     _fallback = _ctc_forced_fallback if is_forced else _whisper_fallback
 
-    with tempfile.TemporaryDirectory(prefix="hfa_batch_") as tmp_str:
-        tmp_dir = Path(tmp_str)
+    with _hfa_batch_dir(job_dir) as tmp_dir:
         logger.info("Batch Prep: Slicing %d segments into %s", len(segments), tmp_dir)
         
         for i, seg in enumerate(segments):
@@ -368,15 +382,29 @@ def main() -> int:
         ]
         
         start_time = time.time()
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode != 0:
+        try:
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=args.hubertfa_timeout,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error("HubertFA Batch timed out after %ss; using fallback timings", args.hubertfa_timeout)
+            res = None
+            for seg in segments:
+                words = _fallback(seg.get("words", []))
+                words = normalize_words(words, seg["start"], seg["end"])
+                all_aligned_words.extend(words)
+
+        if res is not None and res.returncode != 0:
             logger.error("HubertFA Batch failed:\n%s", res.stderr)
             # Global fallback if batch inference crashes
             for seg in segments:
                 words = _fallback(seg.get("words", []))
                 words = normalize_words(words, seg["start"], seg["end"])
                 all_aligned_words.extend(words)
-        else:
+        elif res is not None:
             elapsed = time.time() - start_time
             logger.info("Batch Inference OK (%.2fs for %d segments)", elapsed, len(segments))
 

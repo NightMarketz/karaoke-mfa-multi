@@ -265,7 +265,10 @@ def validate_aligned(job_dir: Path) -> dict[str, Any] | None:
 
     total = len(words)
     if hfa == 0:
-        _fail("0% HubertFA alignment — HubertFA may have crashed silently")
+        if any("fallback" in str(source) for source in sources):
+            _warn("0% HubertFA alignment - using fallback timings")
+        else:
+            _fail("0% HubertFA alignment - no fallback source was recorded")
     elif hfa / total < 0.6:
         _warn(f"HubertFA rate {hfa}/{total} ({100*hfa//total}%) < 60% — many fallbacks")
     else:
