@@ -1,0 +1,3 @@
+display_name: Hardcoded Config Audit
+short_description: Audit hardcoded project configuration before structural refactors.
+default_prompt: Audit hardcoded paths, models, thresholds, and defaults with evidence and tests.
