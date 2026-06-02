@@ -59,6 +59,7 @@ from scripts.review_wizard.timing_layers import (
     build_timing_diagnostics,
     classify_line_timing,
     gap_should_be_absorbed,
+    is_review_only_audio_timing,
     summarize_audio_backed_timing,
     summarize_timing_layers,
 )
@@ -739,6 +740,20 @@ def _ass_metrics(content: str) -> dict[str, int]:
 
 
 def _audio_timing_diagnostics(audio_timings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def compact_audio_evidence(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        compact: dict[str, Any] = {}
+        for key in ("active", "start_s", "end_s", "duration_s", "voiced_ratio", "rms", "threshold"):
+            if key not in value:
+                continue
+            item = value[key]
+            if isinstance(item, float):
+                compact[key] = round(item, 4)
+            else:
+                compact[key] = item
+        return compact
+
     diagnostics: list[dict[str, Any]] = []
     for line_index, timing in enumerate(audio_timings):
         line_classification = timing.get("line_classification")
@@ -757,6 +772,8 @@ def _audio_timing_diagnostics(audio_timings: list[dict[str, Any]]) -> list[dict[
 
         tail = timing.get("tail") or {}
         tail_classification = tail.get("classification")
+        if is_review_only_audio_timing(timing):
+            continue
         if tail_classification in {
             "possible_lost_tail",
             "unwritten_interline_melisma",
@@ -770,6 +787,9 @@ def _audio_timing_diagnostics(audio_timings: list[dict[str, Any]]) -> list[dict[
             }
             if tail.get("sound_suggestion"):
                 diagnostic["sound_suggestion"] = tail.get("sound_suggestion")
+            audio_evidence = compact_audio_evidence(tail.get("audio_evidence"))
+            if audio_evidence:
+                diagnostic["audio_evidence"] = audio_evidence
             diagnostics.append(diagnostic)
     return diagnostics
 
@@ -1053,12 +1073,14 @@ def main() -> int:
                 "applied_tail_extensions": sum(
                     1
                     for timing in audio_timings
-                    if timing.get("tail", {}).get("classification") in SAFE_EXTENSION_CLASSES
+                    if not is_review_only_audio_timing(timing)
+                    and timing.get("tail", {}).get("classification") in SAFE_EXTENSION_CLASSES
                 ),
                 "applied_tail_trims": sum(
                     1
                     for timing in audio_timings
-                    if timing.get("tail", {}).get("classification") == "false_long_tail"
+                    if not is_review_only_audio_timing(timing)
+                    and timing.get("tail", {}).get("classification") == "false_long_tail"
                 ),
             }
         except Exception as exc:

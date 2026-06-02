@@ -469,8 +469,8 @@ class TimingLayersTests(unittest.TestCase):
         self.assertEqual(
             timing["sound_suggestion"],
             {
-                "sound_type": "possible_backing_vocal_not_in_lyrics",
-                "suggested_caption": "[vocal de apoio]",
+                "sound_type": "possible_backing_or_alignment_issue",
+                "suggested_caption": "[revisar vocal/alinhamento]",
                 "suggested_user_action": "review_backing_vocal_or_local_realign",
             },
         )
@@ -659,6 +659,36 @@ class TimingLayersTests(unittest.TestCase):
         self.assertEqual(extended[0]["words"][0]["end"], 16.20)
         self.assertEqual(extended[0]["end"], 16.20)
         self.assertEqual(extended[0]["words"][0]["audio_extension"]["classification"], "written_melisma_extension")
+
+    def test_apply_audio_backed_tail_extensions_skips_review_only_lines(self):
+        lines = [
+            {
+                "text": "Lights go low",
+                "start": 223.28,
+                "end": 233.68,
+                "style": "bridge",
+                "words": [
+                    {"word": "Lights", "start": 223.28, "end": 227.24},
+                    {"word": "go", "start": 232.52, "end": 232.64},
+                    {"word": "low", "start": 233.12, "end": 233.68},
+                ],
+            }
+        ]
+        timings = [
+            {
+                "line_classification": "review_only_backing_or_drift",
+                "tail": {
+                    "classification": "probable_unwritten_vowel_extension",
+                    "word_index": 2,
+                    "audio_evidence": {"end_s": 234.80, "voiced_ratio": 0.91},
+                },
+            }
+        ]
+
+        extended = apply_audio_backed_tail_extensions(lines, timings)
+
+        self.assertEqual(extended[0]["words"][2]["end"], 233.68)
+        self.assertNotIn("audio_extension", extended[0]["words"][2])
 
     def test_apply_audio_backed_tail_extensions_trims_false_long_tail_to_word_start_plus_minimum(self):
         lines = [

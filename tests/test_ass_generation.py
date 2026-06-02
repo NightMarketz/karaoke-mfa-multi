@@ -314,6 +314,36 @@ class AssGenerationTests(unittest.TestCase):
             self.assertGreaterEqual(manifest["timing_audio_layers"]["applied_tail_extensions"], 1)
             self.assertIn("\\kf111}ooo", ass_content)
 
+    def test_stage06_real_wav_trims_false_long_tail_in_final_ass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            line = {
+                "text": "I must carry on",
+                "start": 0.50,
+                "end": 7.25,
+                "style": "outro",
+                "effect": "highlight",
+                "words": [
+                    {"word": "I", "start": 0.50, "end": 0.55},
+                    {"word": "must", "start": 1.00, "end": 1.40},
+                    {"word": "carry", "start": 1.80, "end": 2.20},
+                    {"word": "on", "start": 2.25, "end": 7.25},
+                ],
+            }
+            self._write_analysis(job_dir, [line])
+            self._write_sine_window(job_dir / "vocals.wav", duration_s=8.0, active_start_s=0.50, active_end_s=2.20)
+
+            exit_code = self._run_stage06(job_dir, "--preset", "single-style-kf")
+
+            self.assertEqual(exit_code, 0)
+            manifest = json.loads((job_dir / "output.ass.manifest.json").read_text(encoding="utf-8"))
+            ass_content = (job_dir / "output.ass").read_text(encoding="utf-8-sig")
+            self.assertEqual(manifest["timing_audio_layers"]["summary"]["tails"]["false_long_tail"], 1)
+            self.assertEqual(manifest["timing_audio_layers"]["applied_tail_extensions"], 0)
+            self.assertEqual(manifest["timing_audio_layers"]["applied_tail_trims"], 1)
+            self.assertIn("\\kf60}on", ass_content)
+            self.assertNotIn("\\kf500}on", ass_content)
+
     def test_stage06_manifest_keeps_review_only_audio_diagnostics(self):
         with tempfile.TemporaryDirectory() as tmp:
             job_dir = Path(tmp)
@@ -372,6 +402,61 @@ class AssGenerationTests(unittest.TestCase):
                 ],
             )
 
+    def test_stage06_does_not_apply_review_only_tail_extensions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            line = {
+                "text": "Lights go low",
+                "start": 223.28,
+                "end": 233.68,
+                "style": "bridge",
+                "effect": "highlight",
+                "words": [
+                    {"word": "Lights", "start": 223.28, "end": 227.24},
+                    {"word": "go", "start": 232.52, "end": 232.64},
+                    {"word": "low", "start": 233.12, "end": 233.68},
+                ],
+            }
+            self._write_analysis(job_dir, [line])
+            (job_dir / "vocals.wav").write_bytes(b"not-a-real-wav-but-present")
+            fake_timing = [
+                {
+                    "line_classification": "review_only_backing_or_drift",
+                    "diagnostic_tags": ["possible_backing_vocal_not_in_lyrics"],
+                    "confidence": "high",
+                    "recommended_fallback": "manual_review_or_local_realign",
+                    "sound_suggestion": {
+                        "sound_type": "possible_backing_vocal_not_in_lyrics",
+                        "suggested_caption": "[vocal de apoio]",
+                        "suggested_user_action": "review_backing_vocal_or_local_realign",
+                    },
+                    "inter_word_gaps": [{"classification": "bad_gap"}],
+                    "vocal_periods": [],
+                    "tail": {
+                        "classification": "probable_unwritten_vowel_extension",
+                        "word_index": 2,
+                        "audio_evidence": {"end_s": 234.80, "voiced_ratio": 0.91},
+                    },
+                }
+            ]
+
+            with patch("scripts.s06_generate_ass.build_audio_activity_map", return_value={}):
+                with patch("scripts.s06_generate_ass.build_audio_backed_timing", return_value=fake_timing):
+                    exit_code = self._run_stage06(job_dir, "--preset", "single-style-kf")
+
+            self.assertEqual(exit_code, 0)
+            manifest = json.loads((job_dir / "output.ass.manifest.json").read_text(encoding="utf-8"))
+            ass_content = (job_dir / "output.ass").read_text(encoding="utf-8-sig")
+            self.assertEqual(manifest["timing_audio_layers"]["applied_tail_extensions"], 0)
+            self.assertEqual(manifest["timing_audio_layers"]["summary"]["tails"]["probable_unwritten_vowel_extension"], 1)
+            self.assertEqual(len(manifest["timing_audio_layers"]["diagnostics"]), 1)
+            self.assertEqual(
+                manifest["timing_audio_layers"]["diagnostics"][0]["sound_suggestion"]["suggested_caption"],
+                "[vocal de apoio]",
+            )
+            self.assertIn("\\kf56}low", ass_content)
+            self.assertNotIn("\\kf168}low", ass_content)
+
     def test_stage06_manifest_keeps_tail_sound_suggestions_for_review(self):
         with tempfile.TemporaryDirectory() as tmp:
             job_dir = Path(tmp)
@@ -400,6 +485,15 @@ class AssGenerationTests(unittest.TestCase):
                         "confidence": "medium",
                         "recommended_fallback": "flag_review_or_create_extension_bar",
                         "word": "fall",
+                        "audio_evidence": {
+                            "active": True,
+                            "start_s": 298.64,
+                            "end_s": 300.12,
+                            "duration_s": 1.48,
+                            "voiced_ratio": 0.88,
+                            "rms": 0.05,
+                            "threshold": 0.02,
+                        },
                         "sound_suggestion": {
                             "sound_type": "unwritten_vocal_melisma",
                             "suggested_caption": "[vocalizacao]",
@@ -423,6 +517,15 @@ class AssGenerationTests(unittest.TestCase):
                         "tail_classification": "unwritten_interline_melisma",
                         "confidence": "medium",
                         "recommended_fallback": "flag_review_or_create_extension_bar",
+                        "audio_evidence": {
+                            "active": True,
+                            "start_s": 298.64,
+                            "end_s": 300.12,
+                            "duration_s": 1.48,
+                            "voiced_ratio": 0.88,
+                            "rms": 0.05,
+                            "threshold": 0.02,
+                        },
                         "sound_suggestion": {
                             "sound_type": "unwritten_vocal_melisma",
                             "suggested_caption": "[vocalizacao]",

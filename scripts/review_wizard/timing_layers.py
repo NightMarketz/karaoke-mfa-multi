@@ -21,6 +21,10 @@ SAFE_EXTENSION_CLASSES = {
 }
 
 
+def is_review_only_audio_timing(timing: dict[str, Any]) -> bool:
+    return str(timing.get("line_classification") or "").startswith("review_only")
+
+
 def _time(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -95,6 +99,14 @@ def _has_short_first_word_entry_drift(timing: dict[str, Any], words: list[dict[s
         return False
     return any(
         gap.get("classification") == "bad_gap" and int(gap.get("after_word_index", -1)) == 0
+        for gap in timing.get("inter_word_gaps", [])
+    )
+
+
+def _has_large_internal_alignment_hole(timing: dict[str, Any]) -> bool:
+    return any(
+        gap.get("classification") == "bad_gap"
+        and float(gap.get("gap_s", 0.0)) >= INSTRUMENTAL_PAUSE_THRESHOLD_S
         for gap in timing.get("inter_word_gaps", [])
     )
 
@@ -377,11 +389,18 @@ def build_audio_backed_timing(
             else:
                 timing["recommended_fallback"] = "manual_review_or_local_realign"
                 timing["diagnostic_tags"] = ["possible_backing_vocal_not_in_lyrics"]
-                timing["sound_suggestion"] = _sound_suggestion(
-                    sound_type="possible_backing_vocal_not_in_lyrics",
-                    suggested_caption="[vocal de apoio]",
-                    suggested_user_action="review_backing_vocal_or_local_realign",
-                )
+                if _has_large_internal_alignment_hole(timing):
+                    timing["sound_suggestion"] = _sound_suggestion(
+                        sound_type="possible_backing_or_alignment_issue",
+                        suggested_caption="[revisar vocal/alinhamento]",
+                        suggested_user_action="review_backing_vocal_or_local_realign",
+                    )
+                else:
+                    timing["sound_suggestion"] = _sound_suggestion(
+                        sound_type="possible_backing_vocal_not_in_lyrics",
+                        suggested_caption="[vocal de apoio]",
+                        suggested_user_action="review_backing_vocal_or_local_realign",
+                    )
 
         timings.append(timing)
     return timings
@@ -417,6 +436,8 @@ def apply_audio_backed_tail_extensions(
     extended_lines = copy.deepcopy(lines)
     for line_index, timing in enumerate(timings):
         if line_index >= len(extended_lines):
+            continue
+        if is_review_only_audio_timing(timing):
             continue
         tail = timing.get("tail", {})
         word_index = int(tail.get("word_index", -1))
