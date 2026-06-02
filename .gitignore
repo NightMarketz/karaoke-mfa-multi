@@ -4,6 +4,7 @@ jobs/
 # Agent/runtime scratch
 .agents/
 tmp*/
+manual_tmp*/
 
 # Python
 __pycache__/
