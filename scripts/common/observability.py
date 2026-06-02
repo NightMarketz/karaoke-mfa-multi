@@ -181,12 +181,24 @@ def build_observability_summary(job_dir: Path) -> dict[str, Any]:
         if event.get("event") in {"stage_finished", "stage_command_finished"} and "duration_ms" in event:
             durations[str(event.get("stage", "unknown"))] = int(event["duration_ms"])
 
+    current_validation = None
+    for event in reversed(events):
+        if event.get("event") == "validation_finished":
+            details = event.get("details", {})
+            current_validation = {
+                "failure_count": int(details.get("failure_count", 0)),
+                "warning_count": int(details.get("warning_count", 0)),
+                "exit_code": int(details.get("exit_code", 1)),
+            }
+            break
+
     summary = {
         "job_id": _job_id(job_dir),
         "total_events": len(events),
         "latest_event": events[-1] if events else None,
         "failures": failures,
         "warnings": warnings,
+        "current_validation": current_validation,
         "artifacts": artifacts,
         "stage_durations_ms": durations,
     }

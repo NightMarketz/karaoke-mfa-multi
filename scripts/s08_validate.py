@@ -38,6 +38,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.common.observability import build_observability_summary, write_event
+from scripts.common.provenance import ProvenanceError, file_sha256, load_manifest, validate_file_hash
 from scripts.common.validation import find_timestamp_errors, find_word_coverage_errors
 
 logger = logging.getLogger(__name__)
@@ -109,6 +110,24 @@ def _percentile(values: list[float], p: float) -> float:
     k = (len(sorted_v) - 1) * p / 100
     lo, hi = int(k), min(int(k) + 1, len(sorted_v) - 1)
     return sorted_v[lo] + (sorted_v[hi] - sorted_v[lo]) * (k - lo)
+
+
+def _manifest_sha(manifest: dict[str, Any], section: str, artifact: str) -> str:
+    entries = manifest.get(section)
+    if not isinstance(entries, dict):
+        raise ProvenanceError(f"manifest missing {section}")
+    details = entries.get(artifact)
+    if not isinstance(details, dict):
+        raise ProvenanceError(f"manifest missing {artifact} entry")
+    sha256 = details.get("sha256")
+    if not isinstance(sha256, str) or not sha256:
+        raise ProvenanceError(f"manifest missing {artifact} sha256")
+    return sha256
+
+
+def _ass_dialogue_count(path: Path) -> int:
+    content = path.read_text(encoding="utf-8-sig", errors="replace")
+    return content.count("\nDialogue:")
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +290,8 @@ def validate_aligned(job_dir: Path) -> dict[str, Any] | None:
 
     total = len(words)
     if hfa == 0:
-        if any("fallback" in str(source) for source in sources):
+        fallback_sources = {"ctc_forced", "whisper_fallback"}
+        if any("fallback" in str(source) or source in fallback_sources for source in sources):
             _warn("0% HubertFA alignment - using fallback timings")
         else:
             _fail("0% HubertFA alignment - no fallback source was recorded")
@@ -405,22 +425,19 @@ def validate_ass(job_dir: Path) -> None:
         _fail("No Dialogue lines in ASS")
         return
 
-    _ok(f"Dialogue lines: {n_lines} ({n_lines // 2} visible lines × 2 layers)")
-
-    # Pair check: should be even (layer 0 + layer 1 for each line)
-    if n_lines % 2 != 0:
-        _warn(f"Odd number of Dialogue lines ({n_lines}) — expected even (2 per lyric line)")
+    _ok(f"Dialogue lines: {n_lines}")
 
     # Timestamp checks
     inverted_ts = 0
-    overlaps = 0
 
     timestamps: list[tuple[int, int]] = []
+    timestamps_by_layer: dict[int, list[tuple[int, int]]] = {}
     for d in dialogues:
         parts = d.split(",")
         if len(parts) < 3:
             continue
         try:
+            layer = int(parts[0].split(":", 1)[1].strip())
             s_ms = _ts_to_ms(parts[1].strip())
             e_ms = _ts_to_ms(parts[2].strip())
         except (ValueError, IndexError):
@@ -428,27 +445,115 @@ def validate_ass(job_dir: Path) -> None:
         if e_ms <= s_ms:
             inverted_ts += 1
         timestamps.append((s_ms, e_ms))
+        timestamps_by_layer.setdefault(layer, []).append((s_ms, e_ms))
 
     if inverted_ts:
         _fail(f"{inverted_ts} Dialogue lines with end ≤ start")
     else:
         _ok("All Dialogue timestamps: end > start")
 
-    # Check overlaps within each layer
-    layer0 = timestamps[0::2]  # even indices
-    layer0_overlaps = sum(
-        1 for i in range(len(layer0) - 1)
-        if layer0[i][1] > layer0[i + 1][0]
-    )
-    if layer0_overlaps:
-        _fail(f"{layer0_overlaps} display window overlap(s) in layer 0")
+    # Check overlaps within each ASS layer. Single-layer karaoke is the
+    # default, but this keeps validation correct for imported/editable ASS.
+    layer_overlaps: dict[int, int] = {}
+    for layer, layer_timestamps in timestamps_by_layer.items():
+        ordered = sorted(layer_timestamps)
+        overlap_count = sum(
+            1 for i in range(len(ordered) - 1)
+            if ordered[i][1] > ordered[i + 1][0]
+        )
+        if overlap_count:
+            layer_overlaps[layer] = overlap_count
+
+    if layer_overlaps:
+        details = ", ".join(
+            f"layer {layer}: {count}" for layer, count in sorted(layer_overlaps.items())
+        )
+        _fail(f"display window overlap(s): {details}")
     else:
-        _ok("No display window overlaps in layer 0")
+        _ok("No display window overlaps within ASS layers")
 
 
 # ---------------------------------------------------------------------------
 # Drift metrics — compare transcript.json vs reference_mapping.json
 # ---------------------------------------------------------------------------
+
+def validate_provenance(job_dir: Path) -> None:
+    _section("Artifact Provenance Graph")
+
+    ass_path = job_dir / "output.ass"
+    current_ass_sha256: str | None = None
+    if ass_path.exists():
+        try:
+            manifest = load_manifest(job_dir / "output.ass.manifest.json")
+            validate_file_hash(ass_path, _manifest_sha(manifest, "outputs", "output.ass"))
+            current_ass_sha256 = file_sha256(ass_path)
+            _ok("output.ass hash matches output.ass.manifest.json")
+
+            renderer_mode = manifest.get("renderer_mode")
+            if renderer_mode != "single_layer_kf":
+                _fail(f"output.ass renderer_mode must be single_layer_kf, got {renderer_mode!r}")
+            else:
+                _ok("renderer_mode: single_layer_kf")
+
+            metrics = manifest.get("metrics")
+            if not isinstance(metrics, dict):
+                _fail("output.ass.manifest.json missing metrics")
+            else:
+                dialogue_count = _ass_dialogue_count(ass_path)
+                if metrics.get("dialogue_count") != dialogue_count:
+                    _fail(
+                        "output.ass.manifest.json dialogue_count mismatch: "
+                        f"{metrics.get('dialogue_count')} != {dialogue_count}"
+                    )
+                else:
+                    _ok(f"ASS dialogue_count provenance OK: {dialogue_count}")
+
+                analysis_path = job_dir / "analysis.json"
+                if analysis_path.exists():
+                    analysis = _load_json(analysis_path)
+                    if isinstance(analysis, dict):
+                        lines = analysis.get("lines", [])
+                        if metrics.get("analysis_line_count") != len(lines):
+                            _fail(
+                                "output.ass.manifest.json analysis_line_count mismatch: "
+                                f"{metrics.get('analysis_line_count')} != {len(lines)}"
+                            )
+                        else:
+                            _ok(f"analysis_line_count provenance OK: {len(lines)}")
+
+            inputs = manifest.get("inputs")
+            if isinstance(inputs, dict) and "analysis.json" in inputs and (job_dir / "analysis.json").exists():
+                validate_file_hash(job_dir / "analysis.json", _manifest_sha(manifest, "inputs", "analysis.json"))
+                _ok("analysis.json hash matches output.ass.manifest.json")
+        except ProvenanceError as exc:
+            _fail(f"output.ass.manifest.json invalid: {exc}")
+    else:
+        _warn("output.ass absent - ASS provenance skipped")
+
+    mp4_path = job_dir / "output.mp4"
+    if not mp4_path.exists():
+        _warn("output.mp4 absent - MP4 provenance skipped")
+        return
+
+    try:
+        manifest = load_manifest(job_dir / "output.mp4.manifest.json")
+        validate_file_hash(mp4_path, _manifest_sha(manifest, "outputs", "output.mp4"))
+        _ok("output.mp4 hash matches output.mp4.manifest.json")
+
+        expected_ass_sha256 = _manifest_sha(manifest, "inputs", "output.ass")
+        if current_ass_sha256 is None:
+            if not ass_path.exists():
+                raise ProvenanceError("output.mp4.manifest.json declares output.ass but output.ass is missing")
+            current_ass_sha256 = file_sha256(ass_path)
+        if expected_ass_sha256 != current_ass_sha256:
+            raise ProvenanceError(
+                "output.mp4.manifest.json output.ass input hash mismatch: "
+                f"{expected_ass_sha256} != {current_ass_sha256}"
+            )
+        _ok("output.mp4 input output.ass hash matches current output.ass")
+    except ProvenanceError as exc:
+        _fail(f"output.mp4.manifest.json invalid: {exc}")
+
 
 def validate_drift(job_dir: Path, ref_path: Path | None, transcript: dict | None) -> None:
     _section("Drift Metrics — CTC vs Ground Truth")
@@ -570,6 +675,7 @@ def main() -> int:
         aligned    = validate_aligned(job_dir)
         validate_analysis(job_dir, transcript, aligned)
         validate_ass(job_dir)
+        validate_provenance(job_dir)
         validate_drift(job_dir, args.reference, transcript)
     except Exception as exc:
         unexpected_error = str(exc)

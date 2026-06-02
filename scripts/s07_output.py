@@ -47,6 +47,13 @@ from scripts.common.observability import (
     record_artifact,
     write_event,
 )
+from scripts.common.provenance import (
+    ProvenanceError,
+    file_sha256,
+    load_manifest,
+    validate_file_hash,
+    write_manifest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +171,31 @@ def _check_input_artifact(
             artifact=path.name,
         )
     return event_details
+
+
+def _validate_ass_manifest(job_dir: Path, ass_path: Path) -> dict[str, Any]:
+    manifest_path = job_dir / "output.ass.manifest.json"
+    manifest = load_manifest(manifest_path)
+    inputs = manifest.get("inputs")
+    if isinstance(inputs, dict) and "analysis.json" in inputs:
+        analysis_details = inputs.get("analysis.json")
+        if not isinstance(analysis_details, dict):
+            raise ProvenanceError("manifest analysis.json entry must be an object")
+        expected_analysis_sha256 = analysis_details.get("sha256")
+        if not isinstance(expected_analysis_sha256, str) or not expected_analysis_sha256:
+            raise ProvenanceError("manifest missing analysis.json sha256")
+        validate_file_hash(job_dir / "analysis.json", expected_analysis_sha256)
+    outputs = manifest.get("outputs")
+    if not isinstance(outputs, dict):
+        raise ProvenanceError("manifest missing outputs: output.ass.manifest.json")
+    ass_details = outputs.get("output.ass")
+    if not isinstance(ass_details, dict):
+        raise ProvenanceError("manifest missing output.ass entry")
+    expected_sha256 = ass_details.get("sha256")
+    if not isinstance(expected_sha256, str) or not expected_sha256:
+        raise ProvenanceError("manifest missing output.ass sha256")
+    validate_file_hash(ass_path, expected_sha256)
+    return manifest
 
 
 def _probe_media_duration(path: Path, timeout: int = 15) -> float | None:
@@ -461,6 +493,7 @@ def main() -> int:
         logger.warning("vocals.wav missing or empty. Output will be instrumental only.")
 
     ass_path: Path | None = None
+    ass_manifest: dict[str, Any] | None = None
     if not args.no_subtitles:
         ass_path = job_dir / "output.ass"
         ass_details = _check_input_artifact(job_dir, ass_path, required=True)
@@ -509,6 +542,34 @@ def main() -> int:
                 "invalid_input",
                 "output.ass missing [Script Info] header",
                 {"artifact": "output.ass"},
+            )
+            return 1
+        try:
+            ass_manifest = _validate_ass_manifest(job_dir, ass_path)
+        except ProvenanceError as exc:
+            logger.error("output.ass provenance invalid: %s", exc)
+            _update_status(job_dir, "failed", 0, f"Invalid ASS provenance: {exc}")
+            write_event(
+                job_dir,
+                "stage07.render_failed",
+                STAGE,
+                level="error",
+                message=f"Invalid ASS provenance: {exc}",
+                details={
+                    "reason": "ass_manifest_invalid",
+                    "artifact": "output.ass",
+                    "manifest": "output.ass.manifest.json",
+                },
+                artifact="output.ass",
+            )
+            _fail_stage07(
+                job_dir,
+                "ass_manifest_invalid",
+                f"Invalid ASS provenance: {exc}",
+                {
+                    "artifact": "output.ass",
+                    "manifest": "output.ass.manifest.json",
+                },
             )
             return 1
         logger.info("Subtitles: %s (%.1f KB)", ass_path.name, ass_path.stat().st_size / 1e3)
@@ -742,10 +803,66 @@ def main() -> int:
 
     size_mb = output_path.stat().st_size / 1e6
     output_duration = _probe_media_duration(output_path, timeout=30)
+    manifest_inputs: dict[str, Any] = {
+        "instrumental.wav": {
+            "path": "instrumental.wav",
+            "sha256": file_sha256(instrumental_path),
+            "size_bytes": instrumental_path.stat().st_size,
+        }
+    }
+    if has_vocals:
+        manifest_inputs["vocals.wav"] = {
+            "path": "vocals.wav",
+            "sha256": file_sha256(vocals_path),
+            "size_bytes": vocals_path.stat().st_size,
+        }
+    if ass_path is not None:
+        manifest_inputs["output.ass"] = {
+            "path": "output.ass",
+            "sha256": file_sha256(ass_path),
+            "size_bytes": ass_path.stat().st_size,
+            "manifest": "output.ass.manifest.json",
+            "manifest_sha256": file_sha256(job_dir / "output.ass.manifest.json"),
+        }
+        if ass_manifest is not None:
+            manifest_inputs["output.ass"]["source_stage"] = ass_manifest.get("stage")
+            manifest_inputs["output.ass"]["run_id"] = ass_manifest.get("run_id")
+    mp4_manifest_path = write_manifest(
+        job_dir / "output.mp4.manifest.json",
+        {
+            "stage": "stage07",
+            "inputs": manifest_inputs,
+            "outputs": {
+                "output.mp4": {
+                    "path": "output.mp4",
+                },
+            },
+            "settings": {
+                "vcodec": args.vcodec,
+                "quality": args.quality,
+                "resolution": args.resolution,
+                "framerate": args.framerate,
+                "audio_codec": args.audio_codec,
+                "audio_bitrate": args.audio_bitrate,
+                "no_subtitles": args.no_subtitles,
+                "has_vocals": has_vocals,
+                "instrumental_volume": args.instrumental_volume,
+                "vocals_volume": args.vocals_volume,
+            },
+            "metrics": {
+                "encode_seconds": elapsed,
+                "duration_seconds": output_duration,
+                "size_bytes": output_path.stat().st_size,
+            },
+        },
+        output_paths={"output.mp4": output_path},
+    )
     output_details: dict[str, Any] = {
         "path": str(output_path),
         "name": output_path.name,
         "size_bytes": output_path.stat().st_size,
+        "manifest_path": str(mp4_manifest_path),
+        "manifest_sha256": file_sha256(mp4_manifest_path),
     }
     if output_duration is not None:
         output_details["duration_seconds"] = output_duration

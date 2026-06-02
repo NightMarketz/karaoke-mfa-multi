@@ -82,6 +82,35 @@ class ObservabilityContractTests(unittest.TestCase):
 
             self.assertEqual(summary["stage_durations_ms"]["rendering"], 123)
 
+    def test_summary_records_latest_validation_counts_separately_from_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            write_event(job_dir, "validation_failure", "validating", level="error", message="old failure")
+            write_event(
+                job_dir,
+                "validation_finished",
+                "validating",
+                level="error",
+                message="validation failed",
+                details={"failure_count": 1, "warning_count": 0, "exit_code": 1},
+            )
+            write_event(
+                job_dir,
+                "validation_finished",
+                "validating",
+                level="info",
+                message="validation passed",
+                details={"failure_count": 0, "warning_count": 3, "exit_code": 0},
+            )
+
+            summary = build_observability_summary(job_dir)
+
+            self.assertTrue(summary["failures"])
+            self.assertEqual(
+                {"failure_count": 0, "warning_count": 3, "exit_code": 0},
+                summary["current_validation"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

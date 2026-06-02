@@ -152,11 +152,11 @@ def _whisper_fallback(words: list[dict]) -> list[dict]:
 
 
 def _ctc_forced_fallback(words: list[dict]) -> list[dict]:
-    """Preserve CTC word timestamps without phoneme data (forced mode fallback)."""
+    """Preserve provider word timestamps without phoneme data."""
     result = []
     for w in words:
         entry = dict(w)
-        entry.update({"source": "ctc_forced", "phonemes": []})
+        entry.update({"source": w.get("source", "ctc_forced"), "phonemes": []})
         result.append(entry)
     return result
 
@@ -200,11 +200,12 @@ def _ctc_forced_with_phonemes(
                 if w_end < w_start + min_dur:
                     w_end = w_start + min_dur
 
+        base_source = word.get("source", "ctc_forced")
         entry = {
             "word":     word["word"],
             "start":    round(w_start, 4),
             "end":      round(w_end, 4),
-            "source":   "ctc_forced" if not ivs else "ctc_forced+hubertfa",
+            "source":   base_source if not ivs else f"{base_source}+hubertfa",
             "phonemes": [
                 {"ph": v["text"], "start": round(v["xmin"] + offset, 4),
                  "end": round(v["xmax"] + offset, 4)}
@@ -363,6 +364,25 @@ def _source_distribution(words: list[dict]) -> dict[str, int]:
     return source_counts
 
 
+def _available_onnx_providers() -> list[str]:
+    try:
+        import onnxruntime as ort
+    except Exception:
+        return []
+    return list(ort.get_available_providers())
+
+
+def _fallback_all_segments(segments: list[dict], fallback) -> tuple[list[dict], int]:
+    all_words: list[dict] = []
+    word_count = 0
+    for seg in segments:
+        words = fallback(seg.get("words", []))
+        words = normalize_words(words, seg["start"], seg["end"])
+        all_words.extend(words)
+        word_count += len(words)
+    return all_words, word_count
+
+
 def main() -> int:
     hw = detect()
     parser = argparse.ArgumentParser(description="Stage 04 — Phoneme Alignment (Batch ONNX)")
@@ -371,6 +391,11 @@ def main() -> int:
     parser.add_argument("--checkpoint", default="models/hubertfa/model.onnx", type=Path)
     parser.add_argument("--language", default="en")
     parser.add_argument("--hubertfa-timeout", default=180, type=int)
+    parser.add_argument(
+        "--allow-cpu-hubertfa",
+        action="store_true",
+        help="Allow HubertFA ONNX inference when only CPUExecutionProvider is available.",
+    )
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"])
     args = parser.parse_args()
 
@@ -450,7 +475,7 @@ def main() -> int:
         return _stage04_fail(job_dir, "stage04.no_segments", message)
 
     alignment_mode = transcript.get("alignment_mode", "whisper")
-    is_forced = alignment_mode == "forced"
+    preserves_provider_timing = alignment_mode == "forced"
     _stage04_event(
         job_dir,
         "stage04.transcript_loaded",
@@ -464,9 +489,9 @@ def main() -> int:
         "Stage 04 · Align  alignment_mode=%s  segments=%d",
         alignment_mode, len(segments),
     )
-    if is_forced:
+    if preserves_provider_timing:
         logger.info(
-            "Forced alignment detected — CTC timestamps will be preserved. "
+            "Provider alignment detected — word timestamps will be preserved. "
             "HubertFA phonemes attached as metadata only."
         )
 
@@ -474,7 +499,7 @@ def main() -> int:
     all_aligned_words = []
 
     # Determine the correct fallback function based on alignment mode
-    _fallback = _ctc_forced_fallback if is_forced else _whisper_fallback
+    _fallback = _ctc_forced_fallback if preserves_provider_timing else _whisper_fallback
 
     with _hfa_batch_dir(job_dir) as tmp_dir:
         logger.info("Batch Prep: Slicing %d segments into %s", len(segments), tmp_dir)
@@ -500,54 +525,80 @@ def main() -> int:
         )
 
         # ── Run HubertFA ONCE for all segments ──
-        logger.info("Batch Inference: Running HubertFA onnx_infer.py (Model: %s)", args.checkpoint.name)
-        cmd = [
-            sys.executable, str(args.hubertfa_dir / "onnx_infer.py"),
-            "--onnx_path", str(args.checkpoint),
-            "--wav_folder", str(tmp_dir),
-            "--out_path", str(tmp_dir),
-            "--g2p", "phoneme",
-            "--language", args.language
-        ]
-        
+        res = None
         start_time = time.time()
-        _stage04_event(
-            job_dir,
-            "stage04.hubertfa_started",
-            timeout=args.hubertfa_timeout,
-            prepared=prepared_count,
-            skipped=skipped_count,
-        )
-        try:
-            res = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=args.hubertfa_timeout,
+        providers = _available_onnx_providers()
+        accelerated = {"CUDAExecutionProvider", "DmlExecutionProvider"}
+        if not args.allow_cpu_hubertfa and not accelerated.intersection(providers):
+            reason = (
+                "cpu_only_onnx_provider"
+                if "CPUExecutionProvider" in providers
+                else "onnx_provider_unavailable"
             )
-        except subprocess.TimeoutExpired:
-            logger.error("HubertFA Batch timed out after %ss; using fallback timings", args.hubertfa_timeout)
+            logger.warning(
+                "Skipping HubertFA: ONNX providers=%s. Use --allow-cpu-hubertfa to force CPU inference.",
+                providers,
+            )
             _stage04_event(
                 job_dir,
-                "stage04.hubertfa_timeout",
-                level="error",
-                message=f"HubertFA timed out after {args.hubertfa_timeout}s",
-                timeout=args.hubertfa_timeout,
+                "stage04.hubertfa_skipped",
+                level="warning",
+                reason=reason,
+                providers=providers,
             )
-            res = None
-            fallback_word_count = 0
-            for seg in segments:
-                words = _fallback(seg.get("words", []))
-                words = normalize_words(words, seg["start"], seg["end"])
-                all_aligned_words.extend(words)
-                fallback_word_count += len(words)
+            fallback_words, fallback_word_count = _fallback_all_segments(segments, _fallback)
+            all_aligned_words.extend(fallback_words)
             _stage04_event(
                 job_dir,
                 "stage04.fallback_used",
                 level="warning",
-                reason="hubertfa_timeout",
+                reason=reason,
                 word_count=fallback_word_count,
             )
+        else:
+            logger.info("Batch Inference: Running HubertFA onnx_infer.py (Model: %s)", args.checkpoint.name)
+            cmd = [
+                sys.executable, str(args.hubertfa_dir / "onnx_infer.py"),
+                "--onnx_path", str(args.checkpoint),
+                "--wav_folder", str(tmp_dir),
+                "--out_path", str(tmp_dir),
+                "--g2p", "phoneme",
+                "--language", args.language
+            ]
+            
+            _stage04_event(
+                job_dir,
+                "stage04.hubertfa_started",
+                timeout=args.hubertfa_timeout,
+                prepared=prepared_count,
+                skipped=skipped_count,
+                providers=providers,
+            )
+            try:
+                res = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=args.hubertfa_timeout,
+                )
+            except subprocess.TimeoutExpired:
+                logger.error("HubertFA Batch timed out after %ss; using fallback timings", args.hubertfa_timeout)
+                _stage04_event(
+                    job_dir,
+                    "stage04.hubertfa_timeout",
+                    level="error",
+                    message=f"HubertFA timed out after {args.hubertfa_timeout}s",
+                    timeout=args.hubertfa_timeout,
+                )
+                fallback_words, fallback_word_count = _fallback_all_segments(segments, _fallback)
+                all_aligned_words.extend(fallback_words)
+                _stage04_event(
+                    job_dir,
+                    "stage04.fallback_used",
+                    level="warning",
+                    reason="hubertfa_timeout",
+                    word_count=fallback_word_count,
+                )
 
         if res is not None and res.returncode != 0:
             logger.error("HubertFA Batch failed:\n%s", res.stderr)
@@ -559,12 +610,8 @@ def main() -> int:
                 returncode=res.returncode,
             )
             # Global fallback if batch inference crashes
-            fallback_word_count = 0
-            for seg in segments:
-                words = _fallback(seg.get("words", []))
-                words = normalize_words(words, seg["start"], seg["end"])
-                all_aligned_words.extend(words)
-                fallback_word_count += len(words)
+            fallback_words, fallback_word_count = _fallback_all_segments(segments, _fallback)
+            all_aligned_words.extend(fallback_words)
             _stage04_event(
                 job_dir,
                 "stage04.fallback_used",
@@ -591,8 +638,8 @@ def main() -> int:
                 if tg_path.exists():
                     try:
                         ivs = [v for v in _parse_textgrid(tg_path) if v["text"] not in _SILENCE_LABELS and v["text"]]
-                        if is_forced:
-                            # Forced mode: keep CTC timestamps, attach phonemes as metadata
+                        if preserves_provider_timing:
+                            # Provider timing mode: keep word timestamps, attach phonemes as metadata
                             words = _ctc_forced_with_phonemes(seg.get("words", []), ivs, seg["start"])
                         else:
                             # Whisper mode: derive timestamps from HubertFA phonemes
@@ -630,7 +677,7 @@ def main() -> int:
                 )
 
     # Save output
-    aligned = {"words": all_aligned_words}
+    aligned = {"alignment_mode": alignment_mode, "words": all_aligned_words}
     output_path = job_dir / "aligned.json"
     source_counts = _source_distribution(all_aligned_words)
     _stage04_event(

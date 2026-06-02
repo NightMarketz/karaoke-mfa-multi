@@ -104,6 +104,7 @@ class Stage04TempWorkspaceTests(unittest.TestCase):
                 str(model_dir / "model.onnx"),
                 "--hubertfa-timeout",
                 "7",
+                "--allow-cpu-hubertfa",
             ]
 
             with patch.dict(sys.modules, {"g2p_en": fake_g2p_en}), patch.object(
@@ -130,6 +131,70 @@ class Stage04TempWorkspaceTests(unittest.TestCase):
             )
             self.assertEqual("hubertfa_timeout", fallback_event["details"]["reason"])
             self.assertEqual(2, fallback_event["details"]["word_count"])
+
+    def test_cpu_only_onnx_provider_skips_hubertfa_and_records_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            model_dir = job_dir / "model"
+            model_dir.mkdir()
+            for name in ("config.json", "vocab.json", "VERSION"):
+                (model_dir / name).write_text("{}", encoding="utf-8")
+            _write_wav(job_dir / "vocals.wav")
+            (job_dir / "transcript.json").write_text(
+                json.dumps(
+                    {
+                        "alignment_mode": "forced",
+                        "segments": [
+                            {
+                                "start": 0.0,
+                                "end": 1.0,
+                                "text": "hello",
+                                "words": [
+                                    {"word": "hello", "start": 0.0, "end": 1.0},
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            fake_g2p_en = ModuleType("g2p_en")
+            fake_g2p_en.G2p = lambda: (lambda text: ["HH", "AH0"])
+            argv = [
+                "s04_align.py",
+                "--job-dir",
+                str(job_dir),
+                "--checkpoint",
+                str(model_dir / "model.onnx"),
+            ]
+
+            with patch.dict(sys.modules, {"g2p_en": fake_g2p_en}), patch.object(
+                sys, "argv", argv
+            ), patch.object(
+                s04_align,
+                "_available_onnx_providers",
+                return_value=["AzureExecutionProvider", "CPUExecutionProvider"],
+                create=True,
+            ), patch.object(s04_align.subprocess, "run") as run:
+                self.assertEqual(0, s04_align.main())
+
+            self._close_logging()
+            self.assertFalse(
+                any("onnx_infer.py" in " ".join(str(part) for part in call.args[0]) for call in run.call_args_list)
+            )
+            events = _read_events(job_dir)
+            event_names = [event["event"] for event in events]
+            self.assertIn("stage04.hubertfa_skipped", event_names)
+            self.assertIn("stage04.fallback_used", event_names)
+            skipped_event = next(
+                event for event in events if event["event"] == "stage04.hubertfa_skipped"
+            )
+            self.assertEqual("cpu_only_onnx_provider", skipped_event["details"]["reason"])
+            fallback_event = next(
+                event for event in events if event["event"] == "stage04.fallback_used"
+            )
+            self.assertEqual("cpu_only_onnx_provider", fallback_event["details"]["reason"])
 
     def test_missing_job_dir_records_global_failure_without_creating_job(self):
         with tempfile.TemporaryDirectory() as tmp:

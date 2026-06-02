@@ -740,13 +740,19 @@ def main() -> int:
         lines = _rule_based_grouper(words)
 
     elif alignment_mode == "forced" and segments:
+        path = "forced_alignment"
+        skip_reason = "forced_alignment"
         logger.info(
-            "Forced alignment detected — using deterministic segment grouper "
+            "Forced alignment detected - using deterministic segment grouper "
             "(%d segments, LLM skipped)",
             len(segments),
         )
-        _stage05_event(job_dir, "stage05.path_selected", path="forced_alignment")
-        _stage05_event(job_dir, "stage05.ollama_skipped", reason="forced_alignment")
+        _stage05_event(
+            job_dir,
+            "stage05.path_selected",
+            path=path,
+        )
+        _stage05_event(job_dir, "stage05.ollama_skipped", reason=skip_reason)
         _update_status(job_dir, "analyzing", 50)
         lines = _segment_aware_grouper(segments, words)
 
