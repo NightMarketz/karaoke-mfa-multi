@@ -52,6 +52,53 @@ def _is_textual_melisma(text: str) -> bool:
     return _sustain_type(text) == "melisma"
 
 
+def _sound_suggestion(
+    *,
+    sound_type: str,
+    suggested_caption: str,
+    suggested_user_action: str,
+) -> dict[str, str]:
+    return {
+        "sound_type": sound_type,
+        "suggested_caption": suggested_caption,
+        "suggested_user_action": suggested_user_action,
+    }
+
+
+def _word_extension_caption(word: str) -> str:
+    clean = word.strip()
+    return f"{clean}..." if clean else "[vocalizacao]"
+
+
+def _has_final_word_after_alignment_hole(timing: dict[str, Any], words: list[dict[str, Any]]) -> bool:
+    for gap in timing.get("inter_word_gaps", []):
+        if gap.get("classification") != "bad_gap":
+            continue
+        before_word_index = int(gap.get("before_word_index", -1))
+        if before_word_index != len(words) - 1:
+            continue
+        before_word = words[before_word_index]
+        before_start_s = _time(before_word.get("start", before_word.get("start_s")), 0.0)
+        before_end_s = _time(before_word.get("end", before_word.get("end_s")), before_start_s)
+        if max(0.0, before_end_s - before_start_s) <= LOST_TAIL_MAX_WORD_S:
+            return True
+    return False
+
+
+def _has_short_first_word_entry_drift(timing: dict[str, Any], words: list[dict[str, Any]]) -> bool:
+    if len(words) < 2:
+        return False
+    first_word = words[0]
+    first_start_s = _time(first_word.get("start", first_word.get("start_s")), 0.0)
+    first_end_s = _time(first_word.get("end", first_word.get("end_s")), first_start_s)
+    if max(0.0, first_end_s - first_start_s) > LOST_TAIL_MAX_WORD_S:
+        return False
+    return any(
+        gap.get("classification") == "bad_gap" and int(gap.get("after_word_index", -1)) == 0
+        for gap in timing.get("inter_word_gaps", [])
+    )
+
+
 def _classify_inter_word_gap(gap_s: float, *, style: str) -> str:
     if gap_s >= BAD_GAP_THRESHOLD_S:
         if style in MUSICAL_PAUSE_STYLES:
@@ -249,25 +296,50 @@ def build_audio_backed_timing(
                 tail["classification"] = "written_melisma_extension"
                 tail["confidence"] = "high" if float(tail_stats.get("voiced_ratio", 0.0)) >= 0.75 else "medium"
                 tail["audio_evidence"] = tail_stats
+                tail["sound_suggestion"] = _sound_suggestion(
+                    sound_type="written_melisma",
+                    suggested_caption=last_word_text,
+                    suggested_user_action="extend_existing_word",
+                )
             elif can_promote_audio_tail:
                 tail["classification"] = "probable_unwritten_vowel_extension"
                 tail["confidence"] = "high" if float(tail_stats.get("voiced_ratio", 0.0)) >= 0.75 else "medium"
                 tail["audio_evidence"] = tail_stats
+                tail["sound_suggestion"] = _sound_suggestion(
+                    sound_type="sustained_final_vowel",
+                    suggested_caption=_word_extension_caption(last_word_text),
+                    suggested_user_action="extend_final_vowel",
+                )
             elif can_flag_possible_lost_tail:
                 tail["classification"] = "possible_lost_tail"
                 tail["confidence"] = "medium"
                 tail["recommended_fallback"] = "manual_review_or_local_realign"
                 tail["audio_evidence"] = tail_stats
+                tail["sound_suggestion"] = _sound_suggestion(
+                    sound_type="possible_sustained_final_vowel",
+                    suggested_caption=_word_extension_caption(last_word_text),
+                    suggested_user_action="review_before_extending_final_vowel",
+                )
             elif can_flag_interline_melisma:
                 tail["classification"] = "unwritten_interline_melisma"
                 tail["confidence"] = "medium"
                 tail["recommended_fallback"] = "flag_review_or_create_extension_bar"
                 tail["audio_evidence"] = tail_stats
+                tail["sound_suggestion"] = _sound_suggestion(
+                    sound_type="unwritten_vocal_melisma",
+                    suggested_caption="[vocalizacao]",
+                    suggested_user_action="review_or_add_non_lyric_vocal_caption",
+                )
             elif can_trim_false_long_tail:
                 tail["classification"] = "false_long_tail"
                 tail["confidence"] = "high"
                 tail["recommended_fallback"] = "trim_to_last_active_vocal"
                 tail["audio_evidence"] = last_word_stats
+                tail["sound_suggestion"] = _sound_suggestion(
+                    sound_type="inactive_or_false_tail",
+                    suggested_caption="",
+                    suggested_user_action="trim_or_realign",
+                )
             elif tail.get("classification") == "tail_melisma" and not last_word_stats.get("active"):
                 tail["classification"] = "none"
                 tail["audio_evidence"] = last_word_stats
@@ -283,8 +355,33 @@ def build_audio_backed_timing(
         if has_bad_gap and has_audio_supported_word:
             timing["line_classification"] = "review_only_backing_or_drift"
             timing["confidence"] = "high"
-            timing["recommended_fallback"] = "manual_review_or_local_realign"
-            timing["diagnostic_tags"] = ["possible_backing_vocal_not_in_lyrics"]
+            if (
+                line_index > 0
+                and _time(lines[line_index - 1].get("end"), 0.0) > _time(line.get("start"), 0.0)
+            ) or _has_short_first_word_entry_drift(timing, words):
+                timing["recommended_fallback"] = "move_line_start_later_or_review_previous_tail"
+                timing["diagnostic_tags"] = ["early_next_line_entry_drift"]
+                timing["sound_suggestion"] = _sound_suggestion(
+                    sound_type="alignment_drift",
+                    suggested_caption="",
+                    suggested_user_action="move_line_start_later_or_review_previous_tail",
+                )
+            elif _has_final_word_after_alignment_hole(timing, words):
+                timing["recommended_fallback"] = "review_local_realignment"
+                timing["diagnostic_tags"] = ["final_word_after_alignment_hole"]
+                timing["sound_suggestion"] = _sound_suggestion(
+                    sound_type="alignment_hole",
+                    suggested_caption="",
+                    suggested_user_action="review_local_realign",
+                )
+            else:
+                timing["recommended_fallback"] = "manual_review_or_local_realign"
+                timing["diagnostic_tags"] = ["possible_backing_vocal_not_in_lyrics"]
+                timing["sound_suggestion"] = _sound_suggestion(
+                    sound_type="possible_backing_vocal_not_in_lyrics",
+                    suggested_caption="[vocal de apoio]",
+                    suggested_user_action="review_backing_vocal_or_local_realign",
+                )
 
         timings.append(timing)
     return timings

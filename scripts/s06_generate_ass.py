@@ -743,17 +743,34 @@ def _audio_timing_diagnostics(audio_timings: list[dict[str, Any]]) -> list[dict[
     for line_index, timing in enumerate(audio_timings):
         line_classification = timing.get("line_classification")
         diagnostic_tags = timing.get("diagnostic_tags")
-        if not line_classification and not diagnostic_tags:
-            continue
-        diagnostics.append(
-            {
+        if line_classification or diagnostic_tags:
+            diagnostic = {
                 "line_index": line_index,
                 "line_classification": line_classification,
                 "diagnostic_tags": diagnostic_tags or [],
                 "confidence": timing.get("confidence"),
                 "recommended_fallback": timing.get("recommended_fallback"),
             }
-        )
+            if timing.get("sound_suggestion"):
+                diagnostic["sound_suggestion"] = timing.get("sound_suggestion")
+            diagnostics.append(diagnostic)
+
+        tail = timing.get("tail") or {}
+        tail_classification = tail.get("classification")
+        if tail_classification in {
+            "possible_lost_tail",
+            "unwritten_interline_melisma",
+            "false_long_tail",
+        } or tail.get("sound_suggestion"):
+            diagnostic = {
+                "line_index": line_index,
+                "tail_classification": tail_classification,
+                "confidence": tail.get("confidence"),
+                "recommended_fallback": tail.get("recommended_fallback"),
+            }
+            if tail.get("sound_suggestion"):
+                diagnostic["sound_suggestion"] = tail.get("sound_suggestion")
+            diagnostics.append(diagnostic)
     return diagnostics
 
 

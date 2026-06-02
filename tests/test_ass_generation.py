@@ -337,6 +337,11 @@ class AssGenerationTests(unittest.TestCase):
                     "diagnostic_tags": ["possible_backing_vocal_not_in_lyrics"],
                     "confidence": "high",
                     "recommended_fallback": "manual_review_or_local_realign",
+                    "sound_suggestion": {
+                        "sound_type": "possible_backing_vocal_not_in_lyrics",
+                        "suggested_caption": "[vocal de apoio]",
+                        "suggested_user_action": "review_backing_vocal_or_local_realign",
+                    },
                     "inter_word_gaps": [{"classification": "bad_gap"}],
                     "vocal_periods": [],
                     "tail": {"classification": "none"},
@@ -358,6 +363,71 @@ class AssGenerationTests(unittest.TestCase):
                         "diagnostic_tags": ["possible_backing_vocal_not_in_lyrics"],
                         "confidence": "high",
                         "recommended_fallback": "manual_review_or_local_realign",
+                        "sound_suggestion": {
+                            "sound_type": "possible_backing_vocal_not_in_lyrics",
+                            "suggested_caption": "[vocal de apoio]",
+                            "suggested_user_action": "review_backing_vocal_or_local_realign",
+                        },
+                    }
+                ],
+            )
+
+    def test_stage06_manifest_keeps_tail_sound_suggestions_for_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            lines = [
+                {
+                    "text": "I won't fall",
+                    "start": 294.18,
+                    "end": 298.64,
+                    "style": "outro",
+                    "effect": "highlight",
+                    "words": [
+                        {"word": "I", "start": 294.18, "end": 294.23},
+                        {"word": "won't", "start": 294.24, "end": 294.52},
+                        {"word": "fall", "start": 294.70, "end": 298.64},
+                    ],
+                }
+            ]
+            self._write_analysis(job_dir, lines)
+            (job_dir / "vocals.wav").write_bytes(b"not-a-real-wav-but-present")
+            fake_timing = [
+                {
+                    "inter_word_gaps": [],
+                    "vocal_periods": [],
+                    "tail": {
+                        "classification": "unwritten_interline_melisma",
+                        "confidence": "medium",
+                        "recommended_fallback": "flag_review_or_create_extension_bar",
+                        "word": "fall",
+                        "sound_suggestion": {
+                            "sound_type": "unwritten_vocal_melisma",
+                            "suggested_caption": "[vocalizacao]",
+                            "suggested_user_action": "review_or_add_non_lyric_vocal_caption",
+                        },
+                    },
+                }
+            ]
+
+            with patch("scripts.s06_generate_ass.build_audio_activity_map", return_value={}):
+                with patch("scripts.s06_generate_ass.build_audio_backed_timing", return_value=fake_timing):
+                    exit_code = self._run_stage06(job_dir, "--preset", "single-style-kf")
+
+            self.assertEqual(exit_code, 0)
+            manifest = json.loads((job_dir / "output.ass.manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                manifest["timing_audio_layers"]["diagnostics"],
+                [
+                    {
+                        "line_index": 0,
+                        "tail_classification": "unwritten_interline_melisma",
+                        "confidence": "medium",
+                        "recommended_fallback": "flag_review_or_create_extension_bar",
+                        "sound_suggestion": {
+                            "sound_type": "unwritten_vocal_melisma",
+                            "suggested_caption": "[vocalizacao]",
+                            "suggested_user_action": "review_or_add_non_lyric_vocal_caption",
+                        },
                     }
                 ],
             )

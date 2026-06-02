@@ -18,6 +18,7 @@ Everything else is review-only.
 | H002 | `scripts/review_wizard/vocal_activity.py` | noise threshold capped at `strong * 0.50` | domain constant | Too low could mark steady noise as vocal; too high misses continuous synthetic/controlled vocals. | Preserve noise-floor gating but cap it so continuous voiced fixtures do not classify all frames inactive. | `test_detects_continuous_synthetic_vocal_without_silent_noise_floor` |
 | H003 | `scripts/review_wizard/timing_layers.py` | written melisma attached-tail minimum `0.20s` | domain constant | Too low could extend tiny consonant bleed or breath into text. | Apply only to written textual melismas with active tail evidence; this captures short but continuous cases such as `Oooo wooow`. | `test_audio_backed_timing_extends_short_attached_written_melisma_tail` |
 | H004 | `scripts/review_wizard/timing_layers.py` | audio-extension final-word maximum `0.60s` | domain constant | Too wide could turn normal short words before instrumental pauses into rendered sustains. | Require strong tail evidence for automatic extension; moderate evidence remains review-only. | `test_audio_backed_timing_promotes_strong_tail_after_fear` |
+| H005 | `scripts/review_wizard/timing_layers.py` | review caption suggestions `[vocalizacao]`, `[vocal de apoio]`, `word...`, or blank review labels | product diagnostic label | A suggested caption could look like an automatic lyric decision. | Store only as `sound_suggestion` in diagnostics; Stage 06 does not render these captions automatically. Alignment holes and drift deliberately use a blank caption suggestion. | `test_audio_backed_timing_flags_unwritten_interline_melisma`, `test_audio_backed_timing_prefers_alignment_hole_over_backing_caption`, `test_stage06_manifest_keeps_tail_sound_suggestions_for_review` |
 
 ## Audio-Backed Classes
 
@@ -32,12 +33,20 @@ Everything else is review-only.
 
 ## Diagnostics
 
+Audio-backed diagnostics may include `sound_suggestion` for user review:
+
+- `sound_type`: the best-effort sound classification.
+- `suggested_caption`: a proposed review caption, for example `[vocalizacao]`, `[vocal de apoio]`, `fear...`, or blank when the correct action is alignment review rather than a subtitle.
+- `suggested_user_action`: the conservative action to present to a reviewer.
+
 | Diagnostic | Meaning | Recommended fallback |
 | --- | --- | --- |
 | `possible_backing_vocal_not_in_lyrics` | Audio supports words around a suspicious internal gap, but the line is unsafe to auto-fix. | `manual_review_or_local_realign` |
 | `final_word_after_alignment_hole` | A very short final word appears after a large internal alignment hole, as in `sealed in the tomb`. | `review_local_realignment` |
 | `previous_tail_likely_stolen_by_next_line` | The next lyric line starts before the previous line has ended, suggesting phrase-boundary drift. | `extend_previous_tail_or_move_next_line_start_later` |
 | `early_next_line_entry_drift` | The first word of the next line enters during the previous line tail, such as early `I'm`. | `move_line_start_later_or_review_previous_tail` |
+
+For line-level audio diagnostics, Stage 06 prefers drift or alignment-hole labels over `[vocal de apoio]` when the structure already explains the suspicious sound. This prevents cases such as `sealed in the tomb` and `I'm taking back my fate` from being presented as backing vocals.
 
 ## Manifest Fields
 
@@ -46,8 +55,10 @@ Everything else is review-only.
 - `timing_audio_layers.summary`: counts by gap, vocal period, and tail class.
 - `timing_audio_layers.applied_tail_extensions`: count of safe rendered extensions.
 - `timing_audio_layers.applied_tail_trims`: count of rendered false-tail trims.
-- `timing_audio_layers.diagnostics`: compact review-only evidence for backing vocal or drift classes.
+- `timing_audio_layers.diagnostics`: compact evidence for review classes and sound/caption suggestions.
 
 ## Product Decision
 
 `unwritten_interline_melisma` remains diagnostic/review-only. Stage 06 does not render silent extension bars or attach unwritten interline vocals until there is a separate product decision and visual QA coverage.
+
+Suggested captions are also review-only. They help the user decide whether the sound is a written sustain, a non-lyric vocalization, or backing vocal; they are not injected into the ASS output.

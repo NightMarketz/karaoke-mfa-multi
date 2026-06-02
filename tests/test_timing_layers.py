@@ -133,6 +133,14 @@ class TimingLayersTests(unittest.TestCase):
 
         self.assertEqual(timing["tail"]["classification"], "probable_unwritten_vowel_extension")
         self.assertEqual(timing["tail"]["audio_evidence"]["voiced_ratio"], 0.82)
+        self.assertEqual(
+            timing["tail"]["sound_suggestion"],
+            {
+                "sound_type": "sustained_final_vowel",
+                "suggested_caption": "snap...",
+                "suggested_user_action": "extend_final_vowel",
+            },
+        )
 
     def test_audio_backed_timing_extends_short_written_melisma_when_tail_voice_continues(self):
         lines = [
@@ -426,6 +434,14 @@ class TimingLayersTests(unittest.TestCase):
 
         self.assertEqual(timing["tail"]["classification"], "unwritten_interline_melisma")
         self.assertEqual(timing["tail"]["recommended_fallback"], "flag_review_or_create_extension_bar")
+        self.assertEqual(
+            timing["tail"]["sound_suggestion"],
+            {
+                "sound_type": "unwritten_vocal_melisma",
+                "suggested_caption": "[vocalizacao]",
+                "suggested_user_action": "review_or_add_non_lyric_vocal_caption",
+            },
+        )
         self.assertEqual(summary["tails"]["unwritten_interline_melisma"], 1)
 
     def test_audio_backed_timing_marks_backing_vocal_drift_without_auto_fix(self):
@@ -450,6 +466,114 @@ class TimingLayersTests(unittest.TestCase):
 
         self.assertEqual(timing["line_classification"], "review_only_backing_or_drift")
         self.assertEqual(timing["recommended_fallback"], "manual_review_or_local_realign")
+        self.assertEqual(
+            timing["sound_suggestion"],
+            {
+                "sound_type": "possible_backing_vocal_not_in_lyrics",
+                "suggested_caption": "[vocal de apoio]",
+                "suggested_user_action": "review_backing_vocal_or_local_realign",
+            },
+        )
+
+    def test_audio_backed_timing_prefers_alignment_hole_over_backing_caption(self):
+        lines = [
+            {
+                "text": "sealed in the tomb",
+                "style": "verse",
+                "words": [
+                    {"word": "sealed", "start": 120.0, "end": 120.34},
+                    {"word": "in", "start": 120.42, "end": 120.52},
+                    {"word": "the", "start": 120.60, "end": 120.70},
+                    {"word": "tomb", "start": 123.20, "end": 123.42},
+                ],
+            }
+        ]
+        audio_activity = {
+            (0, 0): {"active": True, "voiced_ratio": 0.95},
+            (0, 3): {"active": True, "voiced_ratio": 0.90},
+        }
+
+        timing = build_audio_backed_timing(lines, audio_activity=audio_activity)[0]
+
+        self.assertEqual(timing["line_classification"], "review_only_backing_or_drift")
+        self.assertEqual(timing["diagnostic_tags"], ["final_word_after_alignment_hole"])
+        self.assertEqual(
+            timing["sound_suggestion"],
+            {
+                "sound_type": "alignment_hole",
+                "suggested_caption": "",
+                "suggested_user_action": "review_local_realign",
+            },
+        )
+
+    def test_audio_backed_timing_prefers_entry_drift_over_backing_caption(self):
+        lines = [
+            {
+                "text": "Blinded by the hate",
+                "style": "verse",
+                "start": 150.0,
+                "end": 153.0,
+                "words": [
+                    {"word": "Blinded", "start": 150.0, "end": 150.5},
+                    {"word": "hate", "start": 150.90, "end": 153.0},
+                ],
+            },
+            {
+                "text": "I'm taking back my fate",
+                "style": "verse",
+                "start": 152.78,
+                "end": 155.0,
+                "words": [
+                    {"word": "I'm", "start": 152.78, "end": 152.92},
+                    {"word": "taking", "start": 154.40, "end": 154.72},
+                ],
+            },
+        ]
+        audio_activity = {
+            (1, 0): {"active": True, "voiced_ratio": 0.95},
+            (1, 1): {"active": True, "voiced_ratio": 0.95},
+        }
+
+        timing = build_audio_backed_timing(lines, audio_activity=audio_activity)[1]
+
+        self.assertEqual(timing["line_classification"], "review_only_backing_or_drift")
+        self.assertEqual(timing["diagnostic_tags"], ["early_next_line_entry_drift"])
+        self.assertEqual(
+            timing["sound_suggestion"],
+            {
+                "sound_type": "alignment_drift",
+                "suggested_caption": "",
+                "suggested_user_action": "move_line_start_later_or_review_previous_tail",
+            },
+        )
+
+    def test_audio_backed_timing_marks_short_first_word_before_bad_gap_as_entry_drift(self):
+        lines = [
+            {
+                "text": "I'm taking back my fate",
+                "style": "verse",
+                "start": 84.76,
+                "end": 89.18,
+                "words": [
+                    {"word": "I'm", "start": 84.76, "end": 84.92},
+                    {"word": "taking", "start": 87.94, "end": 88.20},
+                    {"word": "back", "start": 88.32, "end": 88.68},
+                    {"word": "my", "start": 88.86, "end": 88.91},
+                    {"word": "fate", "start": 88.96, "end": 89.18},
+                ],
+            }
+        ]
+        audio_activity = {
+            (0, 0): {"active": True, "voiced_ratio": 0.95},
+            (0, 1): {"active": True, "voiced_ratio": 0.95},
+            (0, 2): {"active": True, "voiced_ratio": 0.95},
+        }
+
+        timing = build_audio_backed_timing(lines, audio_activity=audio_activity)[0]
+
+        self.assertEqual(timing["line_classification"], "review_only_backing_or_drift")
+        self.assertEqual(timing["diagnostic_tags"], ["early_next_line_entry_drift"])
+        self.assertEqual(timing["sound_suggestion"]["sound_type"], "alignment_drift")
 
     def test_audio_backed_summary_counts_audio_supported_classes(self):
         timings = [
