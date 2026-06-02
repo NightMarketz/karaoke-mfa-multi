@@ -22,6 +22,8 @@ Usage:
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -41,10 +43,41 @@ from flask import (
     request, send_file, url_for,
 )
 
-from scripts.common.paths import is_safe_archive_member, resolve_job_dir
+from scripts.common.paths import is_safe_archive_member, resolve_job_dir, validate_job_id
 from scripts.common.observability import read_events, write_event
+from scripts.common.provenance import ProvenanceError, file_sha256, load_manifest, validate_file_hash
 from scripts.common.status import read_status, write_status
+from scripts.karaoke_styles.library import get_preset, list_preset_metadata
 from scripts.pipeline_runner import PipelineRunner
+from scripts.review_wizard.audio_timeline import build_audio_timeline
+from scripts.review_wizard.artifacts import (
+    issues_from_artifact_summary,
+    summarize_pipeline_artifacts,
+    take_and_report_from_summary,
+)
+from scripts.review_wizard.contracts import Project
+from scripts.review_wizard.export_gate import approve_preview, can_export_final
+from scripts.review_wizard.export_summary import review_export_summary
+from scripts.review_wizard.highlight_velocity import build_word_highlight_segments
+from scripts.review_wizard.issue_resolution import approve_issue_risk, apply_issue_suggestion
+from scripts.review_wizard.review_points import (
+    build_review_points,
+    filtered_review_points,
+    next_open_point_after,
+    next_open_point,
+    point_navigation,
+    points_for_stage,
+    review_point_window,
+)
+from scripts.review_wizard.stage_summaries import build_stage_summaries
+from scripts.review_wizard.stages import active_stage_id, stage_view_models
+from scripts.review_wizard.store import load_project, project_path, save_project
+from scripts.review_wizard.text_prep import prepare_text_for_review
+from scripts.review_wizard.wizard import (
+    adjust_review_point_timing,
+    approve_review_point,
+    skip_review_point_with_risk,
+)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 JOBS_DIR   = Path("jobs")
@@ -61,6 +94,9 @@ logger = logging.getLogger(__name__)
 _running: dict[str, threading.Thread] = {}
 
 
+DEFAULT_STYLE_PRESET_ID = "single-style-kf"
+
+
 def _write_server_event(event: str, level: str = "info", message: str = "", **details: Any) -> None:
     write_event(
         JOBS_DIR / "_server",
@@ -70,6 +106,17 @@ def _write_server_event(event: str, level: str = "info", message: str = "", **de
         message=message,
         details=details,
     )
+
+
+def _style_preset_options() -> list[dict[str, Any]]:
+    return list_preset_metadata()
+
+
+def _validate_style_preset(preset_id: str) -> str:
+    try:
+        return get_preset(preset_id).id
+    except KeyError as exc:
+        raise ValueError(f"Unknown style preset: {preset_id}") from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -90,12 +137,37 @@ def _write_status(job_dir: Path, stage: str, progress: int, error: str = "") -> 
     write_status(job_dir, stage, progress, error)
 
 
+def _ensure_review_project(job_dir: Path, job_id: str) -> Project:
+    if project_path(job_dir).exists():
+        return load_project(job_dir)
+
+    lyrics_path = job_dir / "lyrics.txt"
+    raw_lyrics = lyrics_path.read_text(encoding="utf-8") if lyrics_path.exists() else ""
+    prepared_text, issues = prepare_text_for_review(raw_lyrics, language="pt")
+    project = Project.new(project_id=f"review-{job_id}", job_id=job_id)
+    artifact_summary = summarize_pipeline_artifacts(job_dir)
+    artifact_issues = issues_from_artifact_summary(artifact_summary)
+    take, report = take_and_report_from_summary(artifact_summary, [*issues, *artifact_issues])
+    project = dataclasses.replace(
+        project,
+        prepared_text=prepared_text,
+        evidence_bundle=artifact_summary,
+        alignment_takes=[take],
+        issues=[*issues, *artifact_issues],
+        quality_reports=[report],
+    )
+    save_project(job_dir, project)
+    return project
+
+
 def _list_jobs() -> list[dict[str, Any]]:
     jobs = []
     if not JOBS_DIR.exists():
         return []
     for d in sorted(JOBS_DIR.iterdir(), reverse=True):
         if not d.is_dir():
+            continue
+        if not validate_job_id(d.name):
             continue
         meta_path = d / "meta.json"
         if not meta_path.exists():
@@ -167,6 +239,71 @@ def _compute_drift_metrics(job_dir: Path) -> dict | None:
         return None
 
 
+def _manifest_sha(manifest: dict[str, Any], section: str, artifact: str) -> str:
+    entries = manifest.get(section)
+    if not isinstance(entries, dict):
+        raise ProvenanceError(f"manifest missing {section}")
+    details = entries.get(artifact)
+    if not isinstance(details, dict):
+        raise ProvenanceError(f"manifest missing {artifact} entry")
+    sha256 = details.get("sha256")
+    if not isinstance(sha256, str) or not sha256:
+        raise ProvenanceError(f"manifest missing {artifact} sha256")
+    return sha256
+
+
+def _ass_dialogue_count(path: Path) -> int:
+    return path.read_text(encoding="utf-8-sig", errors="replace").count("\nDialogue:")
+
+
+def _artifact_graph_valid(job_dir: Path) -> tuple[bool, str | None]:
+    ass_path = job_dir / "output.ass"
+    mp4_path = job_dir / "output.mp4"
+    if not ass_path.exists() or not mp4_path.exists():
+        return False, "missing_output_artifact"
+
+    try:
+        ass_manifest_path = job_dir / "output.ass.manifest.json"
+        ass_manifest = load_manifest(ass_manifest_path)
+        validate_file_hash(ass_path, _manifest_sha(ass_manifest, "outputs", "output.ass"))
+        if ass_manifest.get("renderer_mode") != "single_layer_kf":
+            return False, "ass_renderer_mode_mismatch"
+
+        metrics = ass_manifest.get("metrics")
+        if not isinstance(metrics, dict):
+            return False, "ass_manifest_metrics_missing"
+        if metrics.get("dialogue_count") != _ass_dialogue_count(ass_path):
+            return False, "ass_dialogue_count_mismatch"
+
+        analysis_path = job_dir / "analysis.json"
+        inputs = ass_manifest.get("inputs")
+        if isinstance(inputs, dict) and "analysis.json" in inputs:
+            validate_file_hash(analysis_path, _manifest_sha(ass_manifest, "inputs", "analysis.json"))
+            if analysis_path.exists():
+                analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+                if isinstance(analysis, dict):
+                    lines = analysis.get("lines", [])
+                    if metrics.get("analysis_line_count") != len(lines):
+                        return False, "analysis_line_count_mismatch"
+
+        mp4_manifest = load_manifest(job_dir / "output.mp4.manifest.json")
+        validate_file_hash(mp4_path, _manifest_sha(mp4_manifest, "outputs", "output.mp4"))
+        if _manifest_sha(mp4_manifest, "inputs", "output.ass") != file_sha256(ass_path):
+            return False, "mp4_input_ass_mismatch"
+
+        mp4_inputs = mp4_manifest.get("inputs")
+        if isinstance(mp4_inputs, dict):
+            ass_input = mp4_inputs.get("output.ass")
+            if isinstance(ass_input, dict):
+                manifest_sha256 = ass_input.get("manifest_sha256")
+                if isinstance(manifest_sha256, str) and manifest_sha256:
+                    validate_file_hash(ass_manifest_path, manifest_sha256)
+    except (OSError, json.JSONDecodeError, ProvenanceError) as exc:
+        return False, str(exc)
+
+    return True, None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Pipeline runner
 # ─────────────────────────────────────────────────────────────────────────────
@@ -203,7 +340,11 @@ def index():
 
 @app.route("/job/new", methods=["GET"])
 def new_job_form():
-    return render_template("new_job.html")
+    return render_template(
+        "new_job.html",
+        style_presets=_style_preset_options(),
+        default_preset_id=DEFAULT_STYLE_PRESET_ID,
+    )
 
 
 def _convert_to_wav(src: Path, dst: Path) -> bool:
@@ -407,7 +548,12 @@ def _extract_suno_zip(zip_file, job_dir: Path) -> tuple[Path | None, Path | None
 def new_job_submit():
     lyrics_text = request.form.get("lyrics_text", "").strip()
     song_name   = request.form.get("song_name", "Untitled").strip() or "Untitled"
-    preset      = request.form.get("preset", "cyberpunk")
+    requested_preset = request.form.get("preset", DEFAULT_STYLE_PRESET_ID)
+
+    try:
+        preset = _validate_style_preset(requested_preset)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     if not lyrics_text:
         return jsonify({"error": "Lyrics are required for the MVP forced-alignment flow."}), 400
@@ -620,6 +766,435 @@ def job_detail(job_id: str):
 # Routes — SSE
 # ─────────────────────────────────────────────────────────────────────────────
 
+@app.route("/job/<job_id>/review")
+def review_wizard(job_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists():
+        return "Job not found", 404
+
+    meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
+    project = _ensure_review_project(job_dir, job_id)
+    review_points = build_review_points(job_dir, project)
+    stage_summaries = build_stage_summaries(job_dir, project, review_points)
+    active_stage = active_stage_id(project, request.args.get("stage"))
+    status_filter = request.args.get("status", "all")
+    if status_filter not in {"all", "open", "reviewed"}:
+        status_filter = "all"
+    level_filter = request.args.get("level", "all")
+    if level_filter not in {"all", "line", "word", "issue"}:
+        level_filter = "all"
+    unfiltered_stage_points = points_for_stage(review_points, active_stage)
+    stage_points = filtered_review_points(review_points, active_stage, status_filter, level_filter)
+    show_point_review = active_stage in {"alignment", "quality"} and bool(unfiltered_stage_points)
+    requested_point_id = request.args.get("point")
+    active_point = next((point for point in stage_points if point.id == requested_point_id), None)
+    if active_point is None:
+        active_point = next_open_point(stage_points, active_stage)
+    if active_point is None and stage_points:
+        active_point = stage_points[0]
+    artifact_graph_ready, _artifact_graph_reason = _artifact_graph_valid(job_dir)
+    navigation = point_navigation(stage_points, active_point.id if active_point else None)
+    point_window = review_point_window(stage_points, active_point.id if active_point else None)
+    timeline_points = []
+    highlight_segments = []
+    if active_stage == "alignment":
+        timeline_points = [
+            point
+            for point in review_points
+            if point.stage_id == "alignment" or (point.stage_id == "quality" and point.level == "issue")
+        ]
+        highlight_segments = _timeline_highlight_segments(job_dir)
+    audio_timeline = build_audio_timeline(
+        timeline_points,
+        stage_summaries.get("import", {}).get("duration_s"),
+        active_point.id if active_point else None,
+        highlight_segments=highlight_segments,
+    )
+    lyrics_sections = project.prepared_text.sections
+    requested_section = request.args.get("section")
+    active_lyrics_section = next(
+        (section for section in lyrics_sections if section.label == requested_section or section.id == requested_section),
+        lyrics_sections[0] if lyrics_sections else None,
+    )
+    return render_template(
+        "review_wizard.html",
+        meta=meta,
+        project=project.to_dict(),
+        export_decision=dataclasses.asdict(can_export_final(project)),
+        technical_export_ready=artifact_graph_ready,
+        has_full_preview=(job_dir / "preview_full.mp4").exists(),
+        stages=stage_view_models(project, active_stage, review_points),
+        active_stage=active_stage,
+        review_points=[point.to_dict() for point in point_window["items"]],
+        review_point_window={
+            **point_window,
+            "items": [point.to_dict() for point in point_window["items"]],
+        },
+        active_point=active_point.to_dict() if active_point else None,
+        point_navigation=navigation,
+        review_filters={"status": status_filter, "level": level_filter},
+        show_point_review=show_point_review,
+        review_summary=review_export_summary(review_points),
+        stage_summaries=stage_summaries,
+        active_stage_summary=stage_summaries.get(active_stage, {}),
+        audio_timeline=audio_timeline,
+        lyrics_sections=[section.to_dict() for section in lyrics_sections],
+        active_lyrics_section=active_lyrics_section.to_dict() if active_lyrics_section else None,
+    )
+
+
+def _timeline_highlight_segments(job_dir: Path) -> list[dict[str, Any]]:
+    analysis_path = job_dir / "analysis.json"
+    if not analysis_path.exists() or analysis_path.stat().st_size == 0:
+        return []
+    try:
+        analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+
+    segments: list[dict[str, Any]] = []
+    for line_index, line in enumerate(analysis.get("lines", []), start=1):
+        words = line.get("words", [])
+        if not isinstance(words, list):
+            continue
+        for word_index, word in enumerate(words, start=1):
+            if not isinstance(word, dict) or "start" not in word or "end" not in word:
+                continue
+            word_id = f"line-{line_index}:word-{word_index}"
+            word_payload = {**word, "id": word_id}
+            for segment_index, segment in enumerate(build_word_highlight_segments(word_payload), start=1):
+                segments.append(
+                    {
+                        **segment,
+                        "id": f"{word_id}:hv-{segment_index}",
+                        "stage_id": "alignment",
+                        "status": "generated",
+                        "severity": "info",
+                    }
+                )
+    return segments
+
+
+def _review_filter_args_from_form() -> dict[str, str]:
+    args: dict[str, str] = {}
+    status_filter = request.form.get("status", "all")
+    level_filter = request.form.get("level", "all")
+    if status_filter in {"open", "reviewed"}:
+        args["status"] = status_filter
+    if level_filter in {"line", "word", "issue"}:
+        args["level"] = level_filter
+    return args
+
+
+@app.post("/job/<job_id>/review/points/<point_id>/approve")
+def review_wizard_approve_point(job_id: str, point_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists() or not project_path(job_dir).exists():
+        return "Job not found", 404
+
+    project = approve_review_point(load_project(job_dir), point_id, approved_by="local-user")
+    save_project(job_dir, project)
+    points = build_review_points(job_dir, project)
+    current = next((point for point in points if point.id == point_id), None)
+    stage = current.stage_id if current else request.form.get("stage", "alignment")
+    filter_args = _review_filter_args_from_form()
+    filtered_points = filtered_review_points(
+        points,
+        stage,
+        filter_args.get("status", "all"),
+        filter_args.get("level", "all"),
+    )
+    next_point = next_open_point_after(filtered_points, point_id)
+    args = {"stage": stage, **filter_args}
+    if next_point is not None:
+        args["point"] = next_point.id
+    return redirect(url_for("review_wizard", job_id=job_id, **args))
+
+
+@app.post("/job/<job_id>/review/points/<point_id>/skip-risk")
+def review_wizard_skip_point_risk(job_id: str, point_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists() or not project_path(job_dir).exists():
+        return "Job not found", 404
+
+    reason = request.form.get("reason", "")
+    try:
+        project = skip_review_point_with_risk(
+            load_project(job_dir),
+            point_id,
+            skipped_by="local-user",
+            risk_note=reason,
+        )
+    except ValueError as exc:
+        return str(exc), 400
+    save_project(job_dir, project)
+    points = build_review_points(job_dir, project)
+    current = next((point for point in points if point.id == point_id), None)
+    stage = current.stage_id if current else request.form.get("stage", "alignment")
+    filter_args = _review_filter_args_from_form()
+    filtered_points = filtered_review_points(
+        points,
+        stage,
+        filter_args.get("status", "all"),
+        filter_args.get("level", "all"),
+    )
+    next_point = next_open_point_after(filtered_points, point_id)
+    args = {"stage": stage, **filter_args}
+    if next_point is not None:
+        args["point"] = next_point.id
+    return redirect(url_for("review_wizard", job_id=job_id, **args))
+
+
+@app.post("/job/<job_id>/review/points/<point_id>/timing")
+def review_wizard_adjust_point_timing(job_id: str, point_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists() or not project_path(job_dir).exists():
+        return "Job not found", 404
+
+    try:
+        project = adjust_review_point_timing(
+            load_project(job_dir),
+            point_id,
+            edited_by="local-user",
+            start_s=float(request.form["start_s"]),
+            end_s=float(request.form["end_s"]),
+        )
+    except (KeyError, ValueError) as exc:
+        return str(exc), 400
+    save_project(job_dir, project)
+    return redirect(
+        url_for(
+            "review_wizard",
+            job_id=job_id,
+            stage=request.form.get("stage", "alignment"),
+            point=point_id,
+            **_review_filter_args_from_form(),
+        )
+    )
+
+
+@app.post("/job/<job_id>/review/issues/<issue_id>/approve-risk")
+def review_wizard_approve_issue_risk(job_id: str, issue_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists() or not project_path(job_dir).exists():
+        return "Job not found", 404
+
+    project = load_project(job_dir)
+    reason = request.form.get("reason", "")
+    try:
+        project = approve_issue_risk(project, issue_id, approved_by="local-user", reason=reason)
+    except ValueError as exc:
+        return str(exc), 400
+    save_project(job_dir, project)
+    return redirect(url_for("review_wizard", job_id=job_id, stage="quality"))
+
+
+@app.post("/job/<job_id>/review/issues/<issue_id>/apply-suggestion")
+def review_wizard_apply_issue_suggestion(job_id: str, issue_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists() or not project_path(job_dir).exists():
+        return "Job not found", 404
+
+    project = load_project(job_dir)
+    try:
+        project = apply_issue_suggestion(project, issue_id, applied_by="local-user")
+    except ValueError as exc:
+        return str(exc), 400
+    save_project(job_dir, project)
+    return redirect(url_for("review_wizard", job_id=job_id, stage="quality"))
+
+
+def _approve_review_preview(job_id: str, scope: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists() or not project_path(job_dir).exists():
+        return "Job not found", 404
+
+    project = load_project(job_dir)
+    try:
+        project = approve_preview(
+            project,
+            approved_by="local-user",
+            scope=scope,
+            evidence=_preview_approval_evidence(job_dir, project, scope),
+        )
+    except ValueError as exc:
+        return str(exc), 400
+    save_project(job_dir, project)
+    return redirect(url_for("review_wizard", job_id=job_id, stage="preview"))
+
+
+def _render_full_review_preview(job_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists() or not project_path(job_dir).exists():
+        return "Job not found", 404
+
+    source = job_dir / "output.mp4"
+    preview = job_dir / "preview_full.mp4"
+    if not source.exists():
+        return "Preview source missing: output.mp4", 400
+    graph_valid, graph_reason = _artifact_graph_valid(job_dir)
+    if not graph_valid:
+        return f"Preview blocked: artifact_graph_invalid: {graph_reason}", 400
+
+    shutil.copy2(source, preview)
+    project = load_project(job_dir)
+    render = {
+        "id": f"preview-{len(project.preview_renders) + 1}",
+        "scope": "full_preview",
+        "approved": False,
+        "render_status": "ready",
+        "artifact_path": preview.name,
+        "artifact_sha256": _sha256_file(preview),
+        "artifact_size_bytes": preview.stat().st_size,
+        "rendered_at": time.time(),
+    }
+    project = dataclasses.replace(project, preview_renders=[*project.preview_renders, render])
+    save_project(job_dir, project)
+    return redirect(url_for("review_wizard", job_id=job_id, stage="preview"))
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _preview_approval_evidence(job_dir: Path, project: Project, scope: str) -> dict[str, Any]:
+    if not project.quality_reports:
+        raise ValueError("quality review required")
+
+    report = project.quality_reports[-1]
+    primary_artifact_name = "preview_full.mp4" if scope == "full_preview" else "output.mp4"
+    primary_artifact = job_dir / primary_artifact_name
+    if not primary_artifact.exists():
+        raise ValueError(f"preview artifact missing: {primary_artifact_name}")
+    artifact_fingerprints: dict[str, dict[str, Any]] = {}
+    artifact_names = ["output.mp4", "output.ass"]
+    if scope == "full_preview":
+        artifact_names.insert(0, "preview_full.mp4")
+    for artifact_name in artifact_names:
+        artifact_path = job_dir / artifact_name
+        if artifact_path.exists():
+            artifact_fingerprints[artifact_name] = {
+                "sha256": _sha256_file(artifact_path),
+                "size_bytes": artifact_path.stat().st_size,
+            }
+
+    report_issue_ids = set(report.issue_ids)
+    open_issue_ids = [
+        issue.id for issue in project.issues
+        if issue.id in report_issue_ids and issue.status == "open"
+    ]
+    evidence: dict[str, Any] = {
+        "scope": scope,
+        "artifact_path": primary_artifact.name,
+        "artifact_sha256": artifact_fingerprints["output.mp4"]["sha256"],
+        "artifact_size_bytes": artifact_fingerprints["output.mp4"]["size_bytes"],
+        "artifact_fingerprints": artifact_fingerprints,
+        "take_id": report.take_id,
+        "quality_report_id": report.id,
+        "quality_status": report.status,
+        "issue_ids_at_approval": list(report.issue_ids),
+        "open_issue_ids_at_approval": open_issue_ids,
+    }
+    if scope == "full_preview":
+        evidence["covers_full_timeline"] = True
+    else:
+        evidence["covered_issue_ids"] = open_issue_ids
+        evidence["snippet_windows"] = [
+            {"issue_id": issue.id, "start_s": issue.start_s, "end_s": issue.end_s}
+            for issue in project.issues
+            if issue.id in open_issue_ids
+        ]
+    return evidence
+
+
+def _blocked_final_export_reason(job_dir: Path) -> str | None:
+    if not project_path(job_dir).exists():
+        graph_valid, graph_reason = _artifact_graph_valid(job_dir)
+        return None if graph_valid else f"artifact_graph_invalid: {graph_reason}"
+    project = load_project(job_dir)
+    decision = can_export_final(project)
+    if decision.allowed:
+        approved_full_preview = next(
+            (
+                render for render in reversed(project.preview_renders)
+                if render.get("approved") and render.get("scope") == "full_preview"
+            ),
+            None,
+        )
+        if approved_full_preview is not None:
+            fingerprints = approved_full_preview.get("artifact_fingerprints") or {
+                str(approved_full_preview.get("artifact_path", "")): {
+                    "sha256": approved_full_preview.get("artifact_sha256"),
+                }
+            }
+            for artifact_name, fingerprint in fingerprints.items():
+                artifact = job_dir / str(artifact_name)
+                if not artifact.exists():
+                    return "artifact_missing"
+                if _sha256_file(artifact) != fingerprint.get("sha256"):
+                    return "artifact_changed"
+        graph_valid, graph_reason = _artifact_graph_valid(job_dir)
+        if not graph_valid:
+            return f"artifact_graph_invalid: {graph_reason}"
+        return None
+    return decision.reason
+
+
+@app.post("/job/<job_id>/review/preview/critical-snippets/approve")
+def review_wizard_approve_critical_preview(job_id: str):
+    return _approve_review_preview(job_id, "critical_snippets")
+
+
+@app.post("/job/<job_id>/review/preview/full/render")
+def review_wizard_render_full_preview(job_id: str):
+    return _render_full_review_preview(job_id)
+
+
+@app.route("/job/<job_id>/review/preview/full.mp4")
+def review_wizard_full_preview_mp4(job_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Not found", 404
+    path = job_dir / "preview_full.mp4"
+    if not path.exists():
+        return "Not found", 404
+    return send_file(path, mimetype="video/mp4", conditional=True)
+
+
+@app.post("/job/<job_id>/review/preview/full/approve")
+def review_wizard_approve_full_preview(job_id: str):
+    return _approve_review_preview(job_id, "full_preview")
+
+
 @app.route("/job/<job_id>/stream")
 def job_stream(job_id: str):
     try:
@@ -655,9 +1230,13 @@ def job_stream(job_id: str):
 @app.route("/job/<job_id>/output.mp4")
 def job_output_mp4(job_id: str):
     try:
-        path = resolve_job_dir(JOBS_DIR, job_id) / "output.mp4"
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
     except ValueError:
         return "Not found", 404
+    block_reason = _blocked_final_export_reason(job_dir)
+    if block_reason:
+        return f"Export blocked: {block_reason}", 403
+    path = job_dir / "output.mp4"
     if not path.exists():
         return "Not found", 404
     return send_file(path, mimetype="video/mp4", conditional=True)
@@ -666,9 +1245,13 @@ def job_output_mp4(job_id: str):
 @app.route("/job/<job_id>/output.ass")
 def job_output_ass(job_id: str):
     try:
-        path = resolve_job_dir(JOBS_DIR, job_id) / "output.ass"
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
     except ValueError:
         return "Not found", 404
+    block_reason = _blocked_final_export_reason(job_dir)
+    if block_reason:
+        return f"Export blocked: {block_reason}", 403
+    path = job_dir / "output.ass"
     if not path.exists():
         return "Not found", 404
     return send_file(path, mimetype="text/plain")

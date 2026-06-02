@@ -6,6 +6,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     initGlobalProgress();
     initJobDetail();
+    initReviewWizard();
 });
 
 function initGlobalProgress() {
@@ -15,11 +16,21 @@ function initGlobalProgress() {
         const jobId = el.dataset.jobId || (window.JOB_DATA && window.JOB_DATA.id);
         if (!jobId) return;
 
-        const eventSource = new EventSource(`/job/${jobId}/stream`);
         const fill = el.querySelector('.progress-fill');
         const stageLabel = el.querySelector('.status-stage, .stage-label');
         const pctLabel = el.querySelector('.status-pct, .job-card-status .mono.dim');
         const failureMessage = el.querySelector('.failure-message');
+        const isJobDetailProgress = el.id === 'progress-section';
+        const currentStageText = (stageLabel && stageLabel.textContent || '').trim().toLowerCase();
+        const isTerminalDetail = isJobDetailProgress
+            && (currentStageText === 'done' || currentStageText === 'failed');
+
+        if (isTerminalDetail || (isJobDetailProgress && window.JOB_DATA && window.JOB_DATA.isDone)) {
+            return;
+        }
+
+        const eventSource = new EventSource(`/job/${jobId}/stream`);
+        let lastStage = currentStageText;
 
         eventSource.onmessage = (e) => {
             const data = JSON.parse(e.data);
@@ -36,7 +47,7 @@ function initGlobalProgress() {
                 stageLabel.className = stageLabel.className.replace(/running|queued/, 'done');
                 if (fill) fill.classList.add('done');
                 eventSource.close();
-                if (window.JOB_DATA && window.JOB_DATA.id === jobId) {
+                if (window.JOB_DATA && window.JOB_DATA.id === jobId && lastStage !== 'done') {
                     setTimeout(() => window.location.reload(), 1500);
                 }
             } else if (stage === 'failed') {
@@ -51,7 +62,8 @@ function initGlobalProgress() {
             } else {
                 stageLabel.textContent = stage.replace(/_/g, ' ').toUpperCase();
             }
-            if (typeof window.refreshObservabilityTimeline === 'function') {
+            lastStage = stage;
+            if (stage !== 'done' && stage !== 'failed' && typeof window.refreshObservabilityTimeline === 'function') {
                 window.refreshObservabilityTimeline();
             }
         };
@@ -78,17 +90,43 @@ function initObservabilityTimeline() {
 
     const url = section.dataset.eventsUrl;
     if (!url) return;
+    let isLoading = false;
+    let lastSignature = '';
 
     const load = () => {
+        if (isLoading) return;
+        isLoading = true;
         fetch(url)
             .then(response => {
                 if (!response.ok) throw new Error(`events ${response.status}`);
                 return response.json();
             })
-            .then(renderObservabilityTimeline)
+            .then(payload => {
+                const events = Array.isArray(payload.events) ? payload.events : [];
+                const summary = payload.summary || {};
+                const signature = JSON.stringify({
+                    events: events.slice(-16).map(event => [
+                        event.timestamp,
+                        event.event,
+                        event.stage,
+                        event.level,
+                        event.message,
+                    ]),
+                    currentValidation: summary.current_validation || null,
+                    failureCount: Array.isArray(summary.failures) ? summary.failures.length : 0,
+                    warningCount: Array.isArray(summary.warnings) ? summary.warnings.length : 0,
+                });
+                if (signature !== lastSignature) {
+                    lastSignature = signature;
+                    renderObservabilityTimeline(payload);
+                }
+            })
             .catch(error => {
                 const summary = document.getElementById('observability-summary');
                 if (summary) summary.textContent = `EVENTS UNAVAILABLE: ${error.message}`;
+            })
+            .finally(() => {
+                isLoading = false;
             });
     };
 
@@ -103,8 +141,13 @@ function renderObservabilityTimeline(payload) {
 
     const events = Array.isArray(payload.events) ? payload.events : [];
     const summary = payload.summary || {};
-    const failures = Array.isArray(summary.failures) ? summary.failures.length : 0;
-    const warnings = Array.isArray(summary.warnings) ? summary.warnings.length : 0;
+    const currentValidation = summary.current_validation || null;
+    const failures = currentValidation
+        ? currentValidation.failure_count || 0
+        : (Array.isArray(summary.failures) ? summary.failures.length : 0);
+    const warnings = currentValidation
+        ? currentValidation.warning_count || 0
+        : (Array.isArray(summary.warnings) ? summary.warnings.length : 0);
 
     summaryEl.innerHTML = `
         <span class="tag ${failures ? 'tag-red' : 'tag-green'}">${failures} FAIL</span>
@@ -122,9 +165,11 @@ function renderObservabilityTimeline(payload) {
         const time = event.timestamp ? new Date(event.timestamp * 1000).toLocaleTimeString() : '';
         return `
             <div class="event-row level-${escapeHtml(level)}">
-                <span class="event-time mono">${escapeHtml(time)}</span>
-                <span class="event-stage mono">${escapeHtml(stage)}</span>
-                <span class="event-name mono">${escapeHtml(name)}</span>
+                <div class="event-meta">
+                    <span class="event-time mono">${escapeHtml(time)}</span>
+                    <span class="event-stage mono">${escapeHtml(stage)}</span>
+                    <span class="event-name mono">${escapeHtml(name)}</span>
+                </div>
                 <span class="event-message mono">${escapeHtml(message || details)}</span>
             </div>
         `;
@@ -135,7 +180,11 @@ function compactDetails(details) {
     const pairs = Object.entries(details)
         .filter(([, value]) => value !== undefined && value !== null && value !== '')
         .slice(0, 4)
-        .map(([key, value]) => `${key}=${Array.isArray(value) ? value.length : value}`);
+        .map(([key, value]) => {
+            if (Array.isArray(value)) return `${key}=${value.length}`;
+            if (typeof value === 'object') return `${key}=${JSON.stringify(value)}`;
+            return `${key}=${value}`;
+        });
     return pairs.join(' ');
 }
 
@@ -146,6 +195,111 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+}
+
+function initReviewWizard() {
+    const shell = document.querySelector('.review-shell');
+    if (!shell) return;
+
+    const player = document.querySelector('[data-review-player]');
+    const loopButton = document.querySelector('[data-play-loop]');
+    let loopTimer = null;
+
+    if (player && loopButton) {
+        loopButton.addEventListener('click', () => {
+            const start = Number(loopButton.dataset.start || 0);
+            const end = Number(loopButton.dataset.end || start + 2);
+            if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+
+            if (loopTimer) window.clearInterval(loopTimer);
+            player.currentTime = Math.max(0, start - 0.25);
+            player.play();
+            loopTimer = window.setInterval(() => {
+                if (player.currentTime >= end + 0.25) {
+                    player.pause();
+                    window.clearInterval(loopTimer);
+                    loopTimer = null;
+                }
+            }, 80);
+        });
+    }
+
+    initAudioTimelinePreview(shell, player);
+}
+
+function initAudioTimelinePreview(shell, player) {
+    const timeline = shell.querySelector('[data-audio-timeline]');
+    if (!timeline) return;
+
+    const duration = Number(timeline.dataset.durationS || 0);
+    const playhead = timeline.querySelector('[data-audio-playhead]');
+    const activeRegion = timeline.querySelector('[data-audio-active-region]');
+    const readout = timeline.querySelector('[data-audio-selection-readout]');
+    const markers = Array.from(timeline.querySelectorAll('[data-timeline-marker]'));
+    if (!playhead || !activeRegion || !markers.length) return;
+
+    const setPreview = (marker) => {
+        const leftPct = Number(marker.dataset.leftPct || 0);
+        const widthPct = Number(marker.dataset.widthPct || 0);
+        if (!Number.isFinite(leftPct) || !Number.isFinite(widthPct)) return;
+
+        timeline.dataset.selectedPointId = marker.dataset.pointId || '';
+        markers.forEach(item => {
+            const isSelected = item === marker;
+            item.classList.toggle('is-previewing', isSelected);
+            item.setAttribute('aria-current', isSelected ? 'true' : 'false');
+        });
+        playhead.style.left = `${leftPct}%`;
+        playhead.dataset.timeS = marker.dataset.startS || '0';
+        activeRegion.style.left = `${leftPct}%`;
+        activeRegion.style.width = `${Math.max(0, widthPct)}%`;
+
+        if (readout) {
+            const label = marker.dataset.label || 'POINT';
+            const text = marker.dataset.text || '';
+            const start = Number(marker.dataset.startS || 0);
+            const end = Number(marker.dataset.endS || start);
+            const windowLabel = `${formatReviewSeconds(start)} - ${formatReviewSeconds(end)}`;
+            readout.innerHTML = `
+                <span class="mono accent">${escapeHtml(label)}</span>
+                <strong>${escapeHtml(text)}</strong>
+                <span class="mono dim">${escapeHtml(windowLabel)}</span>
+            `;
+        }
+    };
+
+    const shouldNavigate = (event) => (
+        event.defaultPrevented
+        || event.button !== 0
+        || event.metaKey
+        || event.ctrlKey
+        || event.shiftKey
+        || event.altKey
+    );
+
+    markers.forEach(marker => {
+        marker.addEventListener('pointerenter', () => setPreview(marker));
+        marker.addEventListener('focus', () => setPreview(marker));
+        marker.addEventListener('click', (event) => {
+            if (shouldNavigate(event)) return;
+            event.preventDefault();
+            setPreview(marker);
+        });
+    });
+
+    if (player && Number.isFinite(duration) && duration > 0) {
+        player.addEventListener('timeupdate', () => {
+            const current = Math.max(0, Math.min(duration, player.currentTime || 0));
+            const leftPct = (current / duration) * 100;
+            playhead.style.left = `${leftPct}%`;
+            playhead.dataset.timeS = current.toFixed(3);
+        });
+    }
+}
+
+function formatReviewSeconds(seconds) {
+    if (!Number.isFinite(seconds)) return '0.000s';
+    return `${seconds.toFixed(3)}s`;
 }
 
 function renderDriftChart(data) {

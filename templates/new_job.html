@@ -5,7 +5,7 @@
 <div class="page-header">
   <div class="back-link"><a href="/" class="mono dim">&lt;- BACK TO DASHBOARD</a></div>
   <h1 class="page-title">INITIALIZE NEW JOB</h1>
-  <p class="page-sub mono dim">// UPLOAD SUNO STEMS AND CONFIGURE ALIGNMENT</p>
+  <p class="page-sub mono dim">// UPLOAD STEMS AND CONFIGURE ALIGNMENT</p>
 </div>
 
 <form action="/job/new" method="POST" enctype="multipart/form-data" class="upload-form" id="uploadForm">
@@ -22,18 +22,18 @@
   <div class="section">
     <h2 class="section-title">2. AUDIO STEMS</h2>
     <div class="tab-bar">
-      <button type="button" class="tab-btn active" data-tab="zip">SUNO ZIP</button>
+      <button type="button" class="tab-btn active" data-tab="zip">STEMS ZIP</button>
       <button type="button" class="tab-btn" data-tab="files">INDIVIDUAL FILES</button>
     </div>
 
     <div class="tab-panel active" id="tab-zip">
       <p class="tab-hint mono dim">
-        Suno: More Actions (...) -&gt; Get Stems -&gt; Extract Stems -&gt; Download All
+        Upload a ZIP containing separate vocal and instrumental stems.
       </p>
       <div class="file-drop" id="drop-zip">
         <input type="file" name="suno_zip" accept=".zip" onchange="updateDrop(this)">
         <div class="drop-icon">ZIP</div>
-        <div class="drop-text">SUNO_STEMS.ZIP</div>
+        <div class="drop-text">STEMS.ZIP</div>
         <div class="drop-sub mono">ZIP with vocals + instrumental (WAV or MP3)</div>
       </div>
       <p class="mono dim" style="font-size:0.65rem; margin-top:0.75rem;">
@@ -67,8 +67,8 @@
   <div class="section">
     <h2 class="section-title">3. LYRICS</h2>
     <p class="mono dim" style="font-size: 0.72rem; margin-bottom: 1rem;">
-      This MVP requires Suno lyrics for <span class="accent">CTC forced alignment</span>.
-      Paste the Suno lyrics with section markers.
+      This flow requires lyrics for <span class="accent">CTC forced alignment</span>.
+      Paste lyrics with section markers.
     </p>
     <div class="form-section">
       <label class="form-label">
@@ -99,36 +99,30 @@
   </div>
 
   <div class="section">
-    <h2 class="section-title">4. STYLE PRESET</h2>
+    <h2 class="section-title">4. STYLE LIBRARY</h2>
+    <p class="mono dim" style="font-size: 0.72rem; margin-bottom: 1rem;">
+      Choose the subtitle style that Stage 06 will use for the ASS and MP4 render.
+    </p>
     <div class="preset-selector">
+      {% for style_preset in style_presets %}
       <label class="preset-option">
-        <input type="radio" name="preset" value="section-coded" checked>
+        <input
+          type="radio"
+          name="preset"
+          value="{{ style_preset.id }}"
+          {% if style_preset.id == default_preset_id %}checked{% endif %}
+        >
         <div class="preset-label">
-          <div class="preset-title">SECTION CODED</div>
-          <div class="preset-desc">Distinct colors by song section</div>
+          <div class="preset-title">{{ style_preset.label }}</div>
+          <div class="preset-desc">{{ style_preset.description }}</div>
+          <div class="preset-desc mono dim">
+            v{{ style_preset.version }}
+            / {{ style_preset.styles | length }} section styles
+            / {{ style_preset.effect_profile }}
+          </div>
         </div>
       </label>
-      <label class="preset-option">
-        <input type="radio" name="preset" value="cyberpunk">
-        <div class="preset-label">
-          <div class="preset-title">CYBERPUNK</div>
-          <div class="preset-desc">Purple box / Cyan highlight</div>
-        </div>
-      </label>
-      <label class="preset-option">
-        <input type="radio" name="preset" value="neon">
-        <div class="preset-label">
-          <div class="preset-title">NEON</div>
-          <div class="preset-desc">Teal / Yellow outline</div>
-        </div>
-      </label>
-      <label class="preset-option">
-        <input type="radio" name="preset" value="default">
-        <div class="preset-label">
-          <div class="preset-title">CLASSIC</div>
-          <div class="preset-desc">White / Cyan retro</div>
-        </div>
-      </label>
+      {% endfor %}
     </div>
   </div>
 
@@ -191,5 +185,6 @@ if (ta && counter) {
   };
   ta.addEventListener('input', update);
 }
+
 </script>
 {% endblock %}

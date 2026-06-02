@@ -89,6 +89,8 @@ class ServerContractTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 302)
             job_dir = jobs_dir / job_id
+            meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
+            self.assertEqual(meta["preset"], "section-coded")
             events = read_events(job_dir)
             names = [event["event"] for event in events]
             self.assertIn("job_request_received", names)
@@ -138,6 +140,55 @@ class ServerContractTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 409)
             self.assertFalse((jobs_dir / job_id).exists())
+
+    def test_list_jobs_skips_ids_that_detail_route_would_reject(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            valid_job = jobs_dir / "abc123def456"
+            invalid_job = jobs_dir / "manual-job"
+            valid_job.mkdir()
+            invalid_job.mkdir()
+            (valid_job / "meta.json").write_text(
+                json.dumps({"job_id": "abc123def456", "song_name": "Valid"}),
+                encoding="utf-8",
+            )
+            (invalid_job / "meta.json").write_text(
+                json.dumps({"job_id": "manual-job", "song_name": "Invalid"}),
+                encoding="utf-8",
+            )
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                jobs = server._list_jobs()
+
+            self.assertEqual(["abc123def456"], [job["job_id"] for job in jobs])
+
+    def test_new_job_form_renders_style_library_presets(self):
+        response = server.app.test_client().get("/job/new")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Aegisub Classic Blue", html)
+        self.assertIn('value="aegisub-classic-blue"', html)
+        self.assertIn("STYLE LIBRARY", html)
+
+    def test_new_job_rejects_unknown_style_preset_before_upload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().post(
+                    "/job/new",
+                    data={
+                        "lyrics_text": "[Verse]\nhello world",
+                        "song_name": "Bad Preset",
+                        "preset": "not-a-style",
+                    },
+                    content_type="multipart/form-data",
+                )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.get_json()["error"], "Unknown style preset: not-a-style")
+            self.assertEqual([], list(jobs_dir.iterdir()))
 
     def test_job_events_api_returns_timeline_and_summary(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -173,6 +173,7 @@
 {% endif %}
 
 <section class="section section-actions" style="border-top: 1px solid var(--red); background: rgba(255,45,85,0.02);">
+  <a class="btn btn-primary" href="/job/{{ meta.job_id }}/review">REVIEW WIZARD</a>
   <form method="POST" action="/job/{{ meta.job_id }}/delete"
         onsubmit="return confirm('Delete all job assets? This cannot be undone.')">
     <button type="submit" class="btn btn-danger">PURGE JOB ASSETS</button>
@@ -182,7 +183,7 @@
 
 {% block scripts %}
 <script id="job-data" type="application/json">
-{"id": "{{ meta.job_id }}", "isDone": {{ 'true' if status.stage == 'done' else 'false' }}, "metrics": {{ metrics | tojson if metrics else 'null' }}}
+{"id": "{{ meta.job_id }}", "isDone": {{ 'true' if status.stage in ['done'] else 'false' }}, "metrics": {{ metrics | tojson if metrics else 'null' }}}
 </script>
 <script>
 window.JOB_DATA = JSON.parse(document.getElementById('job-data').textContent);
