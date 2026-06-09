@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import time
@@ -8,6 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mGKHF]|\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI terminal escape sequences from subprocess output."""
+    return _ANSI_RE.sub("", text)
+
+from scripts.common.config import load_app_config
 from scripts.common.observability import build_observability_summary, write_event
 from scripts.common.status import write_status
 
@@ -20,6 +29,10 @@ class Stage:
     name: str
     command: list[str]
     progress: int
+    # Outer watchdog timeout (seconds). Must be >= the script's own internal
+    # timeout or the process gets killed before its own error handling fires.
+    # Defaults match the longest expected wall-clock time per stage.
+    timeout: int = 900
 
 
 def build_stage_plan(
@@ -30,6 +43,15 @@ def build_stage_plan(
 ) -> list[Stage]:
     py = python_exe or sys.executable
     lyrics_path = job_dir / "lyrics.txt"
+
+    # Load per-stage timeouts from config so the watchdog never fires before
+    # the script's own internal timeout (e.g. demucs = 1800s > default 900s).
+    cfg = load_app_config()
+    # Add a buffer so the script's error handling runs before we hard-kill it.
+    _BUFFER_S = 60
+    demix_timeout   = cfg.demucs_timeout_s + _BUFFER_S
+    align_timeout   = cfg.align_hubertfa_timeout_s + _BUFFER_S
+    analyze_timeout = cfg.ollama_timeout_s + _BUFFER_S
 
     if lyrics_path.exists():
         stages = [
@@ -44,6 +66,7 @@ def build_stage_plan(
                     str(lyrics_path),
                 ],
                 5,
+                timeout=align_timeout,
             )
         ]
     else:
@@ -52,13 +75,24 @@ def build_stage_plan(
                 "transcribing",
                 [py, str(scripts_dir / "s03_transcribe.py"), "--job-dir", str(job_dir)],
                 5,
+                timeout=600 + _BUFFER_S,
             )
         ]
 
     stages.extend(
         [
-            Stage("aligning", [py, str(scripts_dir / "s04_align.py"), "--job-dir", str(job_dir)], 25),
-            Stage("analyzing", [py, str(scripts_dir / "s05_analyze.py"), "--job-dir", str(job_dir)], 50),
+            Stage(
+                "aligning",
+                [py, str(scripts_dir / "s04_align.py"), "--job-dir", str(job_dir)],
+                25,
+                timeout=align_timeout,
+            ),
+            Stage(
+                "analyzing",
+                [py, str(scripts_dir / "s05_analyze.py"), "--job-dir", str(job_dir)],
+                50,
+                timeout=analyze_timeout,
+            ),
             Stage(
                 "generating",
                 [
@@ -70,12 +104,19 @@ def build_stage_plan(
                     preset,
                 ],
                 70,
+                timeout=120,
             ),
-            Stage("rendering", [py, str(scripts_dir / "s07_output.py"), "--job-dir", str(job_dir)], 85),
+            Stage(
+                "rendering",
+                [py, str(scripts_dir / "s07_output.py"), "--job-dir", str(job_dir)],
+                85,
+                timeout=cfg.output_ffmpeg_timeout_s + _BUFFER_S,
+            ),
             Stage(
                 "validating",
                 [py, str(scripts_dir / "s08_validate.py"), "--job-dir", str(job_dir)],
                 95,
+                timeout=120,
             ),
         ]
     )
@@ -163,7 +204,7 @@ class PipelineRunner:
             details={"returncode": result.returncode, "progress": progress, "run_id": self.run_id},
         )
         if result.returncode != 0:
-            output = (result.stderr or result.stdout or "unknown error")[-1200:]
+            output = _strip_ansi((result.stderr or result.stdout or "unknown error"))[-1200:]
             write_event(
                 self.job_dir,
                 "stage_failed",
@@ -189,7 +230,7 @@ class PipelineRunner:
             )
             for stage in stages:
                 self._invalidate_before_stage(stage.name)
-                if not self.run_command(stage.command, stage.name, stage.progress):
+                if not self.run_command(stage.command, stage.name, stage.progress, timeout=stage.timeout):
                     write_event(
                         self.job_dir,
                         "pipeline_finished",
