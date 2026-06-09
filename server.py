@@ -23,6 +23,8 @@ Usage:
 from __future__ import annotations
 
 import dataclasses
+import argparse
+from collections import Counter
 import hashlib
 import json
 import logging
@@ -43,6 +45,17 @@ from flask import (
     request, send_file, url_for,
 )
 
+from scripts.cockpit import (
+    artifact_rows,
+    build_cockpit_timeline,
+    build_quick_review,
+    cockpit_service_summary,
+    cockpit_stage_rows,
+    recent_project_cards,
+    review_window_waveform,
+    selected_job_summary,
+)
+from scripts.common.config import load_app_config
 from scripts.common.paths import is_safe_archive_member, resolve_job_dir, validate_job_id
 from scripts.common.observability import read_events, write_event
 from scripts.common.provenance import ProvenanceError, file_sha256, load_manifest, validate_file_hash
@@ -75,18 +88,20 @@ from scripts.review_wizard.store import load_project, project_path, save_project
 from scripts.review_wizard.text_prep import prepare_text_for_review
 from scripts.review_wizard.wizard import (
     adjust_review_point_timing,
+    apply_review_point_suggestion,
     approve_review_point,
     skip_review_point_with_risk,
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
-JOBS_DIR   = Path("jobs")
-SCRIPTS    = Path("scripts")
+APP_CONFIG = load_app_config()
+JOBS_DIR = APP_CONFIG.jobs_dir
+SCRIPTS = Path("scripts")
 JOBS_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__)
-app.secret_key = "karaoke-local-dev"
-app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024
+app.secret_key = APP_CONFIG.secret_key
+app.config["MAX_CONTENT_LENGTH"] = APP_CONFIG.max_upload_bytes
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -94,7 +109,7 @@ logger = logging.getLogger(__name__)
 _running: dict[str, threading.Thread] = {}
 
 
-DEFAULT_STYLE_PRESET_ID = "single-style-kf"
+DEFAULT_STYLE_PRESET_ID = APP_CONFIG.default_style_preset_id
 
 
 def _write_server_event(event: str, level: str = "info", message: str = "", **details: Any) -> None:
@@ -184,12 +199,37 @@ def _list_jobs() -> list[dict[str, Any]]:
     return jobs
 
 
+def _find_listed_job(jobs: list[dict[str, Any]], job_id: str | None) -> dict[str, Any] | None:
+    if not job_id:
+        return None
+    for job in jobs:
+        if job.get("job_id") == job_id:
+            return job
+    return None
+
+
 def _get_wav_duration(path: Path) -> float | None:
     try:
         with wave.open(str(path), "rb") as wf:
             return wf.getnframes() / wf.getframerate()
     except Exception:
         return None
+
+
+def _lyrics_sections_for_review(sections: list[Any]) -> list[dict[str, Any]]:
+    label_totals = Counter(str(section.label) for section in sections)
+    label_counts: Counter[str] = Counter()
+    payloads: list[dict[str, Any]] = []
+    for section in sections:
+        payload = section.to_dict()
+        label = str(payload.get("label", "Section"))
+        if label_totals[label] > 1:
+            label_counts[label] += 1
+            payload["display_label"] = f"{label} {label_counts[label]}"
+        else:
+            payload["display_label"] = label
+        payloads.append(payload)
+    return payloads
 
 
 def _compute_drift_metrics(job_dir: Path) -> dict | None:
@@ -331,7 +371,56 @@ def _run_pipeline(job_id: str) -> None:
 @app.route("/")
 def index():
     jobs = _list_jobs()
-    return render_template("index.html", jobs=jobs)
+    selected_job = _find_listed_job(jobs, request.args.get("job"))
+    selected_job_dir: Path | None = None
+    project = None
+    review_points = []
+    mode = request.args.get("mode", "new")
+    if mode not in {"new", "review"}:
+        mode = "new"
+
+    if selected_job:
+        try:
+            selected_job_dir = resolve_job_dir(JOBS_DIR, selected_job["job_id"])
+        except ValueError:
+            selected_job_dir = None
+
+    if mode == "review" and selected_job and selected_job_dir and selected_job_dir.exists():
+        project = _ensure_review_project(selected_job_dir, selected_job["job_id"])
+        review_points = build_review_points(selected_job_dir, project)
+    elif selected_job and selected_job_dir and selected_job_dir.exists() and project_path(selected_job_dir).exists():
+        project = load_project(selected_job_dir)
+        review_points = build_review_points(selected_job_dir, project)
+
+    quick_review = (
+        build_quick_review(selected_job["job_id"], project, review_points)
+        if selected_job and mode == "review"
+        else None
+    )
+    if quick_review and selected_job_dir:
+        quick_review["mini_waveform"] = review_window_waveform(selected_job_dir, quick_review.get("active_point"))
+
+    style_presets = _style_preset_options()
+    default_preset_label = next(
+        (preset["label"] for preset in style_presets if preset["id"] == DEFAULT_STYLE_PRESET_ID),
+        DEFAULT_STYLE_PRESET_ID,
+    )
+
+    return render_template(
+        "cockpit.html",
+        mode=mode,
+        jobs=jobs,
+        recent_projects=recent_project_cards(jobs),
+        selected_job=selected_job_summary(selected_job),
+        stage_rows=cockpit_stage_rows((selected_job or {}).get("status", {})),
+        artifact_rows=artifact_rows(selected_job_dir),
+        timeline=build_cockpit_timeline(selected_job_dir, review_points),
+        quick_review=quick_review,
+        service_summary=cockpit_service_summary(jobs),
+        style_presets=style_presets,
+        default_preset_id=DEFAULT_STYLE_PRESET_ID,
+        default_preset_label=default_preset_label,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -814,10 +903,17 @@ def review_wizard(job_id: str):
         highlight_segments=highlight_segments,
     )
     lyrics_sections = project.prepared_text.sections
+    lyrics_section_payloads = _lyrics_sections_for_review(lyrics_sections)
     requested_section = request.args.get("section")
     active_lyrics_section = next(
-        (section for section in lyrics_sections if section.label == requested_section or section.id == requested_section),
-        lyrics_sections[0] if lyrics_sections else None,
+        (
+            section
+            for section in lyrics_section_payloads
+            if section["label"] == requested_section
+            or section["id"] == requested_section
+            or section["display_label"] == requested_section
+        ),
+        lyrics_section_payloads[0] if lyrics_section_payloads else None,
     )
     return render_template(
         "review_wizard.html",
@@ -841,8 +937,8 @@ def review_wizard(job_id: str):
         stage_summaries=stage_summaries,
         active_stage_summary=stage_summaries.get(active_stage, {}),
         audio_timeline=audio_timeline,
-        lyrics_sections=[section.to_dict() for section in lyrics_sections],
-        active_lyrics_section=active_lyrics_section.to_dict() if active_lyrics_section else None,
+        lyrics_sections=lyrics_section_payloads,
+        active_lyrics_section=active_lyrics_section,
     )
 
 
@@ -903,6 +999,48 @@ def review_wizard_approve_point(job_id: str, point_id: str):
     points = build_review_points(job_dir, project)
     current = next((point for point in points if point.id == point_id), None)
     stage = current.stage_id if current else request.form.get("stage", "alignment")
+    filter_args = _review_filter_args_from_form()
+    filtered_points = filtered_review_points(
+        points,
+        stage,
+        filter_args.get("status", "all"),
+        filter_args.get("level", "all"),
+    )
+    next_point = next_open_point_after(filtered_points, point_id)
+    args = {"stage": stage, **filter_args}
+    if next_point is not None:
+        args["point"] = next_point.id
+    return redirect(url_for("review_wizard", job_id=job_id, **args))
+
+
+@app.post("/job/<job_id>/review/points/<point_id>/apply-suggestion")
+def review_wizard_apply_point_suggestion(job_id: str, point_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists() or not project_path(job_dir).exists():
+        return "Job not found", 404
+
+    project = load_project(job_dir)
+    points = build_review_points(job_dir, project)
+    current = next((point for point in points if point.id == point_id), None)
+    if current is None:
+        return "Review point not found", 404
+    project = apply_review_point_suggestion(
+        project,
+        point_id,
+        applied_by="local-user",
+        details={
+            "source": current.source,
+            "text": current.text,
+            "suggested_action": current.suggested_action,
+            "affected_ids": current.affected_ids,
+        },
+    )
+    save_project(job_dir, project)
+    points = build_review_points(job_dir, project)
+    stage = current.stage_id
     filter_args = _review_filter_args_from_form()
     filtered_points = filtered_review_points(
         points,
@@ -1350,5 +1488,13 @@ def job_delete(job_id: str):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _server_cli_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the Karaoke MFA Multi local server.")
+    parser.add_argument("--host", default=APP_CONFIG.server_host)
+    parser.add_argument("--port", type=int, default=APP_CONFIG.server_port)
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    args = _server_cli_args()
+    app.run(host=args.host, port=args.port, debug=False, threaded=True)

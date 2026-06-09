@@ -6,6 +6,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     initGlobalProgress();
     initJobDetail();
+    initCockpit();
     initReviewWizard();
 });
 
@@ -170,22 +171,131 @@ function renderObservabilityTimeline(payload) {
                     <span class="event-stage mono">${escapeHtml(stage)}</span>
                     <span class="event-name mono">${escapeHtml(name)}</span>
                 </div>
-                <span class="event-message mono">${escapeHtml(message || details)}</span>
+                <span class="event-message mono">${message ? escapeHtml(message) : details}</span>
             </div>
         `;
     }).join('') || '<div class="event-row"><span class="mono dim">No structured events yet.</span></div>';
 }
 
+const OBSERVABILITY_TAG_DETAIL_KEYS = new Set([
+    'classification',
+    'tail_classification',
+    'line_classification',
+    'structural_tail_classification',
+    'sound_type',
+]);
+
+const OBSERVABILITY_TAG_ARRAY_KEYS = new Set([
+    'diagnostic_tags',
+    'review_flags',
+]);
+
+const FRIENDLY_TAG_LABELS = {
+    alignment_drift: 'DFT',
+    early_next_line_entry_drift: 'DFT',
+    final_word_after_alignment_hole: 'A-HOLE',
+    false_long_tail: 'F-TAIL',
+    inactive_or_false_tail: 'F-TAIL',
+    line_low_vocal_evidence: 'L-VOC',
+    long_structural_pause_audio_extension: 'L-PAU',
+    possible_backing_or_alignment_issue: 'B/ALG?',
+    possible_backing_vocal_not_in_lyrics: 'BV?',
+    possible_lost_tail: 'L-TAIL?',
+    possible_sustained_final_vowel: 'P-SUS',
+    probable_unwritten_vowel_extension: 'U-SUS',
+    review_only: 'RO',
+    review_only_backing_or_drift: 'B/DFT',
+    review_only_low_vocal_evidence: 'L-VOC',
+    structural_pause_overridden_by_audio_tail: 'P-OVR',
+    sustained_final_vowel: 'SUS',
+    unwritten_interline_melisma: 'U-MEL',
+    unwritten_vocal_melisma: 'VOC',
+    written_melisma_extension: 'W-MEL',
+};
+
+const TAG_TITLES = {
+    alignment_drift: 'Drift',
+    early_next_line_entry_drift: 'Drift',
+    final_word_after_alignment_hole: 'Alignment hole',
+    false_long_tail: 'False tail',
+    inactive_or_false_tail: 'False tail',
+    line_low_vocal_evidence: 'Low vocal evidence',
+    long_structural_pause_audio_extension: 'Long pause',
+    possible_backing_or_alignment_issue: 'Backing/alignment?',
+    possible_backing_vocal_not_in_lyrics: 'Backing vocal?',
+    possible_lost_tail: 'Lost tail?',
+    possible_sustained_final_vowel: 'Possible sustain',
+    probable_unwritten_vowel_extension: 'Unwritten sustain',
+    review_only: 'Review only',
+    review_only_backing_or_drift: 'Backing/drift',
+    review_only_low_vocal_evidence: 'Low vocal evidence',
+    structural_pause_overridden_by_audio_tail: 'Pause override',
+    sustained_final_vowel: 'Sustain',
+    unwritten_interline_melisma: 'Unwritten melisma',
+    unwritten_vocal_melisma: 'Vocalization',
+    written_melisma_extension: 'Written melisma',
+};
+
+function formatTagLabel(value) {
+    const normalized = String(value || '').replace(/\s+/g, '_').trim().toLowerCase();
+    return FRIENDLY_TAG_LABELS[normalized] || String(value || '').replace(/_/g, ' ').trim().toUpperCase();
+}
+
+function formatTagTitle(value) {
+    const normalized = String(value || '').replace(/\s+/g, '_').trim().toLowerCase();
+    const fallback = String(value || '').replace(/_/g, ' ').trim();
+    return TAG_TITLES[normalized] || (fallback ? fallback.charAt(0).toUpperCase() + fallback.slice(1) : '');
+}
+
+function renderDetailTag(value, className = 'tag-cyan') {
+    const label = formatTagLabel(value);
+    const title = formatTagTitle(value);
+    if (!label) return '';
+    return `<span class="tag ${className}" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
+function addClassificationTag(tags, seen, value, className = 'tag-cyan') {
+    const raw = String(value || '').trim();
+    if (!raw) return;
+    const key = raw.replace(/\s+/g, '_').toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    tags.push(renderDetailTag(raw, className));
+}
+
+function classificationDetailTags(details) {
+    const tags = [];
+    const seen = new Set();
+    Object.entries(details || {}).forEach(([key, value]) => {
+        if (OBSERVABILITY_TAG_DETAIL_KEYS.has(key)) {
+            addClassificationTag(tags, seen, value, key.includes('structural') ? 'tag-warn' : 'tag-cyan');
+        } else if (OBSERVABILITY_TAG_ARRAY_KEYS.has(key) && Array.isArray(value)) {
+            value.forEach(item => addClassificationTag(tags, seen, item, key === 'review_flags' ? 'tag-warn' : 'tag-purple'));
+        } else if (key === 'sound_suggestion' && value && typeof value === 'object') {
+            addClassificationTag(tags, seen, value.sound_type, 'tag-purple');
+        }
+    });
+    return tags.join('');
+}
+
 function compactDetails(details) {
+    const tags = classificationDetailTags(details);
     const pairs = Object.entries(details)
         .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .filter(([key]) => !OBSERVABILITY_TAG_DETAIL_KEYS.has(key))
+        .filter(([key]) => !OBSERVABILITY_TAG_ARRAY_KEYS.has(key))
         .slice(0, 4)
         .map(([key, value]) => {
-            if (Array.isArray(value)) return `${key}=${value.length}`;
-            if (typeof value === 'object') return `${key}=${JSON.stringify(value)}`;
-            return `${key}=${value}`;
+            if (key === 'sound_suggestion' && value && typeof value === 'object') {
+                const { sound_type: _soundType, ...rest } = value;
+                if (!Object.keys(rest).length) return '';
+                return `${escapeHtml(key)}=${escapeHtml(JSON.stringify(rest))}`;
+            }
+            if (Array.isArray(value)) return `${escapeHtml(key)}=${value.length}`;
+            if (typeof value === 'object') return `${escapeHtml(key)}=${escapeHtml(JSON.stringify(value))}`;
+            return `${escapeHtml(key)}=${escapeHtml(value)}`;
         });
-    return pairs.join(' ');
+    return [tags, ...pairs.filter(Boolean)].filter(Boolean).join(' ');
 }
 
 function escapeHtml(value) {
@@ -195,6 +305,63 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+}
+
+function initCockpit() {
+    const shell = document.querySelector('.cockpit-shell');
+    if (!shell) return;
+
+    shell.querySelectorAll('[data-file-drop]').forEach(drop => {
+        const input = drop.querySelector('input[type="file"]');
+        const label = drop.querySelector('span');
+        const initialLabel = label ? label.textContent : '';
+
+        const updateFileState = () => {
+            const file = input && input.files && input.files[0];
+            drop.classList.toggle('has-file', Boolean(file));
+            if (label) label.textContent = file ? file.name : initialLabel;
+        };
+
+        if (input) input.addEventListener('change', updateFileState);
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            drop.addEventListener(eventName, event => {
+                event.preventDefault();
+                drop.classList.add('is-hovering');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            drop.addEventListener(eventName, event => {
+                event.preventDefault();
+                drop.classList.remove('is-hovering');
+                if (eventName !== 'drop' || !input || !event.dataTransfer || !event.dataTransfer.files.length) {
+                    return;
+                }
+                try {
+                    input.files = event.dataTransfer.files;
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                } catch (error) {
+                    updateFileState();
+                }
+            });
+        });
+    });
+
+    const lyrics = shell.querySelector('.cockpit-lyrics');
+    const counter = shell.querySelector('[data-lyrics-counter]');
+    if (lyrics && counter) {
+        const updateLyricsCounter = () => {
+            const lyricLines = lyrics.value
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(line => line && !/^\[[^\]]+\]$/.test(line));
+            const label = lyricLines.length === 1 ? 'lyric line' : 'lyric lines';
+            counter.textContent = `${lyricLines.length} ${label}`;
+        };
+        lyrics.addEventListener('input', updateLyricsCounter);
+        updateLyricsCounter();
+    }
 }
 
 function initReviewWizard() {
@@ -257,12 +424,26 @@ function initAudioTimelinePreview(shell, player) {
         if (readout) {
             const label = marker.dataset.label || 'POINT';
             const text = marker.dataset.text || '';
+            let tags = [];
+            try {
+                tags = JSON.parse(marker.dataset.tagsJson || '[]');
+            } catch (error) {
+                tags = [];
+            }
+            const tagMarkup = Array.isArray(tags) && tags.length
+                ? `<span class="review-point-tags">${tags.map(tag => {
+                    const tagClass = String(tag.class || '');
+                    const tagLabel = String(tag.label || '');
+                    const tagTitle = String(tag.title || tag.value || tagLabel);
+                    return `<span class="tag ${escapeHtml(tagClass)}" title="${escapeHtml(tagTitle)}">${escapeHtml(tagLabel)}</span>`;
+                }).join('')}</span>`
+                : `<strong>${escapeHtml(text)}</strong>`;
             const start = Number(marker.dataset.startS || 0);
             const end = Number(marker.dataset.endS || start);
             const windowLabel = `${formatReviewSeconds(start)} - ${formatReviewSeconds(end)}`;
             readout.innerHTML = `
                 <span class="mono accent">${escapeHtml(label)}</span>
-                <strong>${escapeHtml(text)}</strong>
+                ${tagMarkup}
                 <span class="mono dim">${escapeHtml(windowLabel)}</span>
             `;
         }

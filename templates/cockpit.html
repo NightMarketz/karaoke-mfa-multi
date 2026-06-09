@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% block title %}Cockpit - Karaoke MFA Multi{% endblock %}
+{% block body_class %}cockpit-page{% endblock %}
+
+{% block content %}
+<section class="cockpit-shell" data-cockpit-mode="{{ mode }}">
+  <aside class="cockpit-sidebar" aria-label="Main navigation">
+    <a class="cockpit-brand" href="/">
+      <span class="cockpit-brand-wave">WF</span>
+      <span>Karaoke MFA Multi</span>
+    </a>
+    <nav class="cockpit-nav">
+      <a class="cockpit-nav-item {{ 'is-active' if mode == 'new' else '' }}" href="/">
+        <span aria-hidden="true">+</span><span>New</span>
+      </a>
+      <a class="cockpit-nav-item" href="#recent-projects">
+        <span aria-hidden="true">[]</span><span>Projects</span>
+      </a>
+      {% if selected_job %}
+      <a class="cockpit-nav-item {{ 'is-active' if mode == 'review' else '' }}" href="/?job={{ selected_job.job_id }}&mode=review">
+        <span aria-hidden="true">*</span><span>Review</span>
+      </a>
+      {% else %}
+      <span class="cockpit-nav-item is-disabled"><span aria-hidden="true">*</span><span>Review</span></span>
+      {% endif %}
+      <span class="cockpit-nav-item is-disabled"><span aria-hidden="true">v</span><span>Exports</span></span>
+      <span class="cockpit-nav-item is-disabled"><span aria-hidden="true">o</span><span>Settings</span></span>
+    </nav>
+    <div class="cockpit-sidebar-status mono">
+      <span>{{ service_summary.label }}</span>
+      <strong>{{ service_summary.state }}</strong>
+    </div>
+  </aside>
+
+  <div class="cockpit-main">
+    <header class="cockpit-command-strip">
+      <div>
+        <h1>{{ selected_job.title if selected_job else "New Karaoke" }}</h1>
+        <span class="mono dim">{{ "Selected Project" if selected_job else "Unsaved Project" }}</span>
+      </div>
+      <div class="cockpit-status-chips">
+        <span class="cockpit-chip"><small>Language</small><strong>{{ selected_job.language_label if selected_job else "--" }}</strong></span>
+        <span class="cockpit-chip"><small>Preset</small><strong>{{ selected_job.preset if selected_job else default_preset_label }}</strong></span>
+        <span class="cockpit-chip"><small>Pipeline</small><strong>{{ selected_job.pipeline_label if selected_job else "Idle" }}</strong></span>
+        <span class="cockpit-chip"><small>Duration</small><strong>{{ selected_job.duration_label if selected_job else "--:--" }}</strong></span>
+        <span class="cockpit-chip">
+          <small>Export Ready</small>
+          <strong class="{{ 'accent' if quick_review and quick_review.export_allowed else 'warn' }}">
+            {{ "Ready" if quick_review and quick_review.export_allowed else "Not Ready" }}
+          </strong>
+        </span>
+      </div>
+    </header>
+
+    <div class="cockpit-grid">
+      <section class="cockpit-task-panel" aria-label="Primary task panel">
+        <div class="cockpit-mode-tabs" aria-label="Workspace mode">
+          <a class="{{ 'is-active' if mode == 'new' else '' }}" href="{{ '/?job=' ~ selected_job.job_id if selected_job else '/' }}">New Karaoke</a>
+          {% if selected_job %}
+          <a class="{{ 'is-active' if mode == 'review' else '' }}" href="/?job={{ selected_job.job_id }}&mode=review">Review</a>
+          {% else %}
+          <span class="is-disabled">Review</span>
+          {% endif %}
+        </div>
+
+        {% if mode == "review" %}
+          <div class="quick-review-panel">
+            <h2>Issue Triage</h2>
+            {% if quick_review and quick_review.active_point %}
+              {% set point = quick_review.active_point %}
+              <div class="quick-review-current">
+                <span class="tag tag-warn">{{ point.severity | upper }}</span>
+                <strong>{{ point.text }}</strong>
+                <span class="mono dim">{{ "%.3f"|format(point.start_s) }}s - {{ "%.3f"|format(point.end_s) }}s</span>
+                {% if point.evidence_summary %}
+                <p class="mono dim">{{ point.evidence_summary }}</p>
+                {% endif %}
+              </div>
+              {% if quick_review.mini_waveform %}
+              <div class="quick-review-mini-wave" aria-hidden="true">
+                {% for bar in quick_review.mini_waveform %}
+                <span style="height: {{ bar.height }}%;"></span>
+                {% endfor %}
+              </div>
+              {% endif %}
+              <div class="quick-review-actions">
+                <form method="post" action="{{ quick_review.approve_action }}">
+                  <input type="hidden" name="stage" value="{{ point.stage_id }}">
+                  <button type="submit" class="btn btn-primary">Approve</button>
+                </form>
+                <form method="post" action="{{ quick_review.apply_action }}">
+                  <input type="hidden" name="stage" value="{{ point.stage_id }}">
+                  <button type="submit" class="btn btn-ghost">Apply Suggestion</button>
+                </form>
+                <form method="post" action="{{ quick_review.risk_action }}" class="quick-risk-form">
+                  <input type="hidden" name="stage" value="{{ point.stage_id }}">
+                  <input class="form-input" name="reason" placeholder="Risk reason" required>
+                  <button type="submit" class="btn btn-ghost">Skip With Risk</button>
+                </form>
+                <a class="btn btn-ghost" href="{{ quick_review.wizard_href }}">Open Review Wizard</a>
+              </div>
+              <div class="quick-review-queue" aria-label="Quick review queue">
+                {% for queue_point in quick_review.queue %}
+                <a class="quick-review-queue-item" href="/job/{{ selected_job.job_id }}/review?stage={{ queue_point.stage_id }}&point={{ queue_point.id | urlencode }}">
+                  <span class="mono">{{ queue_point.level | upper }}</span>
+                  <strong>{{ queue_point.text }}</strong>
+                </a>
+                {% endfor %}
+              </div>
+            {% elif selected_job %}
+              <p class="mono dim">No open review points for this project.</p>
+              <a class="btn btn-primary" href="/job/{{ selected_job.job_id }}/review">Open Review Wizard</a>
+            {% else %}
+              <p class="mono dim">Select a recent project to triage review issues.</p>
+            {% endif %}
+          </div>
+        {% else %}
+          <form action="/job/new" method="POST" enctype="multipart/form-data" class="cockpit-new-form" id="cockpitUploadForm">
+            <label class="form-section">
+              <span class="form-label">Song Title</span>
+              <input type="text" name="song_name" class="form-input" placeholder="Nova Cancao" required>
+            </label>
+            <div class="form-section">
+              <span class="form-label">Suno ZIP</span>
+              <label class="cockpit-drop" data-file-drop>
+                <input type="file" name="suno_zip" accept=".zip">
+                <span>Drag and drop stems ZIP</span>
+                <small class="mono dim">ZIP with vocals + instrumental</small>
+              </label>
+            </div>
+            <div class="form-section">
+              <span class="form-label">Individual Stems</span>
+              <label class="cockpit-drop cockpit-drop-compact" data-file-drop>
+                <input type="file" name="vocals" accept=".wav,.mp3,.flac">
+                <span>Vocals stem</span>
+                <small class="mono dim">WAV, MP3, or FLAC</small>
+              </label>
+              <label class="cockpit-drop cockpit-drop-compact" data-file-drop>
+                <input type="file" name="instrumental" accept=".wav,.mp3,.flac">
+                <span>Instrumental stem</span>
+                <small class="mono dim">WAV, MP3, or FLAC</small>
+              </label>
+              <a class="mono dim cockpit-legacy-link" href="/job/new">Open full upload form</a>
+            </div>
+            <label class="form-section">
+              <span class="form-label">Lyrics</span>
+              <textarea class="form-input cockpit-lyrics" name="lyrics_text" rows="8" required spellcheck="false" placeholder="[Verse]&#10;Cole a letra aqui"></textarea>
+              <span class="mono dim" data-lyrics-counter></span>
+            </label>
+            <label class="form-section">
+              <span class="form-label">Preset / Style</span>
+              <select class="form-input" name="preset">
+                {% for style_preset in style_presets %}
+                <option value="{{ style_preset.id }}" {% if style_preset.id == default_preset_id %}selected{% endif %}>{{ style_preset.label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <button type="submit" class="btn btn-primary cockpit-start">Start Processing</button>
+          </form>
+        {% endif %}
+      </section>
+
+      <section class="cockpit-timeline" aria-label="Audio timeline">
+        <div class="cockpit-timeline-toolbar mono">
+          <span>Waveform</span>
+          <span>{{ timeline.duration_label }}</span>
+          <span>Markers</span>
+        </div>
+        <div class="cockpit-wave-lanes" aria-hidden="true">
+          {% for lane in timeline.lanes %}
+          <div class="cockpit-wave-row">
+            <span class="cockpit-lane-label">{{ lane.label }}</span>
+            <div class="cockpit-waveform state-{{ lane.state }}">
+              {% for bar in lane.bars %}
+              <span style="height: {{ bar.height }}%;"></span>
+              {% else %}
+              <em class="mono dim">Missing {{ lane.artifact }}</em>
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+          {% if not timeline.lanes %}
+          <div class="cockpit-empty-timeline mono dim">No selected audio project.</div>
+          {% endif %}
+          <div class="cockpit-marker-lane cockpit-lyric-lane">
+            <span>Lyrics</span>
+            <div class="cockpit-marker-track">
+              {% for lyric in timeline.lyrics %}
+              <b style="left: {{ lyric.left_pct }}%; width: {{ lyric.width_pct }}%;">{{ lyric.text }}</b>
+              {% else %}
+              <em class="mono dim">No analysis lines</em>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="cockpit-marker-lane cockpit-issue-lane">
+            <span>Issues</span>
+            <div class="cockpit-marker-track">
+              {% for issue in timeline.issues %}
+              <b class="severity-{{ issue.severity }}" style="left: {{ issue.left_pct }}%; width: {{ issue.width_pct }}%;" title="{{ issue.text }}">{{ issue.text }}</b>
+              {% else %}
+              <em class="mono dim">No open review points</em>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="cockpit-marker-lane cockpit-confidence-row">
+            <span>Evidence</span>
+            <div class="cockpit-confidence-lane">
+              {% for segment in timeline.confidence_segments %}
+              <i class="state-{{ segment.state }}" style="left: {{ segment.left_pct }}%; width: {{ segment.width_pct }}%;"></i>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="cockpit-diagnostics" aria-label="Diagnostics">
+        <section>
+          <h2>Pipeline</h2>
+          {% for row in stage_rows %}
+          <div class="cockpit-stage-row state-{{ row.state }}">
+            <span>{{ row.id }}</span><strong>{{ row.label }}</strong><em>{{ row.state | capitalize }}</em>
+          </div>
+          {% endfor %}
+        </section>
+        <section>
+          <h2>Artifacts</h2>
+          {% for artifact in artifact_rows %}
+          <div class="cockpit-artifact-row state-{{ artifact.state }}">
+            <span>{{ artifact.name }}</span><strong>{{ "OK" if artifact.exists else "Missing" }}</strong>
+          </div>
+          {% endfor %}
+        </section>
+      </aside>
+    </div>
+
+    <section class="recent-projects-rail" id="recent-projects" aria-label="Recent projects">
+      <div class="rail-header">
+        <h2>Recent Projects</h2>
+        <a href="/job/new">New full form</a>
+      </div>
+      <div class="project-rail-list">
+        {% for project in recent_projects %}
+        <article class="project-rail-card state-{{ project.state }}">
+          <a href="{{ project.href }}">
+            <strong>{{ project.title }}</strong>
+            <span class="mono dim">{{ project.duration_label }} - {{ project.stage_label }}</span>
+          </a>
+          <div class="project-rail-actions">
+            <a href="{{ project.href }}">Resume</a>
+            <a href="{{ project.review_href }}">Review</a>
+          </div>
+        </article>
+        {% else %}
+        <div class="project-rail-empty mono dim">No recent projects yet.</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <footer class="cockpit-player" aria-label="Transport controls">
+      <div class="cockpit-now-playing">
+        <strong>{{ selected_job.title if selected_job else "New Karaoke" }}</strong>
+        <span class="mono dim">{{ quick_review.open_count if quick_review else 0 }} issues</span>
+      </div>
+      <div class="cockpit-transport">
+        <button type="button" aria-label="Previous">Prev</button>
+        <button type="button" aria-label="Play">Play</button>
+        <button type="button" aria-label="Next">Next</button>
+      </div>
+      <div class="cockpit-scrubber" aria-hidden="true"><span></span></div>
+      <div class="cockpit-player-actions mono">
+        {% for lane in timeline.lanes if lane.id in ["vocals", "instrumental"] %}
+        <span>{{ lane.label }} {{ "OK" if lane.state == "ok" else "Missing" }}</span>
+        {% endfor %}
+        <span>{{ "Export Ready" if quick_review and quick_review.export_allowed else "Export Not Ready" }}</span>
+      </div>
+    </footer>
+  </div>
+</section>
+{% endblock %}
