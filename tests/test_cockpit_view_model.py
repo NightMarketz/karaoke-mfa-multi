@@ -26,6 +26,17 @@ def _write_test_wav(path: Path, samples: list[int], *, framerate: int = 8000) ->
 
 
 class CockpitViewModelTests(unittest.TestCase):
+    def test_stage_rows_all_pending_when_no_job_selected(self):
+        # When no job is selected the cockpit must not show s01 as "Running"
+        for status in ({}, None):
+            with self.subTest(status=status):
+                rows = cockpit_stage_rows(status)
+                states = [row["state"] for row in rows]
+                self.assertTrue(
+                    all(s == "pending" for s in states),
+                    f"Expected all pending but got {states} for status={status!r}",
+                )
+
     def test_stage_rows_mark_current_stage_running_and_previous_done(self):
         rows = cockpit_stage_rows({"stage": "aligning", "progress": 47, "error": ""})
 

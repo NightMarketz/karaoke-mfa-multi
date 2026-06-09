@@ -401,17 +401,20 @@ def index():
         quick_review["mini_waveform"] = review_window_waveform(selected_job_dir, quick_review.get("active_point"))
 
     style_presets = _style_preset_options()
-    default_preset_label = next(
-        (preset["label"] for preset in style_presets if preset["id"] == DEFAULT_STYLE_PRESET_ID),
-        DEFAULT_STYLE_PRESET_ID,
-    )
+    preset_label_by_id = {p["id"]: p["label"] for p in style_presets}
+    default_preset_label = preset_label_by_id.get(DEFAULT_STYLE_PRESET_ID, DEFAULT_STYLE_PRESET_ID)
+
+    _sel_summary = selected_job_summary(selected_job)
+    if _sel_summary:
+        raw_preset_id = _sel_summary.get("preset", "")
+        _sel_summary = dict(_sel_summary, preset=preset_label_by_id.get(raw_preset_id, raw_preset_id))
 
     return render_template(
         "cockpit.html",
         mode=mode,
         jobs=jobs,
         recent_projects=recent_project_cards(jobs),
-        selected_job=selected_job_summary(selected_job),
+        selected_job=_sel_summary,
         stage_rows=cockpit_stage_rows((selected_job or {}).get("status", {})),
         artifact_rows=artifact_rows(selected_job_dir),
         timeline=build_cockpit_timeline(selected_job_dir, review_points),

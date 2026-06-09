@@ -64,6 +64,13 @@ def _stage_index(stage: str) -> int:
 
 
 def cockpit_stage_rows(status: dict[str, Any] | None) -> list[dict[str, Any]]:
+    # No status means no job is selected — all stages start as pending
+    if not status:
+        return [
+            {"id": d["id"], "label": d["label"], "state": "pending", "progress": 0, "error": ""}
+            for d in STAGE_DEFINITIONS
+        ]
+
     stage = _status_stage(status)
     error = str((status or {}).get("error", "") or "")
     progress = int((status or {}).get("progress", 0) or 0)
