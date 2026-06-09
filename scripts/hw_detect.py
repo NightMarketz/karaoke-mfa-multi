@@ -21,6 +21,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+# Ensure project root is in sys.path so 'scripts.common' resolves whether
+# this module is imported directly (server) or via a subprocess that added
+# only the scripts/ directory to sys.path.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from scripts.common.config import load_hardware_config
 
 

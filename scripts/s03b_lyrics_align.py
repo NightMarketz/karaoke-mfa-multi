@@ -77,7 +77,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # project root
+sys.path.insert(0, str(Path(__file__).parent))                    # scripts/ dir
 from hw_detect import detect
 try:
     from scripts.common.observability import write_event
