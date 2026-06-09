@@ -20,6 +20,9 @@ Everything else is review-only.
 | H004 | `scripts/review_wizard/timing_layers.py` | audio-extension final-word maximum `0.60s` | domain constant | Too wide could turn normal short words before instrumental pauses into rendered sustains. | Require strong tail evidence for automatic extension; moderate evidence remains review-only. | `test_audio_backed_timing_promotes_strong_tail_after_fear` |
 | H005 | `scripts/review_wizard/timing_layers.py` | review caption suggestions `[vocalizacao]`, `[vocal de apoio]`, `[revisar vocal/alinhamento]`, `word...`, or blank review labels | product diagnostic label | A suggested caption could look like an automatic lyric decision. | Store only as `sound_suggestion` in diagnostics; Stage 06 does not render these captions automatically. Alignment holes and drift deliberately use a blank caption suggestion. Very large internal gaps use a less assertive review label even when backing vocal remains a possible tag. | `test_audio_backed_timing_flags_unwritten_interline_melisma`, `test_audio_backed_timing_marks_backing_vocal_drift_without_auto_fix`, `test_audio_backed_timing_prefers_alignment_hole_over_backing_caption`, `test_stage06_manifest_keeps_tail_sound_suggestions_for_review` |
 | H006 | `scripts/s06_generate_ass.py` | compact `audio_evidence` in `timing_audio_layers.diagnostics` | artifact contract | Full probe data could bloat manifests, but no evidence makes review decisions opaque. | Persist only compact scalar fields: `active`, `start_s`, `end_s`, `duration_s`, `voiced_ratio`, `rms`, and `threshold`. | `test_stage06_manifest_keeps_tail_sound_suggestions_for_review` |
+| H007 | `scripts/review_wizard/timing_layers.py` | `structural_pause_overridden_by_audio_tail` review flag | product diagnostic label | Strong audio may correctly reveal a sustain, but it can also override a structural pause caused by bleed or backing vocal. | Keep the rendered extension when evidence is strong, but persist the original structural tail class and review flag in the manifest. | `test_audio_backed_timing_promotes_strong_tail_after_fear`, `test_stage06_manifest_keeps_structural_pause_override_flags` |
+| H008 | `scripts/review_wizard/timing_layers.py` | inactive long-tail voiced-ratio cutoff `< 0.55` | domain constant | Preserving a long vowel split when `active=False` creates karaoke highlight over silence. | Reclassify long `tail_vowel_extension` as `false_long_tail` when the word interval is inactive and below the minimum melisma evidence threshold. | `test_audio_backed_timing_does_not_preserve_long_tail_when_audio_is_inactive` |
+| H009 | `scripts/review_wizard/timing_layers.py` | long structural pause extension flag `>= 4.0s` | review diagnostic threshold | Strong vocal evidence can still be reverb, backing, or instrumental harmonic bleed when it exactly fills a long structural pause. | Keep the strong extension decision, but add `long_structural_pause_audio_extension` for reviewer scrutiny. | `test_audio_backed_timing_promotes_strong_tail_after_fear` |
 
 ## Audio-Backed Classes
 
@@ -31,6 +34,7 @@ Everything else is review-only.
 | `unwritten_interline_melisma` | A long aligned final word is followed by additional vocal material between lyric lines. | Review-only for now. | Keep as diagnostic unless product explicitly adds visual extension bars or attaches safe interline tails. |
 | `false_long_tail` | A long final-word timestamp has weak or inactive vocal evidence. | Trim final word to a conservative minimum. | Confirm the trim does not remove intentional breathy or quiet lead vocal. |
 | `review_only_backing_or_drift` | A line has suspicious internal gaps with audio-supported words, often backing vocal, drift, or local realignment failure. | No automatic correction. | Inspect whether backing vocals are not in lyrics, or realign the local phrase. |
+| `review_only_low_vocal_evidence` | All words in a line have audio probes but none are active enough to confirm lead vocal. | No automatic correction. | Review whether the line is silence, missing lead vocal, or local alignment drift. |
 
 ## Diagnostics
 
@@ -40,6 +44,8 @@ Audio-backed diagnostics may include `sound_suggestion` for user review:
 - `suggested_caption`: a proposed review caption, for example `[vocalizacao]`, `[vocal de apoio]`, `[revisar vocal/alinhamento]`, `fear...`, or blank when the correct action is alignment review rather than a subtitle.
 - `suggested_user_action`: the conservative action to present to a reviewer.
 - `audio_evidence`: compact scalar evidence for tail decisions, including region start/end, duration, voiced ratio, RMS, and threshold when available.
+- `structural_tail_classification` and `review_flags`: additional review context when audio evidence overrides a structural pause.
+- `long_structural_pause_audio_extension`: review flag for unusually long audio-backed extensions over structural pauses.
 
 | Diagnostic | Meaning | Recommended fallback |
 | --- | --- | --- |
@@ -47,6 +53,7 @@ Audio-backed diagnostics may include `sound_suggestion` for user review:
 | `final_word_after_alignment_hole` | A very short final word appears after a large internal alignment hole, as in `sealed in the tomb`. | `review_local_realignment` |
 | `previous_tail_likely_stolen_by_next_line` | The next lyric line starts before the previous line has ended, suggesting phrase-boundary drift. | `extend_previous_tail_or_move_next_line_start_later` |
 | `early_next_line_entry_drift` | The first word of the next line enters during the previous line tail, such as early `I'm`. | `move_line_start_later_or_review_previous_tail` |
+| `line_low_vocal_evidence` | Every word probe in the line is inactive or below the active threshold, as in a possible silent/misaligned line. | `review_line_alignment_or_silence` |
 
 For line-level audio diagnostics, Stage 06 prefers drift or alignment-hole labels over `[vocal de apoio]` when the structure already explains the suspicious sound. This prevents cases such as `sealed in the tomb` and `I'm taking back my fate` from being presented as backing vocals. When backing vocal remains possible but a very large internal gap is also present, the user-facing caption is softened to `[revisar vocal/alinhamento]`.
 
@@ -58,6 +65,10 @@ For line-level audio diagnostics, Stage 06 prefers drift or alignment-hole label
 - `timing_audio_layers.applied_tail_extensions`: count of safe rendered extensions.
 - `timing_audio_layers.applied_tail_trims`: count of rendered false-tail trims.
 - `timing_audio_layers.diagnostics`: compact evidence for review classes and sound/caption suggestions.
+
+Review Wizard consumes these diagnostics as `quality` review points with `source="timing_audio"`. The point text includes the suggested caption and review flags, while `suggested_action` carries the conservative user action such as `extend_final_vowel` or `review_backing_vocal_or_local_realign`. The active point also exposes an `evidence_summary` such as `audio 161.24-166.48s | voiced 1.00` so the reviewer can see the detected vocal window without opening the manifest.
+
+Timing-audio review points expose an `APPLY SUGGESTION` action. This records an `apply_review_point_suggestion` edit operation with source, text, affected line ids, and suggested action; it does not rewrite ASS or lyrics automatically.
 
 ## Product Decision
 
