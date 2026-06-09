@@ -13,12 +13,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts.common.config import load_app_config
 from scripts.common.provenance import ProvenanceError, file_sha256, load_manifest
 
 JOBS_ROOT = PROJECT_ROOT / "jobs"
 DEFAULT_REPORT = PROJECT_ROOT / ".Codex" / "tasks" / "struggle-regeneration-report.md"
-DEFAULT_PRESET = "single-style-kf"
-
 DERIVED_ARTIFACTS = (
     "analysis.json",
     "output.ass",
@@ -85,7 +84,8 @@ def clean_derived_artifacts(job_dir: Path, *, clean: bool) -> list[str]:
     return found
 
 
-def build_stage_commands(job_dir: Path, *, preset: str = DEFAULT_PRESET) -> list[StageCommand]:
+def build_stage_commands(job_dir: Path, *, preset: str | None = None) -> list[StageCommand]:
+    preset = preset or load_app_config().generate_style_preset_id
     stage05_args = [
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "s05_analyze.py"),
@@ -303,7 +303,7 @@ def _render_result(result: AuditResult) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Controlled Struggle regeneration and provenance audit")
     parser.add_argument("--job-dir", action="append", default=[], help="Struggle job directory to audit/regenerate")
-    parser.add_argument("--preset", default=DEFAULT_PRESET)
+    parser.add_argument("--preset", default=load_app_config().generate_style_preset_id)
     parser.add_argument("--clean", action="store_true", help="Delete derived artifacts before optional regeneration")
     parser.add_argument("--run", action="store_true", help="Run Stage 05, 06, and 07 commands")
     parser.add_argument("--report", default=str(DEFAULT_REPORT))

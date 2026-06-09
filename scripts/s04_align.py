@@ -40,6 +40,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.config import load_app_config
 from scripts.common.observability import record_artifact, write_event
 from scripts.common.validation import normalize_words
 
@@ -385,18 +386,19 @@ def _fallback_all_segments(segments: list[dict], fallback) -> tuple[list[dict], 
 
 def main() -> int:
     hw = detect()
+    app_config = load_app_config()
     parser = argparse.ArgumentParser(description="Stage 04 — Phoneme Alignment (Batch ONNX)")
     parser.add_argument("--job-dir", required=True, type=Path)
-    parser.add_argument("--hubertfa-dir", default="vendor/HubertFA", type=Path)
-    parser.add_argument("--checkpoint", default="models/hubertfa/model.onnx", type=Path)
-    parser.add_argument("--language", default="en")
-    parser.add_argument("--hubertfa-timeout", default=180, type=int)
+    parser.add_argument("--hubertfa-dir", default=app_config.align_hubertfa_dir, type=Path)
+    parser.add_argument("--checkpoint", default=app_config.align_checkpoint, type=Path)
+    parser.add_argument("--language", default=app_config.align_language)
+    parser.add_argument("--hubertfa-timeout", default=app_config.align_hubertfa_timeout_s, type=int)
     parser.add_argument(
         "--allow-cpu-hubertfa",
         action="store_true",
         help="Allow HubertFA ONNX inference when only CPUExecutionProvider is available.",
     )
-    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"])
+    parser.add_argument("--log-level", default=app_config.log_level, choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
 
     job_dir = args.job_dir.resolve()

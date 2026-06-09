@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from scripts.common.observability import record_artifact, write_event
+from scripts.common.config import load_app_config
 from scripts.common.provenance import file_sha256, write_manifest
 from scripts.review_wizard.highlight_velocity import build_word_highlight_segments
 from scripts.review_wizard.timing_layers import (
@@ -787,6 +788,10 @@ def _audio_timing_diagnostics(audio_timings: list[dict[str, Any]]) -> list[dict[
             }
             if tail.get("sound_suggestion"):
                 diagnostic["sound_suggestion"] = tail.get("sound_suggestion")
+            if tail.get("structural_tail_classification"):
+                diagnostic["structural_tail_classification"] = tail.get("structural_tail_classification")
+            if tail.get("review_flags"):
+                diagnostic["review_flags"] = tail.get("review_flags")
             audio_evidence = compact_audio_evidence(tail.get("audio_evidence"))
             if audio_evidence:
                 diagnostic["audio_evidence"] = audio_evidence
@@ -882,21 +887,22 @@ def _stage06_missing_job_event(
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    app_config = load_app_config()
     parser = argparse.ArgumentParser(
         description="Stage 06 — Generate ASS karaoke subtitles.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--job-dir",     required=True, type=Path)
-    parser.add_argument("--preset",      default="single-style-kf",
+    parser.add_argument("--preset",      default=app_config.generate_style_preset_id,
                         choices=list(PRESETS.keys()),
                         help="Style preset.")
-    parser.add_argument("--resolution",  default="1920x1080",
+    parser.add_argument("--resolution",  default=app_config.generate_resolution,
                         help="Output resolution (must match s07).")
-    parser.add_argument("--fade-in",     type=int, default=300,
+    parser.add_argument("--fade-in",     type=int, default=app_config.generate_fade_in_ms,
                         help="Fade-in duration per line in ms.")
-    parser.add_argument("--fade-out",    type=int, default=500,
+    parser.add_argument("--fade-out",    type=int, default=app_config.generate_fade_out_ms,
                         help="Fade-out duration per line in ms.")
-    parser.add_argument("--log-level",   default="INFO",
+    parser.add_argument("--log-level",   default=app_config.log_level,
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
 

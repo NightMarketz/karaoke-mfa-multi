@@ -45,8 +45,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.config import load_app_config
 try:
     from scripts.common.observability import write_event
 except ModuleNotFoundError:
@@ -221,6 +223,7 @@ def _validate_transcript(data: dict[str, Any]) -> list[str]:
 def main() -> int:
     # ── Hardware detection ─────────────────────────────────────────────────
     hw: HardwareProfile = detect()
+    app_config = load_app_config()
 
     # ── CLI ────────────────────────────────────────────────────────────────
     parser = argparse.ArgumentParser(
@@ -232,11 +235,11 @@ def main() -> int:
         help="Path to the job directory.",
     )
     parser.add_argument(
-        "--model-size", default="large-v3",
+        "--model-size", default=app_config.transcribe_model_size,
         help="Whisper model variant.",
     )
     parser.add_argument(
-        "--language", default="auto",
+        "--language", default=app_config.transcribe_language,
         help="Language code ('auto' for detection, 'en', 'ja', 'pt', etc.).",
     )
     # Device: hw_detect always returns "cpu" for this stage.
@@ -267,16 +270,16 @@ def main() -> int:
         help="Enable VAD filter (silence skipping). Default: %(default)s.",
     )
     parser.add_argument(
-        "--low-confidence-threshold", type=float, default=0.25,
+        "--low-confidence-threshold", type=float, default=app_config.transcribe_low_confidence_threshold,
         metavar="THRESHOLD",
         help=(
             "Words with probability below this value are flagged "
             "'low_confidence': true in transcript.json. "
-            "These can be corrected in s05 via --lyrics. Default: 0.25."
+            "These can be corrected in s05 via --lyrics. Default: %(default)s."
         ),
     )
     parser.add_argument(
-        "--log-level", default="INFO",
+        "--log-level", default=app_config.log_level,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     args = parser.parse_args()

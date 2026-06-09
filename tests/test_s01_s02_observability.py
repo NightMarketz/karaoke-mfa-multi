@@ -154,6 +154,34 @@ class Stage01Stage02ObservabilityTests(unittest.TestCase):
                 )
             )
 
+    def test_stage02_demucs_python_default_can_come_from_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp) / "job"
+            job_dir.mkdir()
+            (job_dir / "input.wav").write_bytes(b"wav")
+            env_python = str(Path(tmp) / "env-python.exe")
+            argv = [
+                "s02_demix.py",
+                "--job-dir",
+                str(job_dir),
+            ]
+
+            with patch.dict("os.environ", {"KARAOKE_DEMUCS_PYTHON": env_python}, clear=False), patch(
+                "sys.argv", argv
+            ), patch("scripts.s02_demix.detect", return_value=_profile()):
+                exit_code = self._run_s02()
+
+            self.assertEqual(exit_code, 1)
+            events = read_events(job_dir)
+            self.assertTrue(
+                any(
+                    event["event"] == "stage02.failed"
+                    and event["details"].get("reason") == "demucs_python_missing"
+                    and event["details"].get("path") == env_python
+                    for event in events
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

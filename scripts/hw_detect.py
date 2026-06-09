@@ -18,7 +18,10 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
+
+from scripts.common.config import load_hardware_config
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +130,7 @@ def _check_amf() -> bool:
 # Public API
 # ---------------------------------------------------------------------------
 
-def detect(verbose: bool = False) -> HardwareProfile:
+def detect(verbose: bool = False, config_path: Path | str = "pipeline.toml") -> HardwareProfile:
     """
     Detect hardware capabilities and return an optimised HardwareProfile.
 
@@ -147,6 +150,14 @@ def detect(verbose: bool = False) -> HardwareProfile:
 
     dml = _check_directml()
     amf = _check_amf()
+    hardware_config = load_hardware_config(config_path)
+    forced_cpu = hardware_config.profile == "cpu_only"
+    forced_z13 = hardware_config.profile == "z13"
+    gpu_defaults = hardware_config.z13
+    cpu_defaults = hardware_config.cpu_only
+    base_defaults = cpu_defaults if forced_cpu else gpu_defaults
+    dml_enabled = False if forced_cpu else (True if forced_z13 else dml)
+    amf_enabled = False if forced_cpu else (True if forced_z13 else amf)
 
     if verbose:
         print(f"  DirectML : {'OK' if dml else 'not available'}")
@@ -154,49 +165,48 @@ def detect(verbose: bool = False) -> HardwareProfile:
 
     profile = HardwareProfile(
         # ── Stage 02 · Demix ──────────────────────────────────────────────
-        demix_device   = "directml" if dml else "cpu",
-        demix_compute  = "float16"  if dml else "float32",
+        demix_device   = gpu_defaults.demix_device if dml_enabled else cpu_defaults.demix_device,
+        demix_compute  = gpu_defaults.demix_compute if dml_enabled else cpu_defaults.demix_compute,
         # 4s segments keep peak VRAM at ~1.2GB on shared-memory Z13 iGPU.
         # Default htdemucs segment (7.8s) peaks at ~2.4GB and competes with
         # Ollama's allocation during Stage 05.
-        demix_segment  = 4,
+        demix_segment  = gpu_defaults.demix_segment if dml_enabled else cpu_defaults.demix_segment,
         # Single worker avoids shared-memory contention between Demucs and OS.
-        demix_jobs     = 1,
+        demix_jobs     = gpu_defaults.demix_jobs if dml_enabled else cpu_defaults.demix_jobs,
 
         # ── Stage 03 · Transcribe ─────────────────────────────────────────
         # CRITICAL: CTranslate2 has no DirectML backend. Setting device to
         # anything other than "cpu" or "cuda" raises a RuntimeError on load.
         # int8 quantization gives ~4x speedup over float32 on CPU with
         # negligible accuracy loss for speech recognition.
-        transcribe_device    = "cpu",
-        transcribe_compute   = "int8",
+        transcribe_device    = base_defaults.transcribe_device,
+        transcribe_compute   = base_defaults.transcribe_compute,
         # beam_size=1 (greedy) is fastest. For karaoke word-timing accuracy,
         # greedy is sufficient — we're not optimising for WER on noisy speech.
-        transcribe_beam_size = 1,
+        transcribe_beam_size = base_defaults.transcribe_beam_size,
         # VAD filter disabled to prevent syllable loss in singing voice.
-        transcribe_vad = False,
+        transcribe_vad = base_defaults.transcribe_vad,
 
         # ── Stage 04 · Align ──────────────────────────────────────────────
-        align_device     = "directml" if dml else "cpu",
+        align_device     = gpu_defaults.align_device if dml_enabled else cpu_defaults.align_device,
         # batch_size=16 on DirectML; halve it on CPU to avoid RAM pressure
         # when vocals.wav is long (>5 min).
-        align_batch_size = 16 if dml else 8,
+        align_batch_size = gpu_defaults.align_batch_size if dml_enabled else cpu_defaults.align_batch_size,
 
         # ── Stage 05 · Ollama ─────────────────────────────────────────────
-        ollama_model      = "qwen2.5:7b",
-        ollama_num_ctx    = 4096,
-        # Leave 2 cores for OS + Ollama's internal GPU offload scheduler.
-        # os.cpu_count() - 2 could be used here; hardcoded to 6 for Z13.
-        ollama_num_thread = 6,
+        ollama_model      = base_defaults.ollama_model,
+        ollama_num_ctx    = base_defaults.ollama_num_ctx,
+        # Leave cores for OS + Ollama's internal GPU offload scheduler.
+        ollama_num_thread = base_defaults.ollama_num_thread,
 
         # ── Stage 07 · Output ─────────────────────────────────────────────
-        ffmpeg_vcodec  = "h264_amf" if amf else "libx264",
+        ffmpeg_vcodec  = gpu_defaults.ffmpeg_vcodec if amf_enabled else cpu_defaults.ffmpeg_vcodec,
         # AMF quality=23 ≈ libx264 crf=23: visually transparent, ~3x faster.
-        ffmpeg_quality = 23,
+        ffmpeg_quality = gpu_defaults.ffmpeg_quality if amf_enabled else cpu_defaults.ffmpeg_quality,
 
         # Diagnostic flags
-        directml_available = dml,
-        amf_available      = amf,
+        directml_available = dml_enabled,
+        amf_available      = amf_enabled,
     )
 
     if verbose:

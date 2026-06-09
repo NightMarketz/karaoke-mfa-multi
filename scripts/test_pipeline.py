@@ -26,12 +26,16 @@ if sys.platform == "win32":
 
 # Paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.common.config import load_app_config
+
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 JOBS_DIR = PROJECT_ROOT / "jobs"
 DEFAULT_TEST_JOB = JOBS_DIR / "test-struggle"
 DEFAULT_INPUT = DEFAULT_TEST_JOB / "input.wav"
 FFPROBE_TIMEOUT_S = 30
-DEFAULT_STAGE06_PRESET = "single-style-kf"
 
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -57,17 +61,10 @@ def resolve_stage06_preset(
     if isinstance(preset, str) and preset.strip():
         return preset.strip()
 
-    if tomllib is not None and pipeline_toml.exists():
-        try:
-            config = tomllib.loads(pipeline_toml.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError):
-            config = {}
-        generate = config.get("generate") if isinstance(config, dict) else {}
-        preset = generate.get("style_preset") if isinstance(generate, dict) else None
-        if isinstance(preset, str) and preset.strip():
-            return preset.strip()
-
-    return DEFAULT_STAGE06_PRESET
+    try:
+        return load_app_config(pipeline_toml).generate_style_preset_id
+    except (OSError, tomllib.TOMLDecodeError):
+        return load_app_config(Path("__missing_pipeline.toml")).generate_style_preset_id
 
 def build_stage06_args(
     job_dir: Path,
@@ -159,8 +156,9 @@ def validate(condition, message, hint=""):
     print(f"  ✓ {message}")
     return True
 
-def check_ollama(url="http://localhost:11434"):
+def check_ollama(url: str | None = None):
     """Check if Ollama is running and accessible."""
+    url = url or load_app_config().ollama_url
     try:
         resp = requests.get(f"{url}/api/tags", timeout=5)
         return resp.status_code == 200
@@ -439,13 +437,14 @@ def main():
     if lyrics_file.exists():
         s05_args.extend(["--lyrics", str(lyrics_file)])
         validate(True, "Ollama skipped for forced lyrics path")
-    elif not check_ollama():
-        validate(False, "Ollama connection", "Is Ollama running at localhost:11434?")
-        sys.exit(1)
     else:
+        ollama_url = load_app_config().ollama_url
+        if not check_ollama(ollama_url):
+            validate(False, "Ollama connection", f"Is Ollama running at {ollama_url}?")
+            sys.exit(1)
         validate(True, "Ollama connection")
 
-    if not run_script("s05_analyze.py", s05_args, timeout=600):
+    if not run_script("s05_analyze.py", s05_args, timeout=load_app_config().ollama_timeout_s):
         sys.exit(1)
     if not validate_stage_05(job_dir):
         sys.exit(1)

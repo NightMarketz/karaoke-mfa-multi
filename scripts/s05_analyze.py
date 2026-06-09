@@ -63,13 +63,11 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.config import load_app_config
 from scripts.common.observability import write_event
 from scripts.common.validation import find_timestamp_errors
 
 logger = logging.getLogger(__name__)
-
-OLLAMA_DEFAULT_URL   = "http://localhost:11434"
-OLLAMA_DEFAULT_MODEL = "gemma4:27b"
 
 # Maximum words per display line — LLM is instructed to respect this,
 # but we also enforce it in post-processing as a hard cap.
@@ -583,21 +581,22 @@ def _stage05_missing_job_event(
 
 def main() -> int:
     hw: HardwareProfile = detect()
+    app_config = load_app_config()
 
     parser = argparse.ArgumentParser(
         description="Stage 05 — Lyric analysis (deterministic or LLM).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--job-dir",     required=True, type=Path)
-    parser.add_argument("--ollama-url",  default=OLLAMA_DEFAULT_URL)
+    parser.add_argument("--ollama-url",  default=app_config.ollama_url)
     parser.add_argument("--model",       default=hw.ollama_model,
                         help="Ollama model. hw_detect default: %(default)s.")
-    parser.add_argument("--temperature", type=float, default=0.3)
+    parser.add_argument("--temperature", type=float, default=app_config.ollama_temperature)
     parser.add_argument("--num-ctx",     type=int, default=hw.ollama_num_ctx,
                         help="Context window. hw_detect default: %(default)s.")
-    parser.add_argument("--timeout",     type=int, default=600,
+    parser.add_argument("--timeout",     type=int, default=app_config.ollama_timeout_s,
                         help="Per-request timeout in seconds.")
-    parser.add_argument("--language",    default="en",
+    parser.add_argument("--language",    default=app_config.analyze_language,
                         help="Language hint passed to the LLM in the prompt.")
     parser.add_argument("--lyrics",      type=Path, default=None,
                         metavar="PATH",
@@ -609,7 +608,7 @@ def main() -> int:
                         ))
     parser.add_argument("--force-rule-based", action="store_true",
                         help="Skip Ollama and group aligned words deterministically.")
-    parser.add_argument("--log-level",   default="INFO",
+    parser.add_argument("--log-level",   default=app_config.log_level,
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
 

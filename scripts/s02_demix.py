@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.config import load_app_config
 from scripts.common.observability import write_event
 
 logger = logging.getLogger(__name__)
@@ -41,11 +42,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Demucs runs in its own conda env — this Python is NOT the current one.
-DEMUCS_PYTHON_DEFAULT = (
-    "C:/Users/Katz/miniforge3/envs/demucs_env/python.exe"
-)
-DEMUCS_TIMEOUT_S = 1800
-
 # Accepted input extensions that Demucs can handle directly.
 # Stage 01 should have already normalised video → WAV, but we handle both.
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
@@ -183,6 +179,7 @@ def _collect_stems(model: str, input_path: Path, output_dir: Path, job_dir: Path
 def main() -> int:
     # ── Hardware detection (sets argparse defaults) ────────────────────────
     hw: HardwareProfile = detect()
+    app_config = load_app_config()
 
     # ── CLI ────────────────────────────────────────────────────────────────
     parser = argparse.ArgumentParser(
@@ -194,7 +191,7 @@ def main() -> int:
         help="Path to the job directory (e.g. jobs/my-job).",
     )
     parser.add_argument(
-        "--model", default="htdemucs",
+        "--model", default=app_config.demucs_model,
         help="Demucs model name.",
     )
     parser.add_argument(
@@ -210,15 +207,15 @@ def main() -> int:
         help="Parallel Demucs workers. hw_detect default: %(default)s.",
     )
     parser.add_argument(
-        "--demucs-python", default=DEMUCS_PYTHON_DEFAULT,
+        "--demucs-python", default=app_config.demucs_python,
         help="Python executable inside demucs_env.",
     )
     parser.add_argument(
-        "--demucs-timeout", type=int, default=DEMUCS_TIMEOUT_S,
+        "--demucs-timeout", type=int, default=app_config.demucs_timeout_s,
         help="Maximum seconds to wait for Demucs before failing the stage.",
     )
     parser.add_argument(
-        "--log-level", default="INFO",
+        "--log-level", default=app_config.log_level,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     args = parser.parse_args()

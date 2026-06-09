@@ -42,6 +42,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.config import load_app_config
 from scripts.common.observability import (
     build_observability_summary,
     record_artifact,
@@ -57,10 +58,6 @@ from scripts.common.provenance import (
 
 logger = logging.getLogger(__name__)
 
-# Default resolution for the black background canvas.
-# ASS subtitles are composited on top of this.
-DEFAULT_RESOLUTION = "1920x1080"
-DEFAULT_FRAMERATE  = "30"
 STAGE = "rendering"
 
 
@@ -359,6 +356,7 @@ def _build_ffmpeg_cmd(
 def main() -> int:
     # ── Hardware detection ─────────────────────────────────────────────────
     hw: HardwareProfile = detect()
+    app_config = load_app_config()
 
     # ── CLI ────────────────────────────────────────────────────────────────
     parser = argparse.ArgumentParser(
@@ -381,27 +379,27 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--resolution", default=DEFAULT_RESOLUTION,
+        "--resolution", default=app_config.generate_resolution,
         help="Output canvas resolution (WxH).",
     )
     parser.add_argument(
-        "--framerate", default=DEFAULT_FRAMERATE,
+        "--framerate", default=app_config.output_framerate,
         help="Output framerate.",
     )
     parser.add_argument(
-        "--vocals-volume", type=float, default=1.0,
+        "--vocals-volume", type=float, default=app_config.output_vocals_volume,
         help="Volume multiplier for the vocals track.",
     )
     parser.add_argument(
-        "--instrumental-volume", type=float, default=1.0,
+        "--instrumental-volume", type=float, default=app_config.output_instrumental_volume,
         help="Volume multiplier for the instrumental track.",
     )
     parser.add_argument(
-        "--audio-codec", default="aac",
+        "--audio-codec", default=app_config.output_audio_codec,
         help="Audio codec.",
     )
     parser.add_argument(
-        "--audio-bitrate", default="192k",
+        "--audio-bitrate", default=app_config.output_audio_bitrate,
         help="Audio bitrate.",
     )
     parser.add_argument(
@@ -412,11 +410,11 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--timeout", type=int, default=600,
+        "--timeout", type=int, default=app_config.output_ffmpeg_timeout_s,
         help="ffmpeg timeout in seconds.",
     )
     parser.add_argument(
-        "--log-level", default="INFO",
+        "--log-level", default=app_config.log_level,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     args = parser.parse_args()
