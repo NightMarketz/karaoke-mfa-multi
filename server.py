@@ -775,10 +775,15 @@ def new_job_submit():
         return jsonify({"error": "Failed to convert instrumental to WAV. Is ffmpeg installed?"}), 500
     write_event(job_dir, "stem_conversion_finished", "preparing", details={"stem": "instrumental"})
 
-    # Clean up originals after conversion (keep stems/ dir for ZIP mode)
-    if vocals_src.suffix.lower() != ".wav" and vocals_src.exists():
+    # Clean up originals after conversion.
+    # For individual-stem uploads the originals are written as vocals_orig.*
+    # and instrumental_orig.* — always delete them after conversion regardless
+    # of extension to avoid 2× storage waste for WAV uploads (~70 MB each).
+    # For ZIP mode, vocals_src lives in stems/ so it is a different object;
+    # preserve the stems/ directory there as before.
+    if vocals_src.parent.resolve() == job_dir.resolve() and vocals_src.exists():
         vocals_src.unlink(missing_ok=True)
-    if instrumental_src.suffix.lower() != ".wav" and instrumental_src.exists():
+    if instrumental_src.parent.resolve() == job_dir.resolve() and instrumental_src.exists():
         instrumental_src.unlink(missing_ok=True)
 
     # ── Lyrics from textarea ───────────────────────────────────────────────
