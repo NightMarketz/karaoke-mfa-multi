@@ -18,6 +18,10 @@ g2p_en>=2.1.0
 # CTC forced alignment (Stage 03b)
 ctc-forced-aligner @ git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git@e23e1525bae810f0582b6e539ce7aec63fd01196
 torchcrepe
+# ctc-forced-aligner transitive deps not declared by the package itself
+uroman>=1.3
+Unidecode>=1.3
+torchcodec>=0.1
 
 # Config
 tomli>=2.0.0
