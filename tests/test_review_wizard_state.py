@@ -4,6 +4,7 @@ from scripts.review_wizard.contracts import Project
 from scripts.review_wizard.wizard import (
     REVIEW_WIZARD_STEPS,
     adjust_review_point_timing,
+    apply_review_point_suggestion,
     approve_step,
     approve_review_point,
     next_step,
@@ -118,6 +119,26 @@ class ReviewWizardStateTests(unittest.TestCase):
         self.assertEqual(updated.edit_operations[-1].operation, "adjust_review_point_timing")
         self.assertEqual(updated.edit_operations[-1].details["start_s"], 40.5)
         self.assertEqual(updated.edit_operations[-1].details["end_s"], 42.7)
+
+    def test_apply_review_point_suggestion_records_audio_decision_details(self):
+        project = Project.new(project_id="proj-1", job_id="abc123def456")
+
+        updated = apply_review_point_suggestion(
+            project,
+            "timing-audio:line-1:1",
+            applied_by="user",
+            details={
+                "source": "timing_audio",
+                "text": "probable unwritten vowel extension: fear...",
+                "suggested_action": "extend_final_vowel",
+            },
+        )
+
+        operation = updated.edit_operations[-1]
+        self.assertEqual(operation.operation, "apply_review_point_suggestion")
+        self.assertEqual(operation.target_id, "timing-audio:line-1:1")
+        self.assertEqual(operation.details["source"], "timing_audio")
+        self.assertEqual(operation.details["suggested_action"], "extend_final_vowel")
 
 
 if __name__ == "__main__":

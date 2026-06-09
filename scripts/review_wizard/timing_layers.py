@@ -241,6 +241,7 @@ def build_audio_backed_timing(
 
         if words:
             tail = dict(timing["tail"])
+            structural_tail_classification = str(tail.get("classification", "none"))
             tail_key = ("tail", line_index)
             tail_stats = audio_activity.get(tail_key, {})
             tail_regions = audio_activity.get(("tail_regions", line_index), [])
@@ -299,10 +300,14 @@ def build_audio_backed_timing(
             can_trim_false_long_tail = (
                 tail.get("classification") == "tail_vowel_extension"
                 and has_long_final_word
-                and (has_structural_drift_gap or not has_strong_tail_vocal_period)
+                and (
+                    has_structural_drift_gap
+                    or not has_strong_tail_vocal_period
+                    or not last_word_stats.get("active")
+                )
                 and bool(last_word_stats)
                 and not last_word_stats.get("active")
-                and float(last_word_stats.get("voiced_ratio", 0.0)) <= 0.25
+                and float(last_word_stats.get("voiced_ratio", 0.0)) < 0.55
             )
             if can_extend_written_melisma:
                 tail["classification"] = "written_melisma_extension"
@@ -317,6 +322,12 @@ def build_audio_backed_timing(
                 tail["classification"] = "probable_unwritten_vowel_extension"
                 tail["confidence"] = "high" if float(tail_stats.get("voiced_ratio", 0.0)) >= 0.75 else "medium"
                 tail["audio_evidence"] = tail_stats
+                if structural_tail_classification in {"instrumental_pause", "musical_pause"}:
+                    tail["structural_tail_classification"] = structural_tail_classification
+                    review_flags = ["structural_pause_overridden_by_audio_tail"]
+                    if float(tail_stats.get("duration_s", 0.0)) >= 4.0:
+                        review_flags.append("long_structural_pause_audio_extension")
+                    tail["review_flags"] = review_flags
                 tail["sound_suggestion"] = _sound_suggestion(
                     sound_type="sustained_final_vowel",
                     suggested_caption=_word_extension_caption(last_word_text),
@@ -364,6 +375,16 @@ def build_audio_backed_timing(
             (audio_activity.get((line_index, word_index), {}) or {}).get("active")
             for word_index in range(len(words))
         )
+        word_audio_stats = [
+            audio_activity.get((line_index, word_index), {}) or {}
+            for word_index in range(len(words))
+        ]
+        has_complete_word_audio = bool(words) and all(bool(stats) for stats in word_audio_stats)
+        has_low_vocal_line = (
+            has_complete_word_audio
+            and not has_audio_supported_word
+            and max(float(stats.get("voiced_ratio", 0.0)) for stats in word_audio_stats) < 0.45
+        )
         if has_bad_gap and has_audio_supported_word:
             timing["line_classification"] = "review_only_backing_or_drift"
             timing["confidence"] = "high"
@@ -401,6 +422,16 @@ def build_audio_backed_timing(
                         suggested_caption="[vocal de apoio]",
                         suggested_user_action="review_backing_vocal_or_local_realign",
                     )
+        elif has_low_vocal_line:
+            timing["line_classification"] = "review_only_low_vocal_evidence"
+            timing["confidence"] = "medium"
+            timing["recommended_fallback"] = "review_line_alignment_or_silence"
+            timing["diagnostic_tags"] = ["line_low_vocal_evidence"]
+            timing["sound_suggestion"] = _sound_suggestion(
+                sound_type="low_or_missing_lead_vocal",
+                suggested_caption="",
+                suggested_user_action="review_line_alignment_or_silence",
+            )
 
         timings.append(timing)
     return timings

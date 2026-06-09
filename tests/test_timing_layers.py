@@ -334,6 +334,11 @@ class TimingLayersTests(unittest.TestCase):
 
         self.assertEqual(timing["tail"]["classification"], "probable_unwritten_vowel_extension")
         self.assertEqual(timing["tail"]["audio_evidence"]["end_s"], 166.48)
+        self.assertEqual(timing["tail"]["structural_tail_classification"], "instrumental_pause")
+        self.assertEqual(
+            timing["tail"]["review_flags"],
+            ["structural_pause_overridden_by_audio_tail", "long_structural_pause_audio_extension"],
+        )
 
     def test_audio_backed_timing_flags_moderate_tail_after_fear_for_review_only(self):
         lines = [
@@ -396,6 +401,36 @@ class TimingLayersTests(unittest.TestCase):
 
         self.assertEqual(timing["tail"]["classification"], "false_long_tail")
         self.assertEqual(timing["tail"]["recommended_fallback"], "trim_to_last_active_vocal")
+
+    def test_audio_backed_timing_does_not_preserve_long_tail_when_audio_is_inactive(self):
+        lines = [
+            {
+                "text": "I won't fall",
+                "style": "outro",
+                "start": 288.22,
+                "end": 290.36,
+                "words": [
+                    {"word": "I", "start": 287.80, "end": 287.86},
+                    {"word": "won't", "start": 288.00, "end": 288.18},
+                    {"word": "fall", "start": 288.22, "end": 290.36},
+                ],
+            }
+        ]
+        audio_activity = {
+            (0, 2): {
+                "active": False,
+                "voiced_ratio": 0.444,
+                "start_s": 288.22,
+                "end_s": 290.36,
+                "duration_s": 2.14,
+            },
+        }
+
+        timing = build_audio_backed_timing(lines, audio_activity=audio_activity)[0]
+
+        self.assertEqual(timing["tail"]["classification"], "false_long_tail")
+        self.assertEqual(timing["tail"]["recommended_fallback"], "trim_to_last_active_vocal")
+        self.assertEqual(timing["tail"]["audio_evidence"]["voiced_ratio"], 0.444)
 
     def test_audio_backed_timing_flags_unwritten_interline_melisma(self):
         lines = [
@@ -938,6 +973,28 @@ class TimingLayersTests(unittest.TestCase):
 
         self.assertEqual(timing["line_classification"], "review_only_backing_or_drift")
         self.assertEqual(timing["diagnostic_tags"], ["possible_backing_vocal_not_in_lyrics"])
+
+    def test_audio_backed_timing_flags_line_with_no_vocal_evidence_for_review(self):
+        lines = [
+            {
+                "text": "for that",
+                "style": "verse",
+                "words": [
+                    {"word": "for", "start": 346.70, "end": 346.82},
+                    {"word": "that", "start": 346.86, "end": 347.14},
+                ],
+            }
+        ]
+        audio_activity = {
+            (0, 0): {"active": False, "voiced_ratio": 0.0},
+            (0, 1): {"active": False, "voiced_ratio": 0.4},
+        }
+
+        timing = build_audio_backed_timing(lines, audio_activity=audio_activity)[0]
+
+        self.assertEqual(timing["line_classification"], "review_only_low_vocal_evidence")
+        self.assertEqual(timing["diagnostic_tags"], ["line_low_vocal_evidence"])
+        self.assertEqual(timing["recommended_fallback"], "review_line_alignment_or_silence")
 
     def test_diagnostics_marks_instrumental_pause_as_high_confidence_preserve_gap(self):
         lines = [

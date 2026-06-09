@@ -535,6 +535,62 @@ class AssGenerationTests(unittest.TestCase):
                 ],
             )
 
+    def test_stage06_manifest_keeps_structural_pause_override_flags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            lines = [
+                {
+                    "text": "Past the fear",
+                    "start": 160.14,
+                    "end": 161.24,
+                    "style": "prechorus",
+                    "effect": "highlight",
+                    "words": [
+                        {"word": "Past", "start": 160.14, "end": 160.48},
+                        {"word": "the", "start": 160.54, "end": 160.62},
+                        {"word": "fear", "start": 160.72, "end": 161.24},
+                    ],
+                }
+            ]
+            self._write_analysis(job_dir, lines)
+            (job_dir / "vocals.wav").write_bytes(b"not-a-real-wav-but-present")
+            fake_timing = [
+                {
+                    "inter_word_gaps": [],
+                    "vocal_periods": [],
+                    "tail": {
+                        "classification": "probable_unwritten_vowel_extension",
+                        "confidence": "high",
+                        "structural_tail_classification": "instrumental_pause",
+                        "review_flags": ["structural_pause_overridden_by_audio_tail"],
+                        "audio_evidence": {
+                            "active": True,
+                            "start_s": 161.24,
+                            "end_s": 166.48,
+                            "duration_s": 5.24,
+                            "voiced_ratio": 1.0,
+                        },
+                        "sound_suggestion": {
+                            "sound_type": "sustained_final_vowel",
+                            "suggested_caption": "fear...",
+                            "suggested_user_action": "extend_final_vowel",
+                        },
+                    },
+                }
+            ]
+
+            with patch("scripts.s06_generate_ass.build_audio_activity_map", return_value={}):
+                with patch("scripts.s06_generate_ass.build_audio_backed_timing", return_value=fake_timing):
+                    exit_code = self._run_stage06(job_dir, "--preset", "single-style-kf")
+
+            self.assertEqual(exit_code, 0)
+            manifest = json.loads((job_dir / "output.ass.manifest.json").read_text(encoding="utf-8"))
+            diagnostic = manifest["timing_audio_layers"]["diagnostics"][0]
+            self.assertEqual(diagnostic["tail_classification"], "probable_unwritten_vowel_extension")
+            self.assertEqual(diagnostic["structural_tail_classification"], "instrumental_pause")
+            self.assertEqual(diagnostic["review_flags"], ["structural_pause_overridden_by_audio_tail"])
+            self.assertEqual(diagnostic["audio_evidence"]["end_s"], 166.48)
+
     def test_stage06_manifest_uses_manual_run_id_when_status_json_is_not_object(self):
         with tempfile.TemporaryDirectory() as tmp:
             job_dir = Path(tmp)

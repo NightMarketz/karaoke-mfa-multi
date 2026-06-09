@@ -81,6 +81,33 @@ def _lane_id(level: str) -> str:
     return level if level in {"line", "word", "highlight", "issue"} else "issue"
 
 
+def _tags(value: Any) -> list[dict[str, str]]:
+    tags = _field(value, "tags", [])
+    if not isinstance(tags, list):
+        return []
+    return [tag for tag in tags if isinstance(tag, dict)]
+
+
+def _display_text(value: Any) -> str:
+    tags = _tags(value)
+    if tags:
+        labels = [str(tag.get("label") or "").strip() for tag in tags]
+        display = " ".join(label for label in labels if label)
+        if display:
+            return display
+    return str(_field(value, "text", ""))
+
+
+def _display_title(value: Any) -> str:
+    tags = _tags(value)
+    if tags:
+        titles = [str(tag.get("title") or tag.get("value") or tag.get("label") or "").strip() for tag in tags]
+        display = " | ".join(title for title in titles if title)
+        if display:
+            return display
+    return str(_field(value, "text", ""))
+
+
 def _time_field(value: Any, primary: str, fallback: str, default: float = 0.0) -> float:
     try:
         return float(_field(value, primary, _field(value, fallback, default)))
@@ -136,6 +163,9 @@ def build_audio_timeline(
             "level": level,
             "lane_id": lane_id,
             "text": str(_field(point, "text", "")),
+            "display_text": _display_text(point),
+            "display_title": _display_title(point),
+            "tags": _tags(point),
             "left_pct": left_pct,
             "width_pct": round(max(0.0, end_pct - left_pct), 3),
             "is_active": point_id == active_point_id,
@@ -170,6 +200,9 @@ def build_audio_timeline(
             "level": "highlight",
             "lane_id": "highlight",
             "text": str(_field(segment, "text", "")),
+            "display_text": _display_text(segment),
+            "display_title": _display_title(segment),
+            "tags": _tags(segment),
             "role": str(_field(segment, "role", "")),
             "left_pct": left_pct,
             "width_pct": round(max(0.0, end_pct - left_pct), 3),

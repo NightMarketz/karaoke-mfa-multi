@@ -177,6 +177,190 @@ class ReviewPointsTests(unittest.TestCase):
         self.assertEqual(quality_points[0].issue_ids, ["issue-1"])
         self.assertEqual(quality_points[0].affected_ids, ["line-1", "line-1:word-1"])
 
+    def test_audio_timing_diagnostics_become_quality_review_points(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "analysis.json").write_text(
+                json.dumps(
+                    {
+                        "lines": [
+                            {
+                                "text": "Past the fear",
+                                "start": 160.14,
+                                "end": 166.48,
+                                "words": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "output.ass.manifest.json").write_text(
+                json.dumps(
+                    {
+                        "timing_audio_layers": {
+                            "diagnostics": [
+                                {
+                                    "line_index": 0,
+                                    "tail_classification": "probable_unwritten_vowel_extension",
+                                    "confidence": "high",
+                                    "recommended_fallback": None,
+                                    "structural_tail_classification": "instrumental_pause",
+                                    "review_flags": ["structural_pause_overridden_by_audio_tail"],
+                                    "audio_evidence": {
+                                        "start_s": 161.24,
+                                        "end_s": 166.48,
+                                        "duration_s": 5.24,
+                                        "voiced_ratio": 1.0,
+                                    },
+                                    "sound_suggestion": {
+                                        "sound_type": "sustained_final_vowel",
+                                        "suggested_caption": "fear...",
+                                        "suggested_user_action": "extend_final_vowel",
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            project = Project.new(project_id="proj-1", job_id="abc123def456")
+
+            points = build_review_points(job_dir, project)
+
+        timing_points = [point for point in points if point.source == "timing_audio"]
+        self.assertEqual(len(timing_points), 1)
+        point = timing_points[0]
+        self.assertEqual(point.stage_id, "quality")
+        self.assertEqual(point.level, "issue")
+        self.assertEqual(point.start_s, 161.24)
+        self.assertEqual(point.end_s, 166.48)
+        self.assertEqual(point.affected_ids, ["line-1"])
+        self.assertEqual(point.severity, "medium")
+        self.assertEqual(point.suggested_action, "extend_final_vowel")
+        self.assertEqual(point.evidence_summary, "audio 161.24-166.48s | voiced 1.00")
+        self.assertEqual(point.to_dict()["evidence_summary"], "audio 161.24-166.48s | voiced 1.00")
+        self.assertEqual(
+            [tag["label"] for tag in point.tags],
+            [
+                "U-SUS",
+                "P-OVR",
+                "SUS",
+            ],
+        )
+        self.assertEqual(point.tags[0]["title"], "Unwritten sustain")
+        self.assertEqual(point.to_dict()["tags"][0]["label"], "U-SUS")
+        self.assertEqual(point.to_dict()["tags"][0]["title"], "Unwritten sustain")
+        self.assertIn("fear...", point.text)
+        self.assertIn("structural pause overridden by audio tail", point.text)
+
+    def test_audio_timing_tags_deduplicate_classifications_and_mark_review_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "analysis.json").write_text(
+                json.dumps(
+                    {
+                        "lines": [
+                            {"text": "Hmmmmm", "start": 12.74, "end": 15.23, "words": []},
+                            {"text": "Out of my mind", "start": 135.76, "end": 141.14, "words": []},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "output.ass.manifest.json").write_text(
+                json.dumps(
+                    {
+                        "timing_audio_layers": {
+                            "diagnostics": [
+                                {
+                                    "line_index": 0,
+                                    "tail_classification": "written_melisma_extension",
+                                    "line_classification": "review_only_backing_or_drift",
+                                    "diagnostic_tags": ["written_melisma_extension", "early_next_line_entry_drift"],
+                                    "review_flags": ["long_structural_pause_audio_extension"],
+                                    "sound_suggestion": {"sound_type": "written_melisma_extension"},
+                                },
+                                {
+                                    "line_index": 1,
+                                    "line_classification": "review_only_backing_or_drift",
+                                    "diagnostic_tags": ["possible_backing_vocal_not_in_lyrics"],
+                                    "sound_suggestion": {
+                                        "sound_type": "possible_backing_or_alignment_issue",
+                                        "suggested_user_action": "manual_review_or_local_realign",
+                                    },
+                                },
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            project = Project.new(project_id="proj-1", job_id="abc123def456")
+
+            points = [point for point in build_review_points(job_dir, project) if point.source == "timing_audio"]
+
+        self.assertEqual(
+            [tag["label"] for tag in points[0].tags],
+            [
+                "RO",
+                "W-MEL",
+                "B/DFT",
+                "DFT",
+                "L-PAU",
+            ],
+        )
+        self.assertEqual(points[0].tags[1]["title"], "Written melisma")
+        self.assertEqual(
+            [tag["label"] for tag in points[1].tags],
+            [
+                "RO",
+                "B/DFT",
+                "BV?",
+                "B/ALG?",
+            ],
+        )
+        self.assertEqual(points[1].tags[2]["title"], "Backing vocal?")
+
+    def test_audio_timing_diagnostics_fall_back_from_non_finite_evidence_bounds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "analysis.json").write_text(
+                json.dumps({"lines": [{"text": "A", "start": 1.0, "end": 2.0, "words": []}]}),
+                encoding="utf-8",
+            )
+            (job_dir / "output.ass.manifest.json").write_text(
+                json.dumps(
+                    {
+                        "timing_audio_layers": {
+                            "diagnostics": [
+                                {
+                                    "line_index": 0,
+                                    "tail_classification": "possible_lost_tail",
+                                    "review_flags": None,
+                                    "audio_evidence": {
+                                        "start_s": "NaN",
+                                        "end_s": "Infinity",
+                                        "voiced_ratio": "NaN",
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            project = Project.new(project_id="proj-1", job_id="abc123def456")
+
+            points = build_review_points(job_dir, project)
+
+        timing_points = [point for point in points if point.source == "timing_audio"]
+        self.assertEqual(len(timing_points), 1)
+        self.assertEqual(timing_points[0].start_s, 1.0)
+        self.assertEqual(timing_points[0].end_s, 2.0)
+        self.assertEqual(timing_points[0].evidence_summary, "")
+
     def test_next_open_point_uses_stage_and_priority_order(self):
         points = [
             ReviewPoint(id="p1", stage_id="alignment", level="line", text="A", start_s=3, end_s=4, priority=0.1),

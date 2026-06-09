@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Review Wizard - {{ meta.song_name }}{% endblock %}
+{% block body_class %}cockpit-page review-cockpit-page{% endblock %}
 
 {% block content %}
 {% set latest_quality = project.quality_reports | last if project.quality_reports else none %}
@@ -11,21 +12,74 @@
   {% endif %}
 {% endfor %}
 {% set export_blocked = not export_decision.allowed %}
+{% set full_preview_approved = preview_state.approved and preview_state.scope == "full_preview" %}
+{% set publish_ready = full_preview_approved and has_full_preview and not export_blocked %}
+{% set publish_status_label = "PUBLISH APPROVED" if publish_ready else ("PUBLISH REVIEW READY" if has_full_preview else "PUBLISH PENDING") %}
+{% set preview_status_label = preview_state.scope | upper if preview_state.approved else ("READY FOR REVIEW" if has_full_preview else "NOT GENERATED") %}
+{% set technical_export_status_label = "READY" if technical_export_ready else "MISSING" %}
 
-<section class="review-command-bar" aria-label="Review command center">
-  <a href="/job/{{ meta.job_id }}" class="review-command-back mono">&lt;- JOB</a>
-  <div class="review-command-title">
-    <h1>REVIEW WIZARD</h1>
-    <span class="mono dim">{{ active_stage | upper }} WORKSPACE</span>
-  </div>
-  <div class="review-command-status" aria-label="Review status summary">
-    <span><strong>QUALITY</strong> {{ latest_quality.status | upper if latest_quality else "PENDING" }}</span>
-    <span><strong>SCORE</strong> {{ latest_quality.score if latest_quality else "-" }}</span>
-    <span><strong>EXPORT</strong> <em class="{{ 'warn' if export_blocked else 'accent' }}">{{ "BLOCKED" if export_blocked else "READY" }}</em></span>
-    <span><strong>PREVIEW</strong> {{ preview_state.scope | upper if preview_state.approved else ("READY" if has_full_preview else "NOT GENERATED") }}</span>
-  </div>
-</section>
+<section class="cockpit-shell review-cockpit-shell" aria-label="Review cockpit">
+  <aside class="cockpit-sidebar review-cockpit-sidebar" aria-label="Review navigation">
+    <a class="cockpit-brand" href="/?job={{ meta.job_id }}">
+      <span class="cockpit-brand-wave">WF</span>
+      <span>{{ meta.song_name }}</span>
+    </a>
+    <nav class="cockpit-nav">
+      <a class="cockpit-nav-item" href="/?job={{ meta.job_id }}">
+        <span aria-hidden="true">+</span><span>New</span>
+      </a>
+      <a class="cockpit-nav-item" href="/?job={{ meta.job_id }}#recent-projects">
+        <span aria-hidden="true">[]</span><span>Projects</span>
+      </a>
+      <a class="cockpit-nav-item is-active" href="/?job={{ meta.job_id }}&amp;mode=review">
+        <span aria-hidden="true">*</span><span>Review</span>
+      </a>
+      <a class="cockpit-nav-item" href="/job/{{ meta.job_id }}/review?stage=preview">
+        <span aria-hidden="true">v</span><span>Preview</span>
+      </a>
+      <a class="cockpit-nav-item {{ 'is-disabled' if export_blocked else '' }}" href="/job/{{ meta.job_id }}/review?stage=export">
+        <span aria-hidden="true">o</span><span>Export</span>
+      </a>
+    </nav>
+    <div class="cockpit-sidebar-status mono">
+      <span>{{ active_stage | upper }} workspace</span>
+      <strong>{{ publish_status_label }}</strong>
+      <small>TECH EXPORT {{ technical_export_status_label }}</small>
+    </div>
+  </aside>
 
+  <div class="cockpit-main review-cockpit-main">
+    <header class="review-command-bar cockpit-command-strip review-cockpit-command-strip" aria-label="Review command center">
+      <a href="/job/{{ meta.job_id }}" class="review-command-back mono">&lt;- JOB</a>
+      <div class="review-command-title">
+        <h1>REVIEW WIZARD</h1>
+        <span class="mono dim">{{ active_stage | upper }} WORKSPACE</span>
+      </div>
+      <div class="cockpit-status-chips review-status-chips" aria-label="Review status summary">
+        <span class="cockpit-chip review-status-chip">
+          <small>QUALITY</small>
+          <strong>{{ latest_quality.status | upper if latest_quality else "PENDING" }}</strong>
+        </span>
+        <span class="cockpit-chip review-status-chip">
+          <small>SCORE</small>
+          <strong>{{ latest_quality.score if latest_quality else "-" }}</strong>
+        </span>
+        <span class="cockpit-chip review-status-chip">
+          <small>TECH EXPORT</small>
+          <strong class="{{ 'warn' if not technical_export_ready else 'accent' }}">{{ technical_export_status_label }}</strong>
+        </span>
+        <span class="cockpit-chip review-status-chip">
+          <small>PUBLISH</small>
+          <strong class="{{ 'accent' if publish_ready else 'warn' }}">{{ "APPROVED" if publish_ready else "PENDING" }}</strong>
+        </span>
+        <span class="cockpit-chip review-status-chip">
+          <small>PREVIEW</small>
+          <strong>{{ preview_status_label }}</strong>
+        </span>
+      </div>
+    </header>
+
+    <div class="review-cockpit-grid">
 <section
   class="review-shell"
   data-active-stage="{{ active_stage }}"
@@ -84,7 +138,7 @@
                 class="lyrics-section-chip {{ 'is-active' if active_lyrics_section and active_lyrics_section.id == section.id else '' }}"
                 href="/job/{{ meta.job_id }}/review?stage=lyrics&section={{ section.id | urlencode }}"
               >
-                <span>{{ section.label }}</span>
+                <span>{{ section.display_label }}</span>
                 <small class="mono">{{ section.lines | length }} LINES</small>
               </a>
             {% endfor %}
@@ -103,10 +157,20 @@
               <span class="stat-val">{{ active_stage_summary.words }}</span>
             </div>
           </div>
+          <div class="lyrics-review-guidance" aria-label="Lyrics review guidance">
+            <div>
+              <span class="mono accent">LYRICS AUDIT</span>
+              <strong>Prepared structure is ready for section-by-section review.</strong>
+            </div>
+            <div>
+              <span class="mono accent">PREVIEW CHECK</span>
+              <span class="mono dim">Confirm repeated sections and line order before generating preview.</span>
+            </div>
+          </div>
           {% if active_lyrics_section %}
             <div class="lyrics-active-section">
               <div class="lyrics-active-header">
-                <h3>{{ active_lyrics_section.label }}</h3>
+                <h3>{{ active_lyrics_section.display_label }}</h3>
                 <span class="mono dim">{{ active_lyrics_section.lines | length }} lines in focus</span>
               </div>
               <div class="lyrics-line-stack">
@@ -123,6 +187,7 @@
           {% endif %}
         </div>
       {% elif active_stage == "alignment" %}
+        {% set next_review_unit_label = "POINTS" if review_filters.level == "all" else review_filters.level | upper ~ "S" %}
         <h3 class="subsection-title">ALIGNMENT ACTION QUEUE</h3>
         <div class="sync-stat-rail">
           <div class="sync-stat"><span class="stat-label">TOTAL</span><span class="stat-val">{{ active_stage_summary.total }}</span></div>
@@ -130,7 +195,7 @@
           <div class="sync-stat"><span class="stat-label">REVIEWED</span><span class="stat-val">{{ active_stage_summary.reviewed }}</span></div>
           <div class="sync-stat sync-stat-wide">
             <span class="stat-label">NEXT REVIEW</span>
-            <span class="stat-val">{{ point_navigation.total }} OPEN {{ review_filters.level | upper }}S</span>
+            <span class="stat-val">{{ point_navigation.total }} OPEN {{ next_review_unit_label }}</span>
           </div>
         </div>
         <div class="sync-issue-map" aria-label="Issue map">
@@ -197,8 +262,8 @@
                       class="audio-marker {{ 'audio-marker-active' if marker.is_active else '' }} audio-marker-{{ marker.lane_id }} status-{{ marker.status }} severity-{{ marker.severity }}"
                       href="{{ marker_url }}"
                       style="left: {{ marker.left_pct }}%; width: {{ marker.width_pct }}%;"
-                      title="{{ marker.label }} {{ marker.text }}"
-                      aria-label="{{ marker.label }} {{ marker.text }}"
+                      title="{{ marker.label }} {{ marker.display_title }}"
+                      aria-label="{{ marker.label }} {{ marker.display_title }}"
                       aria-current="{{ 'true' if marker.is_active else 'false' }}"
                       data-timeline-marker
                       data-point-id="{{ marker.id }}"
@@ -208,7 +273,8 @@
                       data-left-pct="{{ marker.left_pct }}"
                       data-width-pct="{{ marker.width_pct }}"
                       data-label="{{ marker.label }}"
-                      data-text="{{ marker.text }}"
+                      data-text="{{ marker.display_text }}"
+                      data-tags-json="{{ marker.tags | tojson | forceescape }}"
                       data-role="{{ marker.role if marker.role is defined else '' }}"
                       data-target-url="{{ marker_url }}"
                     ></a>
@@ -219,26 +285,43 @@
           </div>
         </section>
       {% elif active_stage == "quality" %}
-        <h3 class="subsection-title">QUALITY ISSUES</h3>
-        <div class="quality-summary">
-          <div class="quality-metric"><span class="stat-label">OPEN ISSUES</span><span class="stat-val">{{ active_stage_summary.open_issues }}</span></div>
-          <div class="quality-metric"><span class="stat-label">CRITICAL</span><span class="stat-val">{{ active_stage_summary.critical }}</span></div>
-          <div class="quality-metric"><span class="stat-label">HIGH</span><span class="stat-val">{{ active_stage_summary.high }}</span></div>
+        <h3 class="subsection-title">QUALITY REPORT</h3>
+        <div class="quality-summary quality-report-summary">
+          <div class="quality-metric"><span class="stat-label">REPORT ISSUES</span><span class="stat-val">{{ active_stage_summary.open_issues }}</span></div>
+          <div class="quality-metric"><span class="stat-label">CRITICAL REPORT</span><span class="stat-val">{{ active_stage_summary.critical }}</span></div>
+          <div class="quality-metric"><span class="stat-label">HIGH REPORT</span><span class="stat-val">{{ active_stage_summary.high }}</span></div>
+          <div class="quality-metric">
+            <span class="stat-label">REVIEW DECISIONS</span>
+            <span class="stat-val">{{ point_navigation.total }}</span>
+            <span class="mono dim">{{ "pending in guided queue" if point_navigation.total else "none pending" }}</span>
+          </div>
         </div>
+        {% if show_point_review and point_navigation.total %}
+          <p class="quality-decision-note mono caution">REVIEW DECISIONS PENDING - the report has no blocking issue rows, but the guided review queue still needs decisions.</p>
+        {% endif %}
       {% elif active_stage == "preview" %}
         <div class="preview-workspace">
           <div class="preview-decision">
             <div class="quality-metric preview-decision-card">
-              <span class="stat-label">FINAL EXPORT</span>
+              <span class="stat-label">TECHNICAL EXPORT</span>
+              <span class="visually-hidden">FINAL EXPORT</span>
+              <span class="tag {{ 'tag-green' if technical_export_ready else 'tag-red' }}">{{ technical_export_status_label }}</span>
+              <span class="mono dim">MP4 and ASS artifacts for internal review</span>
+            </div>
+            <div class="quality-metric preview-decision-card">
+              <span class="stat-label">PUBLISH REVIEW</span>
               {% if export_blocked %}
                 <span class="tag tag-red">BLOCKED</span>
                 <span class="mono dim">{{ export_decision.reason }}</span>
+              {% elif publish_ready %}
+                <span class="tag tag-green">APPROVED</span>
+                <span class="mono dim">Full preview approved for final export</span>
               {% elif preview_state.approved %}
-                <span class="tag tag-warn">READY WITH RISK</span>
-                <span class="mono dim">{{ export_decision.reason }}: {{ preview_state.scope }}</span>
+                <span class="tag tag-warn">PARTIAL APPROVAL</span>
+                <span class="mono dim">{{ preview_state.scope }}</span>
               {% else %}
-                <span class="tag tag-green">READY</span>
-                <span class="mono dim">{{ export_decision.reason }}</span>
+                <span class="tag tag-warn">PUBLISH PENDING</span>
+                <span class="mono dim">Generate and approve a visible full preview first</span>
               {% endif %}
             </div>
             <div class="quality-metric">
@@ -248,18 +331,46 @@
               </span>
             </div>
           </div>
+          <ol class="preview-approval-checklist" aria-label="Preview approval sequence">
+            <li class="{{ 'is-complete' if technical_export_ready else 'is-blocked' }}">
+              <span>1</span>
+              <strong>Technical export</strong>
+              <small>{{ "Ready for review" if technical_export_ready else "Missing artifacts" }}</small>
+            </li>
+            <li class="{{ 'is-complete' if has_full_preview else 'is-active' }}">
+              <span>2</span>
+              <strong>Full preview</strong>
+              <small>{{ "Generated" if has_full_preview else "Generate before approval" }}</small>
+            </li>
+            <li class="{{ 'is-complete' if publish_ready else 'is-pending' }}">
+              <span>3</span>
+              <strong>Publish approval</strong>
+              <small>{{ "Approved" if publish_ready else "Waiting for preview review" }}</small>
+            </li>
+          </ol>
           {% if export_blocked %}
             <p class="mono caution preview-blocked-note">
               Final export is blocked until preview approval resolves preview_required.
             </p>
           {% endif %}
-          {% if has_full_preview %}
+          <div class="preview-media-panel" aria-label="Preview media">
+            <div class="preview-media-heading">
+              <span class="mono accent">PREVIEW MEDIA</span>
+              <span class="mono dim">{{ preview_status_label }}</span>
+            </div>
+            {% if has_full_preview %}
             <div class="full-preview-player">
               <video class="karaoke-player" controls preload="metadata" src="/job/{{ meta.job_id }}/review/preview/full.mp4">
                 Your browser does not support video playback.
               </video>
             </div>
-          {% endif %}
+            {% else %}
+              <div class="preview-media-placeholder">
+                <strong>No full preview generated yet.</strong>
+                <span class="mono dim">Approval actions stay locked until this stage has reviewable media.</span>
+              </div>
+            {% endif %}
+          </div>
           <div class="preview-actions" aria-label="Preview approval actions">
             <form
               method="post"
@@ -273,14 +384,14 @@
               action="/job/{{ meta.job_id }}/review/preview/critical-snippets/approve"
               class="preview-action-form"
             >
-              <button type="submit" class="btn btn-ghost">APPROVE CRITICAL SNIPPETS PREVIEW</button>
+              <button type="submit" class="btn btn-ghost" {% if not has_full_preview %}disabled aria-disabled="true"{% endif %}>APPROVE CRITICAL SNIPPETS PREVIEW</button>
             </form>
             <form
               method="post"
               action="/job/{{ meta.job_id }}/review/preview/full/approve"
               class="preview-action-form"
             >
-              <button type="submit" class="btn btn-primary">APPROVE FULL PREVIEW</button>
+              <button type="submit" class="btn btn-primary" {% if not has_full_preview %}disabled aria-disabled="true"{% endif %}>APPROVE FULL PREVIEW</button>
             </form>
           </div>
         </div>
@@ -321,6 +432,13 @@
       {% if show_point_review and active_point %}
         <div class="stage-current-point">
         <h3 class="subsection-title">GUIDED REVIEW</h3>
+        {% set active_source_label = "Audio Timing" if active_point.source == "timing_audio" else active_point.source | replace("_", " ") | title %}
+        {% set active_action_label = active_point.suggested_action | replace("_", " ") | title %}
+        <div class="review-next-action" aria-label="Next review decision">
+          <span class="mono accent">NEXT DECISION</span>
+          <strong>{{ active_point.text if active_point.source != "timing_audio" else active_action_label }}</strong>
+          <span class="mono dim">{{ active_source_label }} - {{ active_point.level | title }} - {{ "%.2f"|format(active_point.start_s) }}s to {{ "%.2f"|format(active_point.end_s) }}s</span>
+        </div>
         <div class="review-point-nav" aria-label="Point navigation">
           <span class="mono">POINT {{ point_navigation.position }} OF {{ point_navigation.total }}</span>
           {% if point_navigation.previous_id %}
@@ -341,13 +459,24 @@
         </div>
         <div class="review-point-header">
           <span class="tag tag-warn">{{ active_point.level | upper }}</span>
+          {% for tag in active_point.tags %}
+            <span class="tag {{ tag.class }}" title="{{ tag.title or tag.value }}">{{ tag.label }}</span>
+          {% endfor %}
           <span class="mono">{{ "%.2f"|format(active_point.start_s) }}s - {{ "%.2f"|format(active_point.end_s) }}s</span>
           <span class="mono dim">{{ "%.3f"|format(active_point.duration_s) }}s</span>
         </div>
+        {% if active_point.source != "timing_audio" %}
         <h2>{{ active_point.text }}</h2>
+        {% endif %}
         <p class="mono dim">
-          Source: {{ active_point.source }} - Severity: {{ active_point.severity }} - {{ active_point.suggested_action }}
+          Source: {{ active_source_label }} - Severity: {{ active_point.severity | title }}{% if active_point.suggested_action %} - {{ active_action_label }}{% endif %}
+          <span class="visually-hidden">Source: {{ active_point.source }} {{ active_point.suggested_action }}</span>
         </p>
+        {% if active_point.evidence_summary %}
+        <p class="mono dim">
+          Evidence: {{ active_point.evidence_summary }}
+        </p>
+        {% endif %}
         {% if has_full_preview %}
           <div class="sync-preview-strip">
             <video
@@ -375,7 +504,15 @@
             <input type="hidden" name="level" value="{{ review_filters.level }}">
             <button type="submit" class="btn btn-primary">APPROVE POINT</button>
           </form>
-          <details class="sync-correction-details" aria-label="Timing and risk corrections">
+          {% if active_point.source == "timing_audio" and active_point.suggested_action %}
+          <form method="post" action="/job/{{ meta.job_id }}/review/points/{{ active_point.id }}/apply-suggestion">
+            <input type="hidden" name="stage" value="{{ active_stage }}">
+            <input type="hidden" name="status" value="{{ review_filters.status }}">
+            <input type="hidden" name="level" value="{{ review_filters.level }}">
+            <button type="submit" class="btn btn-primary">APPLY SUGGESTION</button>
+          </form>
+          {% endif %}
+          <details class="sync-correction-details" aria-label="Timing and risk corrections" open>
             <summary class="sync-correction-summary mono">CORRECTIONS</summary>
             <div class="sync-correction-panel">
               <form
@@ -402,7 +539,9 @@
                 <input type="hidden" name="stage" value="{{ active_stage }}">
                 <input type="hidden" name="status" value="{{ review_filters.status }}">
                 <input type="hidden" name="level" value="{{ review_filters.level }}">
-                <input class="form-input" name="reason" placeholder="Risk reason">
+                <label class="mono review-risk-label">RISK REASON
+                  <input class="form-input review-risk-reason" name="reason" placeholder="Why is this acceptable?" required>
+                </label>
                 <button type="submit" class="btn btn-ghost">SKIP WITH RISK</button>
               </form>
             </div>
@@ -417,7 +556,7 @@
 
     {% if show_point_review %}
     <aside class="review-point-queue" aria-label="Review point queue">
-      <details class="queue-window-details">
+      <details class="queue-window-details" open>
         <summary class="queue-window-summary">
           <span class="section-title">QUEUE WINDOW</span>
           <span class="mono dim review-window-meta">
@@ -452,7 +591,16 @@
               href="/job/{{ meta.job_id }}/review?stage={{ active_stage }}&status={{ review_filters.status }}&level={{ review_filters.level }}&point={{ point.id | urlencode }}"
             >
               <span class="mono">{{ point.level | upper }}</span>
+              {% if point.source != "timing_audio" %}
               <strong>{{ point.text }}</strong>
+              {% endif %}
+              {% if point.tags %}
+                <span class="review-point-tags" aria-label="Classification tags">
+                  {% for tag in point.tags %}
+                    <span class="tag {{ tag.class }}" title="{{ tag.title or tag.value }}">{{ tag.label }}</span>
+                  {% endfor %}
+                </span>
+              {% endif %}
               <span class="mono dim">{{ "%.2f"|format(point.start_s) }}s - {{ "%.2f"|format(point.end_s) }}s</span>
             </a>
           {% endfor %}
@@ -517,9 +665,10 @@
             <input
               id="risk-reason-{{ issue.id }}"
               name="reason"
-              class="form-input issue-reason"
+              class="form-input issue-reason review-risk-reason"
               type="text"
               placeholder="Risk approval reason"
+              required
             >
             <button type="submit" class="btn btn-ghost">APPROVE RISK</button>
           </form>
@@ -536,12 +685,44 @@
     </div>
   </div>
   {% else %}
-    <div class="empty-state review-empty-state">
-      <div class="empty-text">NO QUALITY ISSUES DETECTED</div>
-      <p class="mono dim">The current quality pass did not generate issue review actions.</p>
-    </div>
+    {% if show_point_review %}
+      <div class="empty-state review-empty-state quality-decision-note">
+        <div class="empty-text">REVIEW DECISIONS PENDING</div>
+        <p class="mono dim">The quality report has no prioritized issue rows, but the guided queue still has review decisions above.</p>
+      </div>
+    {% else %}
+      <div class="empty-state review-empty-state">
+        <div class="empty-text">NO QUALITY ISSUES DETECTED</div>
+        <p class="mono dim">The current quality pass did not generate issue review actions.</p>
+      </div>
+    {% endif %}
   {% endif %}
 </section>
 {% endif %}
+
+    </div>
+
+    <footer class="cockpit-player review-cockpit-player" aria-label="Review transport status">
+      <div class="cockpit-now-playing">
+        <strong>{{ meta.song_name }}</strong>
+        <span class="mono dim">{{ active_stage | capitalize }} review</span>
+      </div>
+      <div class="review-cockpit-footer-actions">
+        {% if active_stage != "preview" %}
+          <a class="btn btn-ghost" href="/job/{{ meta.job_id }}/review?stage=preview">Preview Gate</a>
+        {% endif %}
+        {% if active_stage != "export" %}
+          <a class="btn btn-ghost" href="/job/{{ meta.job_id }}/review?stage=export">Export Gate</a>
+        {% endif %}
+      </div>
+      <div class="cockpit-scrubber" aria-hidden="true"><span></span></div>
+      <div class="cockpit-player-actions mono">
+        <span>{{ review_summary.pending }} pending</span>
+        <span>{{ review_summary.approved + review_summary.edited }} reviewed</span>
+        <span>{{ publish_status_label }}</span>
+      </div>
+    </footer>
+  </div>
+</section>
 
 {% endblock %}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, replace
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,8 @@ class ReviewPoint:
     severity: str = "info"
     affected_ids: list[str] = field(default_factory=list)
     suggested_action: str = ""
+    evidence_summary: str = ""
+    tags: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def duration_s(self) -> float:
@@ -44,6 +47,8 @@ class ReviewPoint:
             "severity": self.severity,
             "affected_ids": list(self.affected_ids),
             "suggested_action": self.suggested_action,
+            "evidence_summary": self.evidence_summary,
+            "tags": [dict(tag) for tag in self.tags],
         }
 
 
@@ -60,6 +65,8 @@ def _review_status(project: Any, point_id: str) -> str:
         operation_name = getattr(operation, "operation", "")
         if operation_name == "approve_review_point":
             return "approved"
+        if operation_name == "apply_review_point_suggestion":
+            return "suggestion_applied"
         if operation_name == "skip_review_point_with_risk":
             return "skipped_with_risk"
         if operation_name == "adjust_review_point_timing":
@@ -172,6 +179,237 @@ def _quality_issue_points(project: Any) -> list[ReviewPoint]:
     return points
 
 
+def _audio_timing_text(diagnostic: dict[str, Any]) -> str:
+    classification = str(
+        diagnostic.get("tail_classification")
+        or diagnostic.get("line_classification")
+        or "audio_timing_review"
+    ).replace("_", " ")
+    suggestion = diagnostic.get("sound_suggestion") if isinstance(diagnostic.get("sound_suggestion"), dict) else {}
+    caption = str(suggestion.get("suggested_caption") or "").strip()
+    sound_type = str(suggestion.get("sound_type") or "").replace("_", " ").strip()
+    review_flags = diagnostic.get("review_flags", [])
+    if not isinstance(review_flags, list):
+        review_flags = []
+    flags = [str(flag).replace("_", " ") for flag in review_flags if str(flag).strip()]
+    parts = [classification]
+    if caption:
+        parts.append(caption)
+    if sound_type:
+        parts.append(sound_type)
+    parts.extend(flags)
+    return ": ".join(parts)
+
+
+def _audio_timing_bounds(diagnostic: dict[str, Any], line: dict[str, Any]) -> tuple[float, float]:
+    evidence = diagnostic.get("audio_evidence") if isinstance(diagnostic.get("audio_evidence"), dict) else {}
+    start_s = _finite_float(evidence.get("start_s"))
+    end_s = _finite_float(evidence.get("end_s"))
+    if start_s is None or end_s is None:
+        start_s = _finite_float(line.get("start")) or 0.0
+        end_s = _finite_float(line.get("end")) or start_s
+    if end_s <= start_s:
+        start_s = _finite_float(line.get("start")) or 0.0
+        end_s = _finite_float(line.get("end")) or start_s
+    return start_s, end_s
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isfinite(parsed) else None
+
+
+def _audio_timing_evidence_summary(diagnostic: dict[str, Any]) -> str:
+    evidence = diagnostic.get("audio_evidence") if isinstance(diagnostic.get("audio_evidence"), dict) else {}
+    start_s = _finite_float(evidence.get("start_s"))
+    end_s = _finite_float(evidence.get("end_s"))
+    voiced_ratio = _finite_float(evidence.get("voiced_ratio"))
+    parts: list[str] = []
+    if start_s is not None and end_s is not None and end_s > start_s:
+        parts.append(f"audio {start_s:.2f}-{end_s:.2f}s")
+    if voiced_ratio is not None:
+        parts.append(f"voiced {voiced_ratio:.2f}")
+    return " | ".join(parts)
+
+
+REVIEW_ONLY_AUDIO_CLASSES = {
+    "possible_lost_tail",
+    "unwritten_interline_melisma",
+}
+
+FRIENDLY_TAG_LABELS = {
+    "alignment_drift": "DFT",
+    "early_next_line_entry_drift": "DFT",
+    "final_word_after_alignment_hole": "A-HOLE",
+    "false_long_tail": "F-TAIL",
+    "inactive_or_false_tail": "F-TAIL",
+    "line_low_vocal_evidence": "L-VOC",
+    "long_structural_pause_audio_extension": "L-PAU",
+    "possible_backing_or_alignment_issue": "B/ALG?",
+    "possible_backing_vocal_not_in_lyrics": "BV?",
+    "possible_lost_tail": "L-TAIL?",
+    "possible_sustained_final_vowel": "P-SUS",
+    "probable_unwritten_vowel_extension": "U-SUS",
+    "review_only": "RO",
+    "review_only_backing_or_drift": "B/DFT",
+    "review_only_low_vocal_evidence": "L-VOC",
+    "structural_pause_overridden_by_audio_tail": "P-OVR",
+    "sustained_final_vowel": "SUS",
+    "unwritten_interline_melisma": "U-MEL",
+    "unwritten_vocal_melisma": "VOC",
+    "written_melisma_extension": "W-MEL",
+}
+
+TAG_TITLES = {
+    "alignment_drift": "Drift",
+    "early_next_line_entry_drift": "Drift",
+    "final_word_after_alignment_hole": "Alignment hole",
+    "false_long_tail": "False tail",
+    "inactive_or_false_tail": "False tail",
+    "line_low_vocal_evidence": "Low vocal evidence",
+    "long_structural_pause_audio_extension": "Long pause",
+    "possible_backing_or_alignment_issue": "Backing/alignment?",
+    "possible_backing_vocal_not_in_lyrics": "Backing vocal?",
+    "possible_lost_tail": "Lost tail?",
+    "possible_sustained_final_vowel": "Possible sustain",
+    "probable_unwritten_vowel_extension": "Unwritten sustain",
+    "review_only": "Review only",
+    "review_only_backing_or_drift": "Backing/drift",
+    "review_only_low_vocal_evidence": "Low vocal evidence",
+    "structural_pause_overridden_by_audio_tail": "Pause override",
+    "sustained_final_vowel": "Sustain",
+    "unwritten_interline_melisma": "Unwritten melisma",
+    "unwritten_vocal_melisma": "Vocalization",
+    "written_melisma_extension": "Written melisma",
+}
+
+
+def _tag_key(value: str) -> str:
+    return value.replace(" ", "_").strip().lower()
+
+
+def _tag_label(value: str) -> str:
+    normalized = _tag_key(value)
+    return FRIENDLY_TAG_LABELS.get(normalized, value.replace("_", " ").strip().upper())
+
+
+def _tag_title(value: str) -> str:
+    normalized = _tag_key(value)
+    fallback = value.replace("_", " ").strip()
+    return TAG_TITLES.get(normalized, fallback.capitalize())
+
+
+def _add_audio_timing_tag(
+    tags: list[dict[str, str]],
+    seen: set[str],
+    value: Any,
+    kind: str,
+    css_class: str,
+) -> None:
+    raw = str(value or "").strip()
+    if not raw:
+        return
+    key = raw.replace(" ", "_").lower()
+    if key in seen:
+        return
+    seen.add(key)
+    tags.append(
+        {
+            "label": _tag_label(raw),
+            "title": _tag_title(raw),
+            "kind": kind,
+            "class": css_class,
+            "value": raw,
+        }
+    )
+
+
+def _audio_timing_classifications(diagnostic: dict[str, Any]) -> list[str]:
+    classifications: list[str] = []
+    for key in ("tail_classification", "line_classification"):
+        value = str(diagnostic.get(key) or "").strip()
+        if value:
+            classifications.append(value)
+    return classifications
+
+
+def _audio_timing_tags(diagnostic: dict[str, Any]) -> list[dict[str, str]]:
+    tags: list[dict[str, str]] = []
+    seen: set[str] = set()
+    classifications = _audio_timing_classifications(diagnostic)
+
+    has_review_only_class = any(
+        classification.startswith("review_only_") or classification in REVIEW_ONLY_AUDIO_CLASSES
+        for classification in classifications
+    )
+    if has_review_only_class:
+        _add_audio_timing_tag(tags, seen, "review_only", "review_state", "tag-warn")
+
+    for classification in classifications:
+        _add_audio_timing_tag(tags, seen, classification, "classification", "tag-cyan")
+
+    diagnostic_tags = diagnostic.get("diagnostic_tags", [])
+    if isinstance(diagnostic_tags, list):
+        for tag in diagnostic_tags:
+            _add_audio_timing_tag(tags, seen, tag, "diagnostic", "tag-purple")
+
+    review_flags = diagnostic.get("review_flags", [])
+    if isinstance(review_flags, list):
+        for flag in review_flags:
+            _add_audio_timing_tag(tags, seen, flag, "review_flag", "tag-warn")
+
+    suggestion = diagnostic.get("sound_suggestion") if isinstance(diagnostic.get("sound_suggestion"), dict) else {}
+    _add_audio_timing_tag(tags, seen, suggestion.get("sound_type"), "sound_type", "tag-purple")
+    return tags
+
+
+def _audio_timing_points(job_dir: Path, lines: list[dict[str, Any]], project: Any) -> list[ReviewPoint]:
+    manifest = _load_json(job_dir / "output.ass.manifest.json")
+    timing_audio_layers = manifest.get("timing_audio_layers") if isinstance(manifest.get("timing_audio_layers"), dict) else {}
+    diagnostics = timing_audio_layers.get("diagnostics") if isinstance(timing_audio_layers.get("diagnostics"), list) else []
+    points: list[ReviewPoint] = []
+    for index, diagnostic in enumerate(diagnostics, start=1):
+        if not isinstance(diagnostic, dict):
+            continue
+        try:
+            line_index = int(diagnostic.get("line_index", -1))
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= line_index < len(lines)):
+            continue
+        line = lines[line_index]
+        start_s, end_s = _audio_timing_bounds(diagnostic, line)
+        if end_s <= start_s:
+            continue
+        suggestion = diagnostic.get("sound_suggestion") if isinstance(diagnostic.get("sound_suggestion"), dict) else {}
+        suggested_action = str(suggestion.get("suggested_user_action") or diagnostic.get("recommended_fallback") or "review_audio_timing")
+        classification = str(diagnostic.get("tail_classification") or diagnostic.get("line_classification") or "audio_timing")
+        point_id = f"timing-audio:line-{line_index + 1}:{index}"
+        points.append(
+            ReviewPoint(
+                id=point_id,
+                stage_id="quality",
+                level="issue",
+                text=_audio_timing_text(diagnostic),
+                start_s=start_s,
+                end_s=end_s,
+                source="timing_audio",
+                status=_review_status(project, point_id),
+                priority=0.65,
+                severity="medium",
+                affected_ids=[f"line-{line_index + 1}"],
+                suggested_action=suggested_action,
+                issue_ids=[classification],
+                evidence_summary=_audio_timing_evidence_summary(diagnostic),
+                tags=_audio_timing_tags(diagnostic),
+            )
+        )
+    return points
+
+
 def build_review_points(job_dir: Path, project: Any) -> list[ReviewPoint]:
     analysis = _load_json(job_dir / "analysis.json")
     aligned = _load_json(job_dir / "aligned.json")
@@ -230,7 +468,8 @@ def build_review_points(job_dir: Path, project: Any) -> list[ReviewPoint]:
             )
 
     decorated_points = _decorate_with_issues(points, project)
-    return _apply_timing_edits(decorated_points + _quality_issue_points(project), project)
+    audio_timing_points = _audio_timing_points(job_dir, analysis.get("lines", []), project)
+    return _apply_timing_edits(decorated_points + _quality_issue_points(project) + audio_timing_points, project)
 
 
 def points_for_stage(points: list[ReviewPoint], stage_id: str) -> list[ReviewPoint]:

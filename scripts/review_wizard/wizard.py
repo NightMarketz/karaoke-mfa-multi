@@ -106,6 +106,21 @@ def approve_review_point(project: Any, point_id: str, approved_by: str) -> Any:
     return _append_operation(project, "approve_review_point", point_id, approved_by, {})
 
 
+def apply_review_point_suggestion(
+    project: Any,
+    point_id: str,
+    applied_by: str,
+    details: dict[str, Any],
+) -> Any:
+    return _append_operation(
+        project,
+        "apply_review_point_suggestion",
+        point_id,
+        applied_by,
+        dict(details),
+    )
+
+
 def skip_review_point_with_risk(
     project: Any,
     point_id: str,

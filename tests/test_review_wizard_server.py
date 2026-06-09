@@ -91,6 +91,63 @@ def _write_valid_artifact_graph(
     )
 
 
+def _write_audio_timing_review_job(job_dir: Path, job_id: str) -> None:
+    _write_job(job_dir, job_id, "[PreChorus]\nPast the fear")
+    (job_dir / "analysis.json").write_text(
+        json.dumps(
+            {
+                "lines": [
+                    {
+                        "text": "Past the fear",
+                        "start": 160.14,
+                        "end": 166.48,
+                        "words": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (job_dir / "output.ass.manifest.json").write_text(
+        json.dumps(
+            {
+                "timing_audio_layers": {
+                    "diagnostics": [
+                        {
+                            "line_index": 0,
+                            "tail_classification": "probable_unwritten_vowel_extension",
+                            "confidence": "high",
+                            "structural_tail_classification": "instrumental_pause",
+                            "review_flags": ["structural_pause_overridden_by_audio_tail"],
+                            "audio_evidence": {
+                                "start_s": 161.24,
+                                "end_s": 166.48,
+                                "duration_s": 5.24,
+                                "voiced_ratio": 1.0,
+                            },
+                            "sound_suggestion": {
+                                "sound_type": "sustained_final_vowel",
+                                "suggested_caption": "fear...",
+                                "suggested_user_action": "extend_final_vowel",
+                            },
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    prepared_text, _ = prepare_text_for_review("Past the fear", language="en")
+    save_project(
+        job_dir,
+        Project(
+            project_id=f"review-{job_id}",
+            job_id=job_id,
+            prepared_text=prepared_text,
+        ),
+    )
+
+
 class ReviewWizardServerTests(unittest.TestCase):
     def test_job_detail_links_to_review_wizard(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -376,11 +433,33 @@ class ReviewWizardServerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn('class="review-overview"', html)
         self.assertNotIn("review-overview-item", html)
-        self.assertIn('class="review-command-bar"', html)
+        self.assertIn('class="review-command-bar cockpit-command-strip review-cockpit-command-strip"', html)
         self.assertIn("REVIEW WIZARD", html)
         self.assertIn("QUALITY", html)
         self.assertIn("EXPORT", html)
         self.assertIn("PREVIEW", html)
+
+    def test_review_wizard_uses_cockpit_shell_design_language(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            _write_job(job_dir, job_id, "A B")
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/review?stage=alignment")
+
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('<body class="cockpit-page review-cockpit-page">', html)
+        self.assertIn('class="cockpit-shell review-cockpit-shell"', html)
+        self.assertIn('class="cockpit-sidebar review-cockpit-sidebar"', html)
+        self.assertIn('class="review-command-bar cockpit-command-strip review-cockpit-command-strip"', html)
+        self.assertIn('class="cockpit-status-chips review-status-chips"', html)
+        self.assertIn('class="cockpit-chip review-status-chip"', html)
+        self.assertIn('class="review-cockpit-grid"', html)
+        self.assertIn('class="cockpit-player review-cockpit-player"', html)
+        self.assertIn(f"/?job={job_id}&amp;mode=review", html)
 
     def test_adaptive_review_studio_renders_dense_stage_tabs_with_active_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -511,6 +590,45 @@ class ReviewWizardServerTests(unittest.TestCase):
         self.assertIn("NEXT REVIEW", html)
         self.assertIn("2 OPEN WORDS", html)
 
+    def test_review_wizard_alignment_stage_surfaces_next_action_without_hidden_queue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            _write_job(job_dir, job_id, "A B")
+            (job_dir / "analysis.json").write_text(
+                json.dumps(
+                    {
+                        "lines": [
+                            {
+                                "text": "A B",
+                                "start": 1.0,
+                                "end": 2.0,
+                                "words": [
+                                    {"word": "A", "start": 1.0, "end": 1.3},
+                                    {"word": "B", "start": 1.4, "end": 2.0},
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/review?stage=alignment")
+
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("OPEN POINTS", html)
+        self.assertNotIn("OPEN ALLS", html)
+        self.assertIn('class="review-next-action"', html)
+        self.assertIn("NEXT DECISION", html)
+        self.assertIn('<details class="sync-correction-details" aria-label="Timing and risk corrections" open>', html)
+        self.assertIn('<details class="queue-window-details" open>', html)
+        self.assertIn('class="form-input review-risk-reason"', html)
+        self.assertIn("required", html)
+
     def test_lyrics_stage_renders_script_board_without_scroll_dump(self):
         with tempfile.TemporaryDirectory() as tmp:
             jobs_dir = Path(tmp)
@@ -531,6 +649,24 @@ class ReviewWizardServerTests(unittest.TestCase):
         self.assertIn("Verse", html)
         self.assertIn("line-3", html)
         self.assertNotIn("line-5", html)
+
+    def test_lyrics_stage_disambiguates_repeated_sections_and_guides_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            _write_job(job_dir, job_id, "[Verse]\nA\n[Verse]\nB\n[Chorus]\nC")
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/review?stage=lyrics")
+
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="lyrics-review-guidance"', html)
+        self.assertIn("LYRICS AUDIT", html)
+        self.assertIn("Verse 1", html)
+        self.assertIn("Verse 2", html)
+        self.assertIn("PREVIEW CHECK", html)
 
     def test_alignment_stage_renders_sync_cockpit_with_windowed_queue(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1135,6 +1271,76 @@ class ReviewWizardServerTests(unittest.TestCase):
         focused = html.index("FOCUSED ISSUE EDITOR")
         self.assertLess(focused, html.rindex("OPEN TIMELINE"))
 
+    def test_quality_stage_renders_audio_timing_sound_suggestion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            _write_audio_timing_review_job(job_dir, job_id)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/review?stage=quality")
+
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("extend_final_vowel", html)
+        self.assertIn(">U-SUS<", html)
+        self.assertIn(">P-OVR<", html)
+        self.assertIn(">SUS<", html)
+        self.assertIn('title="Unwritten sustain"', html)
+        self.assertIn('title="Pause override"', html)
+        self.assertNotIn("probable unwritten vowel extension: fear...", html)
+        self.assertNotIn("structural pause overridden by audio tail", html)
+        self.assertNotIn("fear...", html)
+        self.assertIn("audio 161.24-166.48s | voiced 1.00", html)
+        self.assertIn("Source: timing_audio", html)
+        self.assertIn(f"/job/{job_id}/review/points/timing-audio:line-1:1/apply-suggestion", html)
+        self.assertIn("APPLY SUGGESTION", html)
+
+    def test_alignment_timeline_uses_tags_for_audio_timing_markers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            _write_audio_timing_review_job(job_dir, job_id)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/review?stage=alignment")
+
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("U-SUS", html)
+        self.assertIn("P-OVR", html)
+        self.assertIn("SUS", html)
+        self.assertIn("Unwritten sustain", html)
+        self.assertIn("Pause override", html)
+        self.assertIn("data-tags-json=", html)
+        self.assertNotIn("probable unwritten vowel extension: fear...", html)
+        self.assertNotIn("structural pause overridden by audio tail", html)
+        self.assertNotIn("fear...", html)
+
+    def test_apply_review_point_suggestion_route_persists_audio_decision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            _write_audio_timing_review_job(job_dir, job_id)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().post(
+                    f"/job/{job_id}/review/points/timing-audio:line-1:1/apply-suggestion",
+                    data={"stage": "quality", "status": "open", "level": "issue"},
+                )
+
+            project = load_project(job_dir)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("stage=quality", response.headers["Location"])
+        self.assertEqual(project.edit_operations[0].operation, "apply_review_point_suggestion")
+        self.assertEqual(project.edit_operations[0].target_id, "timing-audio:line-1:1")
+        self.assertEqual(project.edit_operations[0].details["source"], "timing_audio")
+        self.assertEqual(project.edit_operations[0].details["suggested_action"], "extend_final_vowel")
+
     def test_review_wizard_renders_issue_action_forms_with_expected_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             jobs_dir = Path(tmp)
@@ -1656,6 +1862,64 @@ class ReviewWizardServerTests(unittest.TestCase):
             html,
         )
         self.assertIn('method="post"', html)
+
+    def test_preview_stage_guides_publish_readiness_before_approvals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            _write_job(job_dir, job_id)
+            _write_valid_artifact_graph(job_dir)
+            prepared_text, _ = prepare_text_for_review("[Verse]\nCoracao aberto", language="pt")
+            project = Project.new(project_id=f"review-{job_id}", job_id=job_id)
+            project = project.__class__(
+                **{
+                    **project.to_dict(),
+                    "prepared_text": prepared_text,
+                    "quality_reports": [
+                        QualityReport(id="qr-1", take_id="take-main", status="pass", score=0.96)
+                    ],
+                }
+            )
+            save_project(job_dir, project)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/review?stage=preview")
+
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("TECHNICAL EXPORT", html)
+        self.assertIn("PUBLISH REVIEW", html)
+        self.assertIn("PUBLISH PENDING", html)
+        self.assertIn('class="preview-media-placeholder"', html)
+        self.assertIn('class="preview-approval-checklist"', html)
+        self.assertRegex(
+            html,
+            r'(?s)<button[^>]*disabled[^>]*>\s*APPROVE CRITICAL SNIPPETS PREVIEW\s*</button>',
+        )
+        self.assertRegex(
+            html,
+            r'(?s)<button[^>]*disabled[^>]*>\s*APPROVE FULL PREVIEW\s*</button>',
+        )
+
+    def test_quality_stage_separates_report_issues_from_review_decisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            _write_audio_timing_review_job(job_dir, job_id)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/review?stage=quality")
+
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("REPORT ISSUES", html)
+        self.assertIn("REVIEW DECISIONS", html)
+        self.assertIn("REVIEW DECISIONS PENDING", html)
+        self.assertIn("Audio Timing", html)
+        self.assertIn("Extend Final Vowel", html)
+        self.assertNotIn("NO QUALITY ISSUES DETECTED", html)
 
 
 if __name__ == "__main__":
