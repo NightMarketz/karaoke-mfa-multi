@@ -1,9 +1,12 @@
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 
 from scripts.cockpit import (
     artifact_rows,
+    build_cockpit_timeline,
+    cockpit_service_summary,
     build_quick_review,
     cockpit_stage_rows,
     recent_project_cards,
@@ -11,6 +14,15 @@ from scripts.cockpit import (
 )
 from scripts.review_wizard.contracts import Issue, Project
 from scripts.review_wizard.review_points import ReviewPoint
+
+
+def _write_test_wav(path: Path, samples: list[int], *, framerate: int = 8000) -> None:
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(framerate)
+        frames = b"".join(int(sample).to_bytes(2, "little", signed=True) for sample in samples)
+        wav.writeframes(frames)
 
 
 class CockpitViewModelTests(unittest.TestCase):
@@ -70,6 +82,7 @@ class CockpitViewModelTests(unittest.TestCase):
             "job_id": "abc123def456",
             "song_name": "Nova Cancao",
             "duration_s": 272.118,
+            "language": "pt-BR",
             "preset": "single-style-kf",
             "status": {"stage": "done", "progress": 100, "error": ""},
         }
@@ -80,6 +93,32 @@ class CockpitViewModelTests(unittest.TestCase):
         self.assertEqual(summary["title"], "Nova Cancao")
         self.assertEqual(summary["duration_label"], "04:32.118")
         self.assertEqual(summary["pipeline_label"], "DONE")
+        self.assertEqual(summary["language_label"], "pt-BR")
+
+    def test_selected_job_summary_includes_language_without_fake_default(self):
+        summary = selected_job_summary(
+            {
+                "job_id": "abc123def456",
+                "song_name": "Nova Cancao",
+                "duration_s": 272.118,
+                "preset": "single-style-kf",
+                "status": {"stage": "done", "progress": 100, "error": ""},
+            }
+        )
+
+        self.assertEqual(summary["language_label"], "--")
+
+    def test_cockpit_service_summary_reports_real_job_counts(self):
+        summary = cockpit_service_summary(
+            [
+                {"status": {"stage": "done"}},
+                {"status": {"stage": "rendering"}},
+                {"status": {"stage": "failed"}},
+            ]
+        )
+
+        self.assertEqual(summary["label"], "3 projects indexed")
+        self.assertEqual(summary["state"], "1 running / 1 failed")
 
     def test_quick_review_uses_highest_priority_open_point_and_wizard_link(self):
         project = Project.new(project_id="review-abc123def456", job_id="abc123def456")
@@ -118,6 +157,37 @@ class CockpitViewModelTests(unittest.TestCase):
         self.assertEqual(quick["open_count"], 2)
         self.assertEqual(quick["wizard_href"], "/job/abc123def456/review?stage=quality&point=issue%3Aissue-1")
         self.assertEqual(quick["approve_action"], "/job/abc123def456/review/points/issue%3Aissue-1/approve")
+
+    def test_timeline_uses_real_wav_analysis_and_review_points(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            _write_test_wav(job_dir / "vocals.wav", [0, 1000, 3000, 9000, 12000, 4000, 1000, 0])
+            _write_test_wav(job_dir / "instrumental.wav", [0, 2000, 5000, 16000, 8000, 3000, 1000, 0])
+            (job_dir / "analysis.json").write_text(
+                '{"lines":[{"text":"Linha real do projeto","start":1.0,"end":2.5}]}',
+                encoding="utf-8",
+            )
+            points = [
+                ReviewPoint(
+                    id="issue:1",
+                    stage_id="quality",
+                    level="issue",
+                    text="drift: review alignment",
+                    start_s=1.2,
+                    end_s=1.8,
+                    priority=0.9,
+                    severity="high",
+                )
+            ]
+
+            timeline = build_cockpit_timeline(job_dir, points, bar_count=8)
+
+        self.assertTrue(timeline["has_audio"])
+        self.assertEqual([lane["label"] for lane in timeline["lanes"]], ["Mix", "Vocals", "Instrumental"])
+        self.assertTrue(any(bar["height"] > 10 for bar in timeline["lanes"][1]["bars"]))
+        self.assertEqual(timeline["lyrics"][0]["text"], "Linha real do projeto")
+        self.assertEqual(timeline["issues"][0]["text"], "drift: review alignment")
+        self.assertEqual(timeline["issues"][0]["severity"], "high")
 
 
 if __name__ == "__main__":
