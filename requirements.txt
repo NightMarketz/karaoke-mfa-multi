@@ -29,3 +29,8 @@ tomli>=2.0.0
 # Audio processing
 soundfile>=0.12.0
 librosa>=0.10.0
+
+# Stem separation (Stage 02 — demix)
+# Install separately with: pip install demucs
+# Pinned to avoid breaking changes in htdemucs weights format.
+# demucs>=4.0.0
