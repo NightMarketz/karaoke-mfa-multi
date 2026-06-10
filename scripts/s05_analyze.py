@@ -512,7 +512,11 @@ def _validate_analysis(data: dict) -> list[str]:
         words = line.get("words")
         if not isinstance(words, list) or not words:
             continue
-        errors.extend(f"Line {index}: {error}" for error in find_timestamp_errors(words))
+        line_end = float(line.get("end", 0.0))
+        errors.extend(
+            f"Line {index}: {error}"
+            for error in find_timestamp_errors(words, segment_end=line_end)
+        )
         first_word = words[0]
         last_word = words[-1]
         if abs(float(line.get("start", 0.0)) - float(first_word.get("start", 0.0))) > 0.001:

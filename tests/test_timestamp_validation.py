@@ -26,5 +26,27 @@ class TimestampValidationTests(unittest.TestCase):
         self.assertLessEqual(repaired[1]["end"], repaired[2]["start"])
 
 
+    def test_find_timestamp_errors_flags_word_exceeding_segment_end(self):
+        words = [{"word": "hello", "start": 0.5, "end": 2.5}]
+        errors = find_timestamp_errors(words, segment_end=2.0)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("exceeds segment boundary", errors[0])
+
+    def test_find_timestamp_errors_allows_word_within_segment_end(self):
+        words = [{"word": "hello", "start": 0.5, "end": 1.8}]
+        errors = find_timestamp_errors(words, segment_end=2.0)
+        self.assertEqual(errors, [])
+
+    def test_find_timestamp_errors_segment_end_none_skips_boundary_check(self):
+        words = [{"word": "hello", "start": 0.5, "end": 9999.0}]
+        errors = find_timestamp_errors(words, segment_end=None)
+        self.assertEqual(errors, [])
+
+    def test_find_timestamp_errors_segment_end_with_tolerance(self):
+        words = [{"word": "hello", "start": 0.5, "end": 2.03}]
+        errors = find_timestamp_errors(words, segment_end=2.0, overlap_tolerance_s=0.05)
+        self.assertEqual(errors, [])
+
+
 if __name__ == "__main__":
     unittest.main()
