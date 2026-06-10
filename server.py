@@ -1561,11 +1561,11 @@ def job_retry_validate(job_id: str):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-_TERMINAL_STAGES = {"done", "failed", "queued"}
+_TERMINAL_STAGES = {"done", "failed"}
 
 
 def _recover_orphan_jobs() -> None:
-    """Mark jobs stuck in a mid-pipeline stage as failed on server startup."""
+    """Mark jobs stuck in running or queued state as failed on server startup."""
     if not JOBS_DIR.exists():
         return
     for d in JOBS_DIR.iterdir():

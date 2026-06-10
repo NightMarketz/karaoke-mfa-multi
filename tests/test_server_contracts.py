@@ -246,5 +246,178 @@ class ServerContractTests(unittest.TestCase):
             self.assertEqual(payload["summary"]["failures"][0]["event"], "stage05.failed")
 
 
+class ConcurrencyGuardTests(unittest.TestCase):
+    def test_new_job_submit_returns_429_when_busy(self):
+        from unittest.mock import MagicMock
+
+        job_id = "aabbccddeeff"
+        mock_thread = MagicMock()
+        mock_thread.is_alive.return_value = True
+
+        # APP_CONFIG.max_concurrent_jobs defaults to 1; one live thread saturates it.
+        with patch.dict(server._running, {job_id: mock_thread}, clear=True):
+            response = server.app.test_client().post(
+                "/job/new",
+                data={},
+                content_type="multipart/form-data",
+            )
+
+        self.assertEqual(response.status_code, 429)
+
+    def test_new_job_form_shows_server_busy(self):
+        from unittest.mock import MagicMock
+
+        job_id = "aabbccddeeff"
+        mock_thread = MagicMock()
+        mock_thread.is_alive.return_value = True
+
+        # APP_CONFIG.max_concurrent_jobs defaults to 1; one live thread saturates it.
+        with patch.dict(server._running, {job_id: mock_thread}, clear=True):
+            response = server.app.test_client().get("/job/new")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"SERVER BUSY", response.data)
+
+
+class OrphanRecoveryTests(unittest.TestCase):
+    def test_recover_orphan_in_running_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "aabbccddeeff"
+            job_dir = jobs_dir / job_id
+            job_dir.mkdir()
+            (job_dir / "meta.json").write_text(
+                json.dumps({"job_id": job_id}), encoding="utf-8"
+            )
+            (job_dir / "status.json").write_text(
+                json.dumps({"stage": "running", "progress": 50, "error": ""}),
+                encoding="utf-8",
+            )
+
+            with patch.object(server, "JOBS_DIR", jobs_dir), patch.dict(
+                server._running, {}, clear=True
+            ):
+                server._recover_orphan_jobs()
+
+            status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["stage"], "failed")
+
+    def test_recover_orphan_in_queued_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "aabbccddeeff"
+            job_dir = jobs_dir / job_id
+            job_dir.mkdir()
+            (job_dir / "meta.json").write_text(
+                json.dumps({"job_id": job_id}), encoding="utf-8"
+            )
+            (job_dir / "status.json").write_text(
+                json.dumps({"stage": "queued", "progress": 0, "error": ""}),
+                encoding="utf-8",
+            )
+
+            with patch.object(server, "JOBS_DIR", jobs_dir), patch.dict(
+                server._running, {}, clear=True
+            ):
+                server._recover_orphan_jobs()
+
+            status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["stage"], "failed")
+
+    def test_does_not_recover_done_job(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "aabbccddeeff"
+            job_dir = jobs_dir / job_id
+            job_dir.mkdir()
+            (job_dir / "meta.json").write_text(
+                json.dumps({"job_id": job_id}), encoding="utf-8"
+            )
+            (job_dir / "status.json").write_text(
+                json.dumps({"stage": "done", "progress": 100, "error": ""}),
+                encoding="utf-8",
+            )
+
+            with patch.object(server, "JOBS_DIR", jobs_dir), patch.dict(
+                server._running, {}, clear=True
+            ):
+                server._recover_orphan_jobs()
+
+            status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["stage"], "done")
+
+
+class RetryValidateTests(unittest.TestCase):
+    def test_retry_validate_returns_409_if_job_running(self):
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "aabbccddeeff"
+            job_dir = jobs_dir / job_id
+            job_dir.mkdir()
+            (job_dir / "meta.json").write_text(
+                json.dumps({"job_id": job_id}), encoding="utf-8"
+            )
+            (job_dir / "status.json").write_text(
+                json.dumps({"stage": "failed", "progress": 95, "error": ""}),
+                encoding="utf-8",
+            )
+
+            mock_thread = MagicMock()
+            mock_thread.is_alive.return_value = True
+
+            with patch.object(server, "JOBS_DIR", jobs_dir), patch.dict(
+                server._running, {job_id: mock_thread}, clear=True
+            ):
+                response = server.app.test_client().post(f"/job/{job_id}/retry-validate")
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_retry_validate_returns_409_if_wrong_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "aabbccddeeff"
+            job_dir = jobs_dir / job_id
+            job_dir.mkdir()
+            (job_dir / "meta.json").write_text(
+                json.dumps({"job_id": job_id}), encoding="utf-8"
+            )
+            (job_dir / "status.json").write_text(
+                json.dumps({"stage": "failed", "progress": 50, "error": ""}),
+                encoding="utf-8",
+            )
+
+            with patch.object(server, "JOBS_DIR", jobs_dir), patch.dict(
+                server._running, {}, clear=True
+            ):
+                response = server.app.test_client().post(f"/job/{job_id}/retry-validate")
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_retry_validate_returns_409_if_not_failed(self):
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "aabbccddeeff"
+            job_dir = jobs_dir / job_id
+            job_dir.mkdir()
+            (job_dir / "meta.json").write_text(
+                json.dumps({"job_id": job_id}), encoding="utf-8"
+            )
+            (job_dir / "status.json").write_text(
+                json.dumps({"stage": "done", "progress": 100, "error": ""}),
+                encoding="utf-8",
+            )
+
+            with patch.object(server, "JOBS_DIR", jobs_dir), patch.dict(
+                server._running, {}, clear=True
+            ):
+                response = server.app.test_client().post(f"/job/{job_id}/retry-validate")
+
+        self.assertEqual(response.status_code, 409)
+
+
 if __name__ == "__main__":
     unittest.main()
