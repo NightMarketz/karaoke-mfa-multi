@@ -5,6 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+pytest.importorskip("flask")
 import server
 from scripts.common.provenance import file_sha256, write_manifest
 from scripts.review_wizard.contracts import EditOperation, Issue, Project, QualityReport

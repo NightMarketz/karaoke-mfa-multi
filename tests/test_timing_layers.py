@@ -1,5 +1,8 @@
 import unittest
 
+import pytest
+
+pytest.importorskip("numpy")
 from scripts.review_wizard.timing_layers import (
     apply_audio_backed_tail_extensions,
     build_audio_backed_timing,

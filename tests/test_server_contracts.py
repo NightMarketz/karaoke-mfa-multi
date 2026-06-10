@@ -6,6 +6,9 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+pytest.importorskip("flask")
 import server
 from scripts.common.observability import read_events
 
