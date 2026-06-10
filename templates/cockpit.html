@@ -230,6 +230,14 @@
           </div>
           {% endfor %}
         </section>
+        {% if selected_job and selected_job.pipeline_label == "FAILED" and selected_job.progress == 95 %}
+        <section>
+          <h2>Actions</h2>
+          <form method="post" action="/job/{{ selected_job.job_id }}/retry-validate">
+            <button type="submit" class="btn btn-primary">Retry Validation</button>
+          </form>
+        </section>
+        {% endif %}
       </aside>
     </div>
 

@@ -8,6 +8,14 @@
   <p class="page-sub mono dim">// UPLOAD STEMS AND CONFIGURE ALIGNMENT</p>
 </div>
 
+{% if server_busy %}
+<div class="alert alert-warn" style="margin-bottom:1.5rem;padding:1rem 1.25rem;border:1px solid var(--color-warn,#f59e0b);border-radius:4px;background:rgba(245,158,11,0.08);">
+  <strong class="mono">// SERVER BUSY</strong> — a pipeline is already running
+  {% if running_job_id %}(<a href="/job/{{ running_job_id }}" class="mono">{{ running_job_id }}</a>){% endif %}.
+  New submissions are blocked until it completes.
+</div>
+{% endif %}
+
 <form action="/job/new" method="POST" enctype="multipart/form-data" class="upload-form" id="uploadForm">
   <div class="section">
     <div class="hud-corner hud-tl"></div>
@@ -127,8 +135,8 @@
   </div>
 
   <div class="form-actions">
-    <button type="submit" class="btn btn-primary" style="padding: 0.75rem 2.5rem;">
-      START PIPELINE
+    <button type="submit" class="btn btn-primary" style="padding: 0.75rem 2.5rem;"{% if server_busy %} disabled title="A job is already running"{% endif %}>
+      {% if server_busy %}SERVER BUSY{% else %}START PIPELINE{% endif %}
     </button>
     <a href="/" class="btn btn-ghost">CANCEL</a>
   </div>

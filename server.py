@@ -57,7 +57,7 @@ from scripts.cockpit import (
 )
 from scripts.common.config import load_app_config
 from scripts.common.paths import is_safe_archive_member, resolve_job_dir, validate_job_id
-from scripts.common.observability import read_events, write_event
+from scripts.common.observability import build_observability_summary, read_events, write_event
 from scripts.common.provenance import ProvenanceError, file_sha256, load_manifest, validate_file_hash
 from scripts.common.status import read_status, write_status
 from scripts.karaoke_styles.library import get_preset, list_preset_metadata
@@ -432,10 +432,13 @@ def index():
 
 @app.route("/job/new", methods=["GET"])
 def new_job_form():
+    active = [jid for jid, t in list(_running.items()) if t.is_alive()]
     return render_template(
         "new_job.html",
         style_presets=_style_preset_options(),
         default_preset_id=DEFAULT_STYLE_PRESET_ID,
+        server_busy=len(active) >= APP_CONFIG.max_concurrent_jobs,
+        running_job_id=active[0] if active else None,
     )
 
 
@@ -638,6 +641,13 @@ def _extract_suno_zip(zip_file, job_dir: Path) -> tuple[Path | None, Path | None
 
 @app.route("/job/new", methods=["POST"])
 def new_job_submit():
+    active = [jid for jid, t in list(_running.items()) if t.is_alive()]
+    if len(active) >= APP_CONFIG.max_concurrent_jobs:
+        return jsonify({
+            "error": "A job is already running. Please wait for it to complete.",
+            "running_job_id": active[0],
+        }), 429
+
     lyrics_text = request.form.get("lyrics_text", "").strip()
     song_name   = request.form.get("song_name", "Untitled").strip() or "Untitled"
     requested_preset = request.form.get("preset", DEFAULT_STYLE_PRESET_ID)
@@ -1495,6 +1505,87 @@ def job_delete(job_id: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Routes — Retry validation
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_retry_validate(job_id: str) -> None:
+    job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    write_event(job_dir, "retry_validate_started", "validating", details={"job_id": job_id})
+    meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
+    runner = PipelineRunner(
+        job_dir=job_dir,
+        python_exe=sys.executable,
+        preset=meta.get("preset", "cyberpunk"),
+        running_registry=_running,
+        job_id=job_id,
+    )
+    cmd = [sys.executable, str(SCRIPTS / "s08_validate.py"), "--job-dir", str(job_dir)]
+    ok = runner.run_command(cmd, "validating", 95, timeout=120)
+    if ok:
+        runner._write_status("done", 100)
+        write_event(job_dir, "pipeline_finished", "done", message="validation passed on retry")
+    build_observability_summary(job_dir)
+
+
+@app.route("/job/<job_id>/retry-validate", methods=["POST"])
+def job_retry_validate(job_id: str):
+    if job_id in _running and _running[job_id].is_alive():
+        return jsonify({"error": "Job is currently running."}), 409
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists():
+        return "Job not found", 404
+
+    status = _read_status(job_dir)
+    if status.get("stage") != "failed" or int(status.get("progress") or 0) != 95:
+        return jsonify({"error": "Job did not fail at the validation stage."}), 409
+
+    t = threading.Thread(target=_run_retry_validate, args=(job_id,), daemon=True)
+    _running[job_id] = t
+    t.start()
+
+    referrer = request.referrer
+    if referrer:
+        return redirect(referrer)
+    return redirect(url_for("job_detail", job_id=job_id))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TERMINAL_STAGES = {"done", "failed", "queued"}
+
+
+def _recover_orphan_jobs() -> None:
+    """Mark jobs stuck in a mid-pipeline stage as failed on server startup."""
+    if not JOBS_DIR.exists():
+        return
+    for d in JOBS_DIR.iterdir():
+        if not d.is_dir() or not validate_job_id(d.name):
+            continue
+        if not (d / "meta.json").exists():
+            continue
+        job_id = d.name
+        if job_id in _running:
+            continue
+        try:
+            status = _read_status(d)
+        except Exception:
+            continue
+        if status["stage"] in _TERMINAL_STAGES:
+            continue
+        progress = status.get("progress", 0)
+        _write_status(d, "failed", progress, "Server restarted while job was running. Please resubmit.")
+        write_event(
+            d,
+            "server_restart_recovery",
+            "failed",
+            level="error",
+            message="Server restarted while job was running. Please resubmit.",
+            details={"recovered_stage": status["stage"], "recovered_progress": progress},
+        )
+
 
 def _server_cli_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Karaoke MFA Multi local server.")
@@ -1505,4 +1596,5 @@ def _server_cli_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = _server_cli_args()
+    _recover_orphan_jobs()
     app.run(host=args.host, port=args.port, debug=False, threaded=True)

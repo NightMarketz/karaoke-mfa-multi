@@ -56,11 +56,16 @@
 <section class="section failed-panel">
   <h2 class="section-title">FAILED</h2>
   <p class="mono failure-message">{{ status.get('error') or 'The pipeline failed without a detailed error.' }}</p>
-  {% if has_ass %}
   <div class="player-actions">
+    {% if status.get('progress') == 95 %}
+    <form method="post" action="/job/{{ meta.job_id }}/retry-validate" style="display:inline">
+      <button type="submit" class="btn btn-primary">Retry Validation</button>
+    </form>
+    {% endif %}
+    {% if has_ass %}
     <a href="/job/{{ meta.job_id }}/output.ass" download="{{ meta.song_name }}.ass" class="btn btn-ghost">DOWNLOAD ASS</a>
+    {% endif %}
   </div>
-  {% endif %}
 </section>
 {% endif %}
 
