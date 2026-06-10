@@ -602,6 +602,7 @@ def _generate_ass(
     resolution: str,
     fade_in_ms:  int,
     fade_out_ms: int,
+    app_config=None,
 ) -> str:
     r"""
     Build complete ASS file content as a string.
@@ -613,6 +614,7 @@ def _generate_ass(
     This produces the classic "light up as you sing" effect without
     the text disappearing between syllables.
     """
+    _cfg = app_config if app_config is not None else load_app_config()
     width, height = resolution.split("x")
 
     # ── Script Info ────────────────────────────────────────────────────────
@@ -657,15 +659,15 @@ YCbCr Matrix: TV.601
     for i, line in enumerate(lines):
         start_ms = int(line["start"] * 1000)
         end_ms   = int(line["end"]   * 1000)
-        dstart   = max(0, start_ms - 200)
-        dend     = end_ms + 300
+        dstart   = max(0, start_ms - _cfg.generate_ass_preroll_ms)
+        dend     = end_ms + _cfg.generate_ass_postroll_ms
         display_windows.append((dstart, dend))
 
     # Clamp each display_end so it does not overlap the next display_start
     for i in range(len(display_windows) - 1):
         dstart_curr, dend_curr = display_windows[i]
         dstart_next, _         = display_windows[i + 1]
-        GAP_MS = 50  # keep at least 50ms of silence between back-to-back lines
+        GAP_MS = _cfg.generate_ass_gap_ms
         if dend_curr > dstart_next - GAP_MS:
             display_windows[i] = (dstart_curr, max(dstart_curr + 100, dstart_next - GAP_MS))
 
@@ -1116,6 +1118,7 @@ def main() -> int:
         resolution   = args.resolution,
         fade_in_ms   = args.fade_in,
         fade_out_ms  = args.fade_out,
+        app_config   = app_config,
     )
     ass_metrics = _ass_metrics(ass_content)
     _stage06_event(job_dir, "stage06.ass_generated", **ass_metrics)

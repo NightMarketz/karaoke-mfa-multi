@@ -84,6 +84,11 @@ try:
     from scripts.common.observability import write_event
 except ModuleNotFoundError:
     from common.observability import write_event
+try:
+    from scripts.common.config import load_app_config as _load_cfg
+except ModuleNotFoundError:
+    from common.config import load_app_config as _load_cfg
+_cfg = _load_cfg()
 
 # Fix Windows encoding issues for checkmark/cross symbols
 if sys.platform == "win32":
@@ -570,7 +575,7 @@ def _extract_note_onsets_crepe(
         decoder=torchcrepe.decode.viterbi,
         return_periodicity=True,
         device="cpu",
-        batch_size=512,
+        batch_size=_cfg.crepe_batch_size,
     )
 
     frequency   = frequency.squeeze().numpy()

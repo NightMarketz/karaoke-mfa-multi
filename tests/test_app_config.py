@@ -217,6 +217,24 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(cfg.generate_ass_timeout_s, 88)
         self.assertEqual(cfg.validate_timeout_s, 66)
 
+    def test_load_app_config_reads_alignment_display_fields(self):
+        with patch.dict(
+            os.environ,
+            {
+                "KARAOKE_CREPE_BATCH_SIZE": "256",
+                "KARAOKE_GENERATE_ASS_PREROLL_MS": "150",
+                "KARAOKE_GENERATE_ASS_POSTROLL_MS": "400",
+                "KARAOKE_GENERATE_ASS_GAP_MS": "30",
+            },
+            clear=False,
+        ):
+            cfg = load_app_config()
+
+        self.assertEqual(cfg.crepe_batch_size, 256)
+        self.assertEqual(cfg.generate_ass_preroll_ms, 150)
+        self.assertEqual(cfg.generate_ass_postroll_ms, 400)
+        self.assertEqual(cfg.generate_ass_gap_ms, 30)
+
     def test_load_app_config_prefers_environment_for_stage_tool_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "pipeline.toml"

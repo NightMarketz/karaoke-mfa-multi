@@ -31,6 +31,10 @@ DEFAULT_INPUT_FFMPEG_TIMEOUT_S = 120
 DEFAULT_GENERATE_ASS_TIMEOUT_S = 120
 DEFAULT_VALIDATE_TIMEOUT_S = 120
 DEFAULT_TRANSCRIBE_LC_WARNING_PCT = 20
+DEFAULT_CREPE_BATCH_SIZE = 512
+DEFAULT_GENERATE_ASS_PREROLL_MS = 200
+DEFAULT_GENERATE_ASS_POSTROLL_MS = 300
+DEFAULT_GENERATE_ASS_GAP_MS = 50
 DEFAULT_TRANSCRIBE_MODEL_SIZE = "large-v3"
 DEFAULT_TRANSCRIBE_LANGUAGE = "auto"
 DEFAULT_TRANSCRIBE_LOW_CONFIDENCE_THRESHOLD = 0.25
@@ -125,6 +129,10 @@ class AppConfig:
     generate_ass_timeout_s: int
     validate_timeout_s: int
     transcribe_lc_warning_pct: int
+    crepe_batch_size: int
+    generate_ass_preroll_ms: int
+    generate_ass_postroll_ms: int
+    generate_ass_gap_ms: int
 
 
 @dataclass(frozen=True)
@@ -449,5 +457,25 @@ def load_app_config(path: Path | str = DEFAULT_PIPELINE_CONFIG) -> AppConfig:
             "KARAOKE_TRANSCRIBE_LC_WARNING_PCT",
             transcribe.get("lc_warning_pct"),
             DEFAULT_TRANSCRIBE_LC_WARNING_PCT,
+        ),
+        crepe_batch_size=_int_env_or_value(
+            "KARAOKE_CREPE_BATCH_SIZE",
+            transcribe.get("crepe_batch_size"),
+            DEFAULT_CREPE_BATCH_SIZE,
+        ),
+        generate_ass_preroll_ms=_int_env_or_value(
+            "KARAOKE_GENERATE_ASS_PREROLL_MS",
+            output.get("generate_ass_preroll_ms"),
+            DEFAULT_GENERATE_ASS_PREROLL_MS,
+        ),
+        generate_ass_postroll_ms=_int_env_or_value(
+            "KARAOKE_GENERATE_ASS_POSTROLL_MS",
+            output.get("generate_ass_postroll_ms"),
+            DEFAULT_GENERATE_ASS_POSTROLL_MS,
+        ),
+        generate_ass_gap_ms=_int_env_or_value(
+            "KARAOKE_GENERATE_ASS_GAP_MS",
+            output.get("generate_ass_gap_ms"),
+            DEFAULT_GENERATE_ASS_GAP_MS,
         ),
     )
