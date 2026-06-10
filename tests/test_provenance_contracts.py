@@ -55,3 +55,89 @@ class ProvenanceContractsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ProvenanceError):
                 load_manifest(Path(tmp) / "missing.manifest.json")
+
+
+class ProvenanceEdgeCaseTests(unittest.TestCase):
+    def test_load_manifest_rejects_empty_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.manifest.json"
+            path.write_bytes(b"")
+            with self.assertRaises(ProvenanceError):
+                load_manifest(path)
+
+    def test_load_manifest_rejects_invalid_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad.manifest.json"
+            path.write_text("not-json{", encoding="utf-8")
+            with self.assertRaises(ProvenanceError):
+                load_manifest(path)
+
+    def test_load_manifest_rejects_non_object_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "list.manifest.json"
+            path.write_text("[1,2,3]", encoding="utf-8")
+            with self.assertRaises(ProvenanceError):
+                load_manifest(path)
+
+    def test_load_manifest_returns_dict_on_valid_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "valid.manifest.json"
+            path.write_text('{"stage": "s06"}', encoding="utf-8")
+            result = load_manifest(path)
+            self.assertEqual(result, {"stage": "s06"})
+
+    def test_validate_file_hash_passes_matching_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "artifact.bin"
+            path.write_bytes(b"hello karaoke")
+            digest = file_sha256(path)
+            validate_file_hash(path, digest)  # should not raise
+
+    def test_validate_file_hash_rejects_missing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nonexistent.bin"
+            with self.assertRaises(ProvenanceError):
+                validate_file_hash(path, "a" * 64)
+
+    def test_validate_file_hash_rejects_empty_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.bin"
+            path.write_bytes(b"")
+            with self.assertRaises(ProvenanceError):
+                validate_file_hash(path, "a" * 64)
+
+    def test_write_manifest_sets_created_at_automatically(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "out.manifest.json"
+            write_manifest(manifest_path, {"stage": "s06"})
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertIsInstance(data["created_at"], float)
+            self.assertGreater(data["created_at"], 0)
+
+    def test_write_manifest_does_not_overwrite_existing_created_at(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "out.manifest.json"
+            write_manifest(manifest_path, {"stage": "s06", "created_at": 12345.0})
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["created_at"], 12345.0)
+
+    def test_write_manifest_without_output_paths_writes_no_sha(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "out.manifest.json"
+            write_manifest(manifest_path, {"stage": "s06"})
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertNotIn("sha256", data)
+
+    def test_write_manifest_returns_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "out.manifest.json"
+            result = write_manifest(manifest_path, {"stage": "s06"})
+            self.assertEqual(result, manifest_path)
+
+    def test_file_sha256_different_content_different_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path_a = Path(tmp) / "a.bin"
+            path_b = Path(tmp) / "b.bin"
+            path_a.write_bytes(b"content-alpha")
+            path_b.write_bytes(b"content-beta")
+            self.assertNotEqual(file_sha256(path_a), file_sha256(path_b))
