@@ -114,7 +114,14 @@ def build_stage_plan(
             ),
             Stage(
                 "validating",
-                [py, str(scripts_dir / "s08_validate.py"), "--job-dir", str(job_dir)],
+                [
+                    py,
+                    str(scripts_dir / "s08_validate.py"),
+                    "--job-dir",
+                    str(job_dir),
+                    "--overlap-tolerance",
+                    str(cfg.validate_overlap_tolerance_s),
+                ],
                 95,
                 timeout=120,
             ),
@@ -164,6 +171,8 @@ class PipelineRunner:
                 command,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired:
