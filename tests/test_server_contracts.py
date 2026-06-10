@@ -422,5 +422,73 @@ class RetryValidateTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
 
 
+class RouteContractTests(unittest.TestCase):
+    @staticmethod
+    def _write_job(job_dir: Path, job_id: str, *, stage: str = "done", progress: int = 100) -> None:
+        job_dir.mkdir()
+        (job_dir / "meta.json").write_text(
+            json.dumps({"job_id": job_id, "song_name": "Test Song", "preset": "section-coded"}),
+            encoding="utf-8",
+        )
+        (job_dir / "status.json").write_text(
+            json.dumps({"stage": stage, "progress": progress, "error": "", "updated_at": 1}),
+            encoding="utf-8",
+        )
+
+    def test_metrics_returns_404_when_reference_mapping_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            self._write_job(job_dir, job_id)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/metrics")
+
+        self.assertEqual(response.status_code, 404)
+        payload = response.get_json()
+        self.assertEqual(payload["error"], "no reference data")
+
+    def test_output_mp4_returns_403_when_output_artifacts_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            self._write_job(job_dir, job_id)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/output.mp4")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn(b"Export blocked", response.data)
+
+    def test_output_ass_returns_403_when_output_artifacts_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            self._write_job(job_dir, job_id)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/output.ass")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn(b"Export blocked", response.data)
+
+    def test_stream_returns_sse_content_type_and_done_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            self._write_job(job_dir, job_id, stage="done", progress=100)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/stream")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/event-stream", response.content_type)
+        self.assertIn(b"done", response.data)
+
+
 if __name__ == "__main__":
     unittest.main()

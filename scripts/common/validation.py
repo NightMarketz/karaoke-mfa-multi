@@ -7,6 +7,7 @@ def find_timestamp_errors(
     words: list[dict],
     min_duration: float = 0.001,
     overlap_tolerance_s: float = 0.0,
+    segment_end: float | None = None,
 ) -> list[str]:
     """
     Check word timing for invalid durations and overlaps.
@@ -16,6 +17,9 @@ def find_timestamp_errors(
     (~20–50 ms) at phrase boundaries that are imperceptible to viewers.
     Set to 0 (default) for strict validation; set to e.g. 0.03 to allow
     up to 30 ms of overlap without failing the job.
+
+    segment_end: if provided, words whose end timestamp exceeds this value
+    (plus tolerance) are flagged.
     """
     errors: list[str] = []
     prev_end: float | None = None
@@ -27,6 +31,10 @@ def find_timestamp_errors(
             errors.append(f"Word '{label}' invalid duration: {start:.4f} -> {end:.4f}")
         if prev_end is not None and start < prev_end - overlap_tolerance_s:
             errors.append(f"Word '{label}' overlaps previous: {start:.4f} < {prev_end:.4f}")
+        if segment_end is not None and end > segment_end + overlap_tolerance_s:
+            errors.append(
+                f"Word '{label}' end {end:.4f} exceeds segment boundary {segment_end:.4f}"
+            )
         prev_end = max(prev_end if prev_end is not None else end, end)
     return errors
 

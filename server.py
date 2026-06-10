@@ -1361,16 +1361,10 @@ def job_stream(job_id: str):
         return "Job not found", 404
 
     def generate():
-        prev_stage = None
         while True:
             status = _read_status(job_dir)
             stage  = status.get("stage", "")
-            if stage != prev_stage:
-                prev_stage = stage
-                yield f"data: {json.dumps(status)}\n\n"
-            else:
-                yield f"data: {json.dumps(status)}\n\n"
-
+            yield f"data: {json.dumps(status)}\n\n"
             if stage in ("done", "failed"):
                 break
             time.sleep(0.8)
