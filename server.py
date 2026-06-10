@@ -1519,12 +1519,19 @@ def _run_retry_validate(job_id: str) -> None:
         running_registry=_running,
         job_id=job_id,
     )
-    cmd = [sys.executable, str(SCRIPTS / "s08_validate.py"), "--job-dir", str(job_dir)]
-    ok = runner.run_command(cmd, "validating", 95, timeout=120)
-    if ok:
-        runner._write_status("done", 100)
-        write_event(job_dir, "pipeline_finished", "done", message="validation passed on retry")
-    build_observability_summary(job_dir)
+    try:
+        cmd = [
+            sys.executable, str(SCRIPTS / "s08_validate.py"),
+            "--job-dir", str(job_dir),
+            "--overlap-tolerance", str(APP_CONFIG.validate_overlap_tolerance_s),
+        ]
+        ok = runner.run_command(cmd, "validating", 95, timeout=120)
+        if ok:
+            runner._write_status("done", 100)
+            write_event(job_dir, "pipeline_finished", "done", message="validation passed on retry")
+        build_observability_summary(job_dir)
+    finally:
+        _running.pop(job_id, None)
 
 
 @app.route("/job/<job_id>/retry-validate", methods=["POST"])
