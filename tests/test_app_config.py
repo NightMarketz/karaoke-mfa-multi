@@ -197,6 +197,26 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(config.ollama_temperature, 0.2)
         self.assertEqual(config.ollama_timeout_s, 700)
 
+    def test_load_app_config_reads_new_timeout_fields(self):
+        with patch.dict(
+            os.environ,
+            {
+                "KARAOKE_S01_FFPROBE_TIMEOUT_S": "99",
+                "KARAOKE_S01_FFMPEG_TIMEOUT_S": "999",
+                "KARAOKE_INPUT_FFMPEG_TIMEOUT_S": "77",
+                "KARAOKE_GENERATE_ASS_TIMEOUT_S": "88",
+                "KARAOKE_VALIDATE_TIMEOUT_S": "66",
+            },
+            clear=False,
+        ):
+            cfg = load_app_config()
+
+        self.assertEqual(cfg.s01_ffprobe_timeout_s, 99)
+        self.assertEqual(cfg.s01_ffmpeg_timeout_s, 999)
+        self.assertEqual(cfg.input_ffmpeg_timeout_s, 77)
+        self.assertEqual(cfg.generate_ass_timeout_s, 88)
+        self.assertEqual(cfg.validate_timeout_s, 66)
+
     def test_load_app_config_prefers_environment_for_stage_tool_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "pipeline.toml"

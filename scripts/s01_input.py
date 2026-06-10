@@ -19,8 +19,10 @@ from scripts.common.observability import write_event
 
 logger = logging.getLogger(__name__)
 
-FFPROBE_TIMEOUT_S = 30
-FFMPEG_TIMEOUT_S = 300
+from scripts.common.config import load_app_config as _load_app_config
+_s01_cfg = _load_app_config()
+FFPROBE_TIMEOUT_S = _s01_cfg.s01_ffprobe_timeout_s
+FFMPEG_TIMEOUT_S = _s01_cfg.s01_ffmpeg_timeout_s
 
 
 SUPPORTED_AUDIO = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".wma"}

@@ -25,6 +25,11 @@ DEFAULT_OUTPUT_VOCALS_VOLUME = 1.0
 DEFAULT_OUTPUT_INSTRUMENTAL_VOLUME = 1.0
 DEFAULT_OUTPUT_FRAMERATE = "30"
 DEFAULT_OUTPUT_FFMPEG_TIMEOUT_S = 600
+DEFAULT_S01_FFPROBE_TIMEOUT_S = 30
+DEFAULT_S01_FFMPEG_TIMEOUT_S = 300
+DEFAULT_INPUT_FFMPEG_TIMEOUT_S = 120
+DEFAULT_GENERATE_ASS_TIMEOUT_S = 120
+DEFAULT_VALIDATE_TIMEOUT_S = 120
 DEFAULT_TRANSCRIBE_MODEL_SIZE = "large-v3"
 DEFAULT_TRANSCRIBE_LANGUAGE = "auto"
 DEFAULT_TRANSCRIBE_LOW_CONFIDENCE_THRESHOLD = 0.25
@@ -113,6 +118,11 @@ class AppConfig:
     ollama_timeout_s: int
     max_concurrent_jobs: int
     validate_overlap_tolerance_s: float
+    s01_ffprobe_timeout_s: int
+    s01_ffmpeg_timeout_s: int
+    input_ffmpeg_timeout_s: int
+    generate_ass_timeout_s: int
+    validate_timeout_s: int
 
 
 @dataclass(frozen=True)
@@ -241,6 +251,7 @@ def load_app_config(path: Path | str = DEFAULT_PIPELINE_CONFIG) -> AppConfig:
     align = _section(data, "align")
     demix = _section(data, "demix")
     analyze = _section(data, "analyze")
+    input_cfg = _section(data, "input")
 
     max_upload_mb = _int_env_or_value(
         "KARAOKE_MAX_UPLOAD_MB",
@@ -406,5 +417,30 @@ def load_app_config(path: Path | str = DEFAULT_PIPELINE_CONFIG) -> AppConfig:
             "KARAOKE_VALIDATE_OVERLAP_TOLERANCE_S",
             align.get("overlap_tolerance_s"),
             DEFAULT_VALIDATE_OVERLAP_TOLERANCE_S,
+        ),
+        s01_ffprobe_timeout_s=_int_env_or_value(
+            "KARAOKE_S01_FFPROBE_TIMEOUT_S",
+            input_cfg.get("ffprobe_timeout_s"),
+            DEFAULT_S01_FFPROBE_TIMEOUT_S,
+        ),
+        s01_ffmpeg_timeout_s=_int_env_or_value(
+            "KARAOKE_S01_FFMPEG_TIMEOUT_S",
+            input_cfg.get("ffmpeg_timeout_s"),
+            DEFAULT_S01_FFMPEG_TIMEOUT_S,
+        ),
+        input_ffmpeg_timeout_s=_int_env_or_value(
+            "KARAOKE_INPUT_FFMPEG_TIMEOUT_S",
+            server.get("input_ffmpeg_timeout_s"),
+            DEFAULT_INPUT_FFMPEG_TIMEOUT_S,
+        ),
+        generate_ass_timeout_s=_int_env_or_value(
+            "KARAOKE_GENERATE_ASS_TIMEOUT_S",
+            output.get("generate_ass_timeout_s"),
+            DEFAULT_GENERATE_ASS_TIMEOUT_S,
+        ),
+        validate_timeout_s=_int_env_or_value(
+            "KARAOKE_VALIDATE_TIMEOUT_S",
+            output.get("validate_timeout_s"),
+            DEFAULT_VALIDATE_TIMEOUT_S,
         ),
     )

@@ -453,7 +453,7 @@ def _convert_to_wav(src: Path, dst: Path) -> bool:
             ["ffmpeg", "-y", "-i", str(src),
              "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
              str(dst)],
-            capture_output=True, timeout=120,
+            capture_output=True, timeout=APP_CONFIG.input_ffmpeg_timeout_s,
         )
         return result.returncode == 0
     except Exception as e:

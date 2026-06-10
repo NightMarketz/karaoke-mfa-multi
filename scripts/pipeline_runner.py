@@ -51,7 +51,9 @@ def build_stage_plan(
     _BUFFER_S = 60
     demix_timeout   = cfg.demucs_timeout_s + _BUFFER_S
     align_timeout   = cfg.align_hubertfa_timeout_s + _BUFFER_S
-    analyze_timeout = cfg.ollama_timeout_s + _BUFFER_S
+    analyze_timeout  = cfg.ollama_timeout_s + _BUFFER_S
+    generate_timeout = cfg.generate_ass_timeout_s + _BUFFER_S
+    validate_timeout = cfg.validate_timeout_s + _BUFFER_S
 
     if lyrics_path.exists():
         stages = [
@@ -104,7 +106,7 @@ def build_stage_plan(
                     preset,
                 ],
                 70,
-                timeout=120,
+                timeout=generate_timeout,
             ),
             Stage(
                 "rendering",
@@ -123,7 +125,7 @@ def build_stage_plan(
                     str(cfg.validate_overlap_tolerance_s),
                 ],
                 95,
-                timeout=120,
+                timeout=validate_timeout,
             ),
         ]
     )
