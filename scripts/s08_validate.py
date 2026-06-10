@@ -52,6 +52,7 @@ _RESET  = "\033[0m"
 _failures: list[str] = []
 _warnings: list[str] = []
 _current_job_dir: Path | None = None
+_overlap_tolerance_s: float = 0.05
 
 
 def _ok(msg: str) -> None:
@@ -301,7 +302,7 @@ def validate_aligned(job_dir: Path) -> dict[str, Any] | None:
         _ok(f"HubertFA alignment rate: {hfa}/{total} ({100*hfa//total}%)")
 
     # Timestamp monotonicity
-    timestamp_errors = find_timestamp_errors(words)
+    timestamp_errors = find_timestamp_errors(words, overlap_tolerance_s=_overlap_tolerance_s)
     if not timestamp_errors:
         _ok("All word timestamps: start < end and monotonic")
     else:
@@ -642,7 +643,7 @@ def validate_drift(job_dir: Path, ref_path: Path | None, transcript: dict | None
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    global _current_job_dir
+    global _current_job_dir, _overlap_tolerance_s
     _failures.clear()
     _warnings.clear()
     parser = argparse.ArgumentParser(
@@ -654,10 +655,13 @@ def main() -> int:
                         help="Path to reference_mapping.json for drift metrics.")
     parser.add_argument("--log-level", default="WARNING",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument("--overlap-tolerance", type=float, default=0.05,
+                        help="Seconds of backward overlap to allow before flagging as error.")
     args = parser.parse_args()
 
     job_dir = args.job_dir.resolve()
     _current_job_dir = job_dir
+    _overlap_tolerance_s = args.overlap_tolerance
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",

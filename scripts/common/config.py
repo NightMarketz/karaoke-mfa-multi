@@ -39,6 +39,8 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_ANALYZE_LANGUAGE = "en"
 DEFAULT_OLLAMA_TEMPERATURE = 0.3
 DEFAULT_OLLAMA_TIMEOUT_S = 600
+DEFAULT_MAX_CONCURRENT_JOBS = 1
+DEFAULT_VALIDATE_OVERLAP_TOLERANCE_S = 0.05
 DEFAULT_HARDWARE_PROFILE = "auto"
 DEFAULT_HARDWARE_Z13 = {
     "demix_device": "directml",
@@ -109,6 +111,8 @@ class AppConfig:
     analyze_language: str
     ollama_temperature: float
     ollama_timeout_s: int
+    max_concurrent_jobs: int
+    validate_overlap_tolerance_s: float
 
 
 @dataclass(frozen=True)
@@ -392,5 +396,15 @@ def load_app_config(path: Path | str = DEFAULT_PIPELINE_CONFIG) -> AppConfig:
             "KARAOKE_OLLAMA_TIMEOUT_S",
             analyze.get("timeout_s"),
             DEFAULT_OLLAMA_TIMEOUT_S,
+        ),
+        max_concurrent_jobs=_int_env_or_value(
+            "KARAOKE_MAX_CONCURRENT_JOBS",
+            server.get("max_concurrent_jobs"),
+            DEFAULT_MAX_CONCURRENT_JOBS,
+        ),
+        validate_overlap_tolerance_s=_float_env_or_value(
+            "KARAOKE_VALIDATE_OVERLAP_TOLERANCE_S",
+            align.get("overlap_tolerance_s"),
+            DEFAULT_VALIDATE_OVERLAP_TOLERANCE_S,
         ),
     )

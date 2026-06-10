@@ -3,7 +3,20 @@ from __future__ import annotations
 from collections import Counter
 
 
-def find_timestamp_errors(words: list[dict], min_duration: float = 0.001) -> list[str]:
+def find_timestamp_errors(
+    words: list[dict],
+    min_duration: float = 0.001,
+    overlap_tolerance_s: float = 0.0,
+) -> list[str]:
+    """
+    Check word timing for invalid durations and overlaps.
+
+    overlap_tolerance_s: how many seconds of backward overlap to allow before
+    flagging as an error. CTC forced-alignment can produce small overlaps
+    (~20–50 ms) at phrase boundaries that are imperceptible to viewers.
+    Set to 0 (default) for strict validation; set to e.g. 0.03 to allow
+    up to 30 ms of overlap without failing the job.
+    """
     errors: list[str] = []
     prev_end: float | None = None
     for index, word in enumerate(words):
@@ -12,7 +25,7 @@ def find_timestamp_errors(words: list[dict], min_duration: float = 0.001) -> lis
         end = float(word.get("end", 0.0))
         if end - start < min_duration:
             errors.append(f"Word '{label}' invalid duration: {start:.4f} -> {end:.4f}")
-        if prev_end is not None and start < prev_end:
+        if prev_end is not None and start < prev_end - overlap_tolerance_s:
             errors.append(f"Word '{label}' overlaps previous: {start:.4f} < {prev_end:.4f}")
         prev_end = max(prev_end if prev_end is not None else end, end)
     return errors

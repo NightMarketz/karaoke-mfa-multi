@@ -104,6 +104,9 @@ hubertfa_dir = "vendor/HubertFA"
 checkpoint   = "models/hubertfa/model.onnx"
 language     = "en"
 hubertfa_timeout_s = 180
+# CTC forced-alignment can produce small overlaps (~20–50 ms) at phrase
+# boundaries. Tolerating up to 50 ms avoids hard-failing valid jobs.
+overlap_tolerance_s = 0.05
 
 [analyze]
 ollama_url   = "http://localhost:11434"
