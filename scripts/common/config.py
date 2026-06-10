@@ -30,6 +30,7 @@ DEFAULT_S01_FFMPEG_TIMEOUT_S = 300
 DEFAULT_INPUT_FFMPEG_TIMEOUT_S = 120
 DEFAULT_GENERATE_ASS_TIMEOUT_S = 120
 DEFAULT_VALIDATE_TIMEOUT_S = 120
+DEFAULT_TRANSCRIBE_LC_WARNING_PCT = 20
 DEFAULT_TRANSCRIBE_MODEL_SIZE = "large-v3"
 DEFAULT_TRANSCRIBE_LANGUAGE = "auto"
 DEFAULT_TRANSCRIBE_LOW_CONFIDENCE_THRESHOLD = 0.25
@@ -123,6 +124,7 @@ class AppConfig:
     input_ffmpeg_timeout_s: int
     generate_ass_timeout_s: int
     validate_timeout_s: int
+    transcribe_lc_warning_pct: int
 
 
 @dataclass(frozen=True)
@@ -442,5 +444,10 @@ def load_app_config(path: Path | str = DEFAULT_PIPELINE_CONFIG) -> AppConfig:
             "KARAOKE_VALIDATE_TIMEOUT_S",
             output.get("validate_timeout_s"),
             DEFAULT_VALIDATE_TIMEOUT_S,
+        ),
+        transcribe_lc_warning_pct=_int_env_or_value(
+            "KARAOKE_TRANSCRIBE_LC_WARNING_PCT",
+            transcribe.get("lc_warning_pct"),
+            DEFAULT_TRANSCRIBE_LC_WARNING_PCT,
         ),
     )

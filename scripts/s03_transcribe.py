@@ -465,7 +465,7 @@ def main() -> int:
                 "  low_conf: '%s' (prob=%.4f) at %.2fs–%.2fs",
                 w["word"], w["probability"], w["start"], w["end"],
             )
-        if lc_pct > 20:
+        if lc_pct > app_config.transcribe_lc_warning_pct:
             logger.warning(
                 "%.0f%% of words are low-confidence. "
                 "Consider using --lyrics to correct via s05.",
