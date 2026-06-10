@@ -1021,5 +1021,26 @@ class TimingLayersTests(unittest.TestCase):
         self.assertEqual(event["recommended_fallback"], "preserve_silence_gap")
 
 
+class TimingLayersEdgeCaseTests(unittest.TestCase):
+    def test_build_timing_diagnostics_empty_lines(self):
+        result = build_timing_diagnostics([])
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["events"], [])
+        self.assertEqual(result["summary"], {})
+
+    def test_build_timing_diagnostics_single_word_line(self):
+        lines = [
+            {
+                "text": "Hello",
+                "style": "verse",
+                "words": [{"word": "Hello", "start": 1.0, "end": 1.4}],
+            }
+        ]
+        result = build_timing_diagnostics(lines)
+        self.assertIsInstance(result, dict)
+        self.assertIn("events", result)
+        self.assertIn("summary", result)
+
+
 if __name__ == "__main__":
     unittest.main()

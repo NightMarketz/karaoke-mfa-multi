@@ -196,5 +196,148 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
             self.assertIn(effect, SUPPORTED_EFFECTS)
 
 
+class StyleLibraryEdgeCaseTests(unittest.TestCase):
+    # ------------------------------------------------------------------
+    # is_supported_style
+    # ------------------------------------------------------------------
+    def test_is_supported_style_returns_false_for_none(self):
+        from scripts.karaoke_styles.library import is_supported_style
+        self.assertFalse(is_supported_style(None))
+
+    def test_is_supported_style_returns_false_for_empty_string(self):
+        from scripts.karaoke_styles.library import is_supported_style
+        self.assertFalse(is_supported_style(""))
+
+    def test_is_supported_style_returns_false_for_integer(self):
+        from scripts.karaoke_styles.library import is_supported_style
+        self.assertFalse(is_supported_style(42))
+
+    def test_is_supported_style_returns_true_for_verse(self):
+        from scripts.karaoke_styles.library import is_supported_style
+        self.assertTrue(is_supported_style("verse"))
+
+    def test_is_supported_style_returns_true_for_all_known_keys(self):
+        from scripts.karaoke_styles.library import is_supported_style, supported_style_keys
+        for key in supported_style_keys():
+            self.assertTrue(is_supported_style(key), key)
+
+    def test_is_supported_style_returns_false_for_unknown_key(self):
+        from scripts.karaoke_styles.library import is_supported_style
+        self.assertFalse(is_supported_style("unknown_section"))
+
+    def test_is_supported_style_is_case_sensitive(self):
+        from scripts.karaoke_styles.library import is_supported_style
+        self.assertFalse(is_supported_style("Verse"))
+        self.assertFalse(is_supported_style("CHORUS"))
+
+    # ------------------------------------------------------------------
+    # is_supported_effect
+    # ------------------------------------------------------------------
+    def test_is_supported_effect_returns_false_for_unsupported(self):
+        from scripts.karaoke_styles.library import is_supported_effect
+        self.assertFalse(is_supported_effect("glow"))
+        self.assertFalse(is_supported_effect("pulse"))
+
+    def test_is_supported_effect_returns_false_for_none(self):
+        from scripts.karaoke_styles.library import is_supported_effect
+        self.assertFalse(is_supported_effect(None))
+
+    def test_is_supported_effect_returns_false_for_empty_string(self):
+        from scripts.karaoke_styles.library import is_supported_effect
+        self.assertFalse(is_supported_effect(""))
+
+    def test_is_supported_effect_returns_true_for_all_defined_effects(self):
+        from scripts.karaoke_styles.library import is_supported_effect, SUPPORTED_EFFECTS
+        for effect in SUPPORTED_EFFECTS:
+            self.assertTrue(is_supported_effect(effect), effect)
+
+    def test_is_supported_effect_is_case_sensitive(self):
+        from scripts.karaoke_styles.library import is_supported_effect
+        self.assertFalse(is_supported_effect("Highlight"))
+        self.assertFalse(is_supported_effect("NONE"))
+
+    # ------------------------------------------------------------------
+    # _c() color helper
+    # ------------------------------------------------------------------
+    def test_color_helper_produces_correct_ass_format(self):
+        from scripts.karaoke_styles.library import _c
+        # Pure white fully opaque: R=255, G=255, B=255, A=0 -> &H00FFFFFF
+        self.assertEqual("&H00FFFFFF", _c(255, 255, 255))
+
+    def test_color_helper_pure_black(self):
+        from scripts.karaoke_styles.library import _c
+        self.assertEqual("&H00000000", _c(0, 0, 0))
+
+    def test_color_helper_encodes_bgr_not_rgb(self):
+        from scripts.karaoke_styles.library import _c
+        # R=255, G=0, B=0 → BGR bytes: 00 00 FF -> &H0000FF00
+        result = _c(255, 0, 0)
+        self.assertEqual("&H000000FF", result)
+
+    def test_color_helper_alpha_channel(self):
+        from scripts.karaoke_styles.library import _c
+        # alpha=128 → 0x80 in AA position
+        result = _c(0, 0, 0, 128)
+        self.assertTrue(result.startswith("&H80"), result)
+
+    def test_color_helper_zero_alpha_is_fully_opaque(self):
+        from scripts.karaoke_styles.library import _c
+        result = _c(220, 220, 220, 0)
+        self.assertTrue(result.startswith("&H00"), result)
+
+    def test_color_helper_returns_string(self):
+        from scripts.karaoke_styles.library import _c
+        self.assertIsInstance(_c(100, 150, 200), str)
+
+    # ------------------------------------------------------------------
+    # resolve_section edge cases
+    # ------------------------------------------------------------------
+    def test_resolve_section_handles_none_like_empty(self):
+        # resolve_section uses str(label or '') so None falls through
+        from scripts.karaoke_styles.library import resolve_section, DEFAULT_STYLE_KEY
+        _, style = resolve_section(None)
+        self.assertEqual(DEFAULT_STYLE_KEY, style)
+
+    def test_resolve_section_strips_trailing_numbers(self):
+        from scripts.karaoke_styles.library import resolve_section
+        self.assertEqual(("chorus", "chorus"), resolve_section("chorus 3"))
+        self.assertEqual(("verse", "verse"), resolve_section("verse 2"))
+
+    def test_resolve_section_handles_purely_numeric_label(self):
+        from scripts.karaoke_styles.library import resolve_section, DEFAULT_STYLE_KEY
+        _, style = resolve_section("12345")
+        self.assertEqual(DEFAULT_STYLE_KEY, style)
+
+    # ------------------------------------------------------------------
+    # validate_preset edge cases
+    # ------------------------------------------------------------------
+    def test_validate_preset_rejects_missing_default_style_key(self):
+        from scripts.karaoke_styles.library import validate_preset, StylePreset, get_preset, DEFAULT_STYLE_KEY
+        base = get_preset("default")
+        styles_without_verse = {k: v for k, v in base.styles.items() if k != DEFAULT_STYLE_KEY}
+        preset = StylePreset(
+            id="no-verse",
+            label="No Verse",
+            version=1,
+            description="Missing default style.",
+            styles=styles_without_verse,
+        )
+        errors = validate_preset(preset)
+        self.assertTrue(any(DEFAULT_STYLE_KEY in e for e in errors), errors)
+
+    def test_validate_preset_rejects_version_zero(self):
+        from scripts.karaoke_styles.library import validate_preset, StylePreset, get_preset
+        base = get_preset("default")
+        preset = StylePreset(
+            id="bad-version",
+            label="Bad Version",
+            version=0,
+            description="Zero version test.",
+            styles=base.styles,
+        )
+        errors = validate_preset(preset)
+        self.assertTrue(any("version" in e for e in errors), errors)
+
+
 if __name__ == "__main__":
     unittest.main()
