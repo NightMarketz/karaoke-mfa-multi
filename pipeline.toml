@@ -46,7 +46,7 @@ transcribe_vad       = false
 # Stage 04 · HubertFA
 # PyTorch — DirectML supported.
 align_device     = "directml"
-align_batch_size = 16
+align_batch_size = 8
 
 # Stage 05 · Gemma 4 via Ollama
 # Ollama manages its own GPU allocation — do not override device here.
@@ -103,7 +103,7 @@ low_confidence_threshold = 0.25
 hubertfa_dir = "vendor/HubertFA"
 checkpoint   = "models/hubertfa/model.onnx"
 language     = "en"
-hubertfa_timeout_s = 180
+hubertfa_timeout_s = 600
 # CTC forced-alignment can produce small overlaps (~20–50 ms) at phrase
 # boundaries. Tolerating up to 50 ms avoids hard-failing valid jobs.
 overlap_tolerance_s = 0.05
