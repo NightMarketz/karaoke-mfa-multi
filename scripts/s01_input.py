@@ -14,7 +14,15 @@ import sys
 import logging
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.common.observability import write_event
+
 logger = logging.getLogger(__name__)
+
+from scripts.common.config import load_app_config as _load_app_config
+_s01_cfg = _load_app_config()
+FFPROBE_TIMEOUT_S = _s01_cfg.s01_ffprobe_timeout_s
+FFMPEG_TIMEOUT_S = _s01_cfg.s01_ffmpeg_timeout_s
 
 
 SUPPORTED_AUDIO = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".wma"}
@@ -30,7 +38,12 @@ def probe_media(filepath: str) -> dict:
         "-show_format", "-show_streams",
         filepath
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=FFPROBE_TIMEOUT_S,
+    )
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {result.stderr}")
     return json.loads(result.stdout)
@@ -47,7 +60,12 @@ def extract_audio(input_path: str, output_path: str) -> None:
         "-ac", "2",               # stereo
         output_path
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=FFMPEG_TIMEOUT_S,
+    )
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg extraction failed: {result.stderr}")
 
@@ -57,15 +75,30 @@ def run(input_file: str, job_dir: str) -> dict:
     input_path = Path(input_file)
     job_path = Path(job_dir)
     job_path.mkdir(parents=True, exist_ok=True)
+    write_event(
+        job_path,
+        "stage01.started",
+        "preparing",
+        details={"input": str(input_path), "suffix": input_path.suffix.lower()},
+    )
 
     # Validate extension
     ext = input_path.suffix.lower()
     if ext not in SUPPORTED:
+        write_event(
+            job_path,
+            "stage01.failed",
+            "preparing",
+            level="error",
+            message=f"Unsupported format '{ext}'",
+            details={"reason": "unsupported_format", "suffix": ext},
+        )
         raise ValueError(
             f"Unsupported format '{ext}'. Supported: {sorted(SUPPORTED)}"
         )
 
     # Probe media info
+    write_event(job_path, "stage01.probe_started", "preparing", details={"input": str(input_path)})
     probe = probe_media(str(input_path))
     duration = float(probe["format"].get("duration", 0))
     
@@ -79,10 +112,29 @@ def run(input_file: str, job_dir: str) -> dict:
             has_video = True
 
     if audio_stream is None:
+        write_event(
+            job_path,
+            "stage01.failed",
+            "preparing",
+            level="error",
+            message="No audio stream found in input file.",
+            details={"reason": "audio_stream_missing"},
+        )
         raise ValueError("No audio stream found in input file.")
 
     sample_rate = int(audio_stream.get("sample_rate", 44100))
     channels = int(audio_stream.get("channels", 2))
+    write_event(
+        job_path,
+        "stage01.probe_finished",
+        "preparing",
+        details={
+            "duration_seconds": duration,
+            "sample_rate": sample_rate,
+            "channels": channels,
+            "has_video": has_video,
+        },
+    )
 
     # Copy original to job dir
     original_dest = job_path / f"original{ext}"
@@ -90,6 +142,12 @@ def run(input_file: str, job_dir: str) -> dict:
 
     # Extract/convert to WAV
     wav_path = job_path / "input.wav"
+    write_event(
+        job_path,
+        "stage01.audio_extract_started",
+        "preparing",
+        details={"input": str(input_path), "output": str(wav_path), "timeout": FFMPEG_TIMEOUT_S},
+    )
     if ext == ".wav":
         # Even for WAV, normalize to 44.1kHz 16-bit stereo
         extract_audio(str(input_path), str(wav_path))
@@ -108,6 +166,19 @@ def run(input_file: str, job_dir: str) -> dict:
     meta_path = job_path / "metadata.json"
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, ensure_ascii=False)
+    write_event(
+        job_path,
+        "stage01.metadata_written",
+        "preparing",
+        artifact=str(meta_path),
+        details={**metadata, "size_bytes": meta_path.stat().st_size},
+    )
+    write_event(
+        job_path,
+        "stage01.completed",
+        "preparing",
+        details={"duration_seconds": duration, "has_video": has_video},
+    )
 
     return metadata
 

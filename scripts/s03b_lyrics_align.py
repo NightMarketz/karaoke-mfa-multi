@@ -68,6 +68,7 @@ Writes:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import logging
 import re
@@ -76,15 +77,24 @@ import time
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # project root
+sys.path.insert(0, str(Path(__file__).parent))                    # scripts/ dir
 from hw_detect import detect
+try:
+    from scripts.common.observability import write_event
+except ModuleNotFoundError:
+    from common.observability import write_event
+try:
+    from scripts.common.config import load_app_config as _load_cfg
+except ModuleNotFoundError:
+    from common.config import load_app_config as _load_cfg
+_cfg = _load_cfg()
 
 # Fix Windows encoding issues for checkmark/cross symbols
 if sys.platform == "win32":
-    import io
     try:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
     except (AttributeError, io.UnsupportedOperation):
         pass
 
@@ -355,6 +365,34 @@ def _parse_lyrics(lyrics_path: Path) -> list[dict[str, str]]:
     return lines
 
 
+def _lyrics_observability_details(
+    lyrics_path: Path,
+    lyric_lines: list[dict[str, str]],
+) -> dict[str, Any]:
+    section_only_re = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+    stage_direction_count = 0
+    for raw_line in lyrics_path.read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.strip()
+        match = section_only_re.match(stripped)
+        if match and _is_stage_direction(match.group(1).strip().lower()):
+            stage_direction_count += 1
+
+    unknown_markers = sorted(set(
+        marker
+        for line in lyric_lines
+        for marker in line.get("unknown_markers", [])
+    ))
+    sections = sorted({line.get("section", "verse") for line in lyric_lines})
+    return {
+        "line_count": len(lyric_lines),
+        "section_count": len(sections),
+        "sections": sections,
+        "unknown_marker_count": len(unknown_markers),
+        "unknown_markers": unknown_markers,
+        "stage_direction_stripped_count": stage_direction_count,
+    }
+
+
 def _expand_contractions(text: str) -> str:
     """
     Normalize common singing contractions to improve model alignment confidence.
@@ -397,7 +435,7 @@ def _expand_contractions(text: str) -> str:
     return expanded
 
 
-def _build_full_text(lyric_lines: list[dict], expand: bool = True) -> str:
+def _build_full_text(lyric_lines: list[dict], expand: bool = False) -> str:
     """Flatten all lyric lines into a single space-separated string."""
     if expand:
         return " ".join(_expand_contractions(line["text"]) for line in lyric_lines)
@@ -537,7 +575,7 @@ def _extract_note_onsets_crepe(
         decoder=torchcrepe.decode.viterbi,
         return_periodicity=True,
         device="cpu",
-        batch_size=512,
+        batch_size=_cfg.crepe_batch_size,
     )
 
     frequency   = frequency.squeeze().numpy()
@@ -925,6 +963,47 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
     status_path.write_text(json.dumps(existing, indent=2))
 
 
+def _write_event(
+    job_dir: Path,
+    event: str,
+    level: str = "info",
+    message: str = "",
+    details: dict[str, Any] | None = None,
+    artifact: str | None = None,
+) -> None:
+    try:
+        write_event(
+            job_dir,
+            event,
+            "stage03b",
+            level=level,
+            message=message,
+            details=details,
+            artifact=artifact,
+        )
+    except Exception:
+        logger.debug("Failed to write observability event %s", event, exc_info=True)
+
+
+def _write_missing_job_event(job_dir: Path, message: str) -> None:
+    parent = job_dir.parent if job_dir.parent != job_dir else Path.cwd()
+    write_event(
+        parent / "_stage03b",
+        "stage03b.failed",
+        "stage03b",
+        level="error",
+        message=message,
+        details={"reason": "job_dir_missing", "missing_job_dir": str(job_dir)},
+    )
+
+
+def _fail(job_dir: Path, event: str, message: str, details: dict[str, Any] | None = None) -> int:
+    _write_event(job_dir, event, level="error", message=message, details=details)
+    if event != "stage03b.failed":
+        _write_event(job_dir, "stage03b.failed", level="error", message=message, details=details)
+    return 1
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -967,13 +1046,14 @@ def main() -> int:
     job_dir: Path = args.job_dir.resolve()
     lyrics_path: Path = args.lyrics.resolve()
 
+    log_handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if job_dir.exists():
+        log_handlers.append(logging.FileHandler(job_dir / "pipeline.log", mode="a"))
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(job_dir / "pipeline.log", mode="a"),
-        ],
+        force=True,
+        handlers=log_handlers,
     )
 
     # Auto-convert ISO-639-1 → ISO-639-3 if needed
@@ -982,24 +1062,48 @@ def main() -> int:
         language = LANGUAGE_MAP[language]
         logger.info("Language code converted: %s → %s", args.language, language)
 
+    if not job_dir.exists():
+        logger.error("Job directory does not exist: %s", job_dir)
+        _write_missing_job_event(job_dir, f"Job directory does not exist: {job_dir}")
+        return 1
+
     logger.info(
         "Stage 03b · Forced Align  language=%s  batch=%d",
         language, args.batch_size,
     )
+    _write_event(
+        job_dir,
+        "stage03b.started",
+        message="Stage 03b forced lyric alignment started",
+        details={
+            "language": language,
+            "batch_size": args.batch_size,
+            "snap_window": args.snap_window,
+            "pitch_enabled": not args.no_pitch,
+        },
+    )
 
     # ── Validate inputs ────────────────────────────────────────────────────
-    if not job_dir.exists():
-        logger.error("Job directory does not exist: %s", job_dir)
-        return 1
-
     vocals_path = job_dir / "vocals.wav"
     if not vocals_path.exists() or vocals_path.stat().st_size == 0:
-        logger.error("vocals.wav missing or empty. Run Stage 02 first.")
-        return 1
+        message = "vocals.wav missing or empty. Run Stage 02 first."
+        logger.error(message)
+        return _fail(
+            job_dir,
+            "stage03b.input_missing",
+            message,
+            {"artifact": "vocals.wav", "path": str(vocals_path)},
+        )
 
     if not lyrics_path.exists():
-        logger.error("lyrics.txt not found at %s", lyrics_path)
-        return 1
+        message = f"lyrics.txt not found at {lyrics_path}"
+        logger.error(message)
+        return _fail(
+            job_dir,
+            "stage03b.input_missing",
+            message,
+            {"artifact": "lyrics.txt", "path": str(lyrics_path)},
+        )
 
     logger.info("Audio:  %s (%.1f MB)", vocals_path.name, vocals_path.stat().st_size / 1e6)
     logger.info("Lyrics: %s", lyrics_path)
@@ -1007,10 +1111,11 @@ def main() -> int:
     # ── Parse lyrics ───────────────────────────────────────────────────────
     lyric_lines = _parse_lyrics(lyrics_path)
     if not lyric_lines:
-        logger.error("No singable lines found in lyrics.txt")
-        return 1
+        message = "No singable lines found in lyrics.txt"
+        logger.error(message)
+        return _fail(job_dir, "stage03b.input_missing", message, {"artifact": "lyrics.txt"})
 
-    full_text = _build_full_text(lyric_lines)
+    full_text = _build_full_text(lyric_lines, expand=True)
     total_lyric_words = sum(
         len(re.findall(r"[a-zA-Z''\u00C0-\u024F]+", line["text"]))
         for line in lyric_lines
@@ -1021,6 +1126,26 @@ def main() -> int:
         len(lyric_lines),
         total_lyric_words,
         len({l["section"] for l in lyric_lines}),
+    )
+    lyrics_details = _lyrics_observability_details(lyrics_path, lyric_lines)
+    _write_event(
+        job_dir,
+        "stage03b.lyrics_reference_loaded",
+        message="Lyrics reference loaded",
+        details={**lyrics_details, "word_count": total_lyric_words},
+        artifact=lyrics_path.name,
+    )
+    _write_event(
+        job_dir,
+        "stage03b.forced_alignment_text_built",
+        message="Forced alignment text built",
+        details={"word_count": total_lyric_words, "character_count": len(full_text)},
+    )
+    _write_event(
+        job_dir,
+        "stage03b.alignment_path_selected",
+        message="CTC forced alignment path selected",
+        details={"aligner": "ctc-forced-aligner/mms-300m-1130", "language": language},
     )
 
     _update_status(job_dir, "aligning_lyrics", 0)
@@ -1038,11 +1163,12 @@ def main() -> int:
             postprocess_results,
         )
     except ImportError:
-        logger.error(
+        message = (
             "ctc-forced-aligner is not installed.\n"
             "Run: pip install git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"
         )
-        return 1
+        logger.error(message)
+        return _fail(job_dir, "stage03b.failed", message)
 
     # ── Load model ─────────────────────────────────────────────────────────
     logger.info("Loading MMS alignment model...")
@@ -1056,7 +1182,7 @@ def main() -> int:
     except Exception as e:
         logger.error("Failed to load alignment model: %s", e)
         _update_status(job_dir, "failed", 0, str(e))
-        return 1
+        return _fail(job_dir, "stage03b.failed", f"Failed to load alignment model: {e}")
 
     logger.info("Model loaded.")
     _update_status(job_dir, "aligning_lyrics", 20)
@@ -1071,7 +1197,7 @@ def main() -> int:
     except Exception as e:
         logger.error("Failed to load audio: %s", e)
         _update_status(job_dir, "failed", 0, str(e))
-        return 1
+        return _fail(job_dir, "stage03b.failed", f"Failed to load audio: {e}")
 
     # ── Generate emissions ────────────────────────────────────────────────
     logger.info("Generating acoustic emissions...")
@@ -1086,11 +1212,17 @@ def main() -> int:
     except Exception as e:
         logger.error("Emission generation failed: %s", e)
         _update_status(job_dir, "failed", 0, str(e))
-        return 1
+        return _fail(job_dir, "stage03b.failed", f"Emission generation failed: {e}")
 
     # ── Preprocess text and align ─────────────────────────────────────────
     logger.info("Aligning %d words against audio...", total_lyric_words)
     _update_status(job_dir, "aligning_lyrics", 55)
+    _write_event(
+        job_dir,
+        "stage03b.ctc_alignment_started",
+        message="CTC forced alignment started",
+        details={"word_count": total_lyric_words, "language": language},
+    )
 
     try:
         tokens_starred, text_starred = preprocess_text(
@@ -1108,9 +1240,15 @@ def main() -> int:
     except Exception as e:
         logger.error("Alignment failed: %s", e)
         _update_status(job_dir, "failed", 0, str(e))
-        return 1
+        return _fail(job_dir, "stage03b.failed", f"Alignment failed: {e}")
 
     logger.info("Raw alignment returned %d word entries", len(word_results))
+    _write_event(
+        job_dir,
+        "stage03b.ctc_alignment_finished",
+        message="CTC forced alignment finished",
+        details={"word_count": len(word_results), "language": language},
+    )
     _update_status(job_dir, "aligning_lyrics", 75)
 
     # ── Re-group into lyric-line segments ─────────────────────────────────
@@ -1119,7 +1257,7 @@ def main() -> int:
     if not segments:
         logger.error("No segments produced after grouping.")
         _update_status(job_dir, "failed", 0, "No segments after grouping")
-        return 1
+        return _fail(job_dir, "stage03b.failed", "No segments after grouping")
 
     # ── Pitch-guided boundary correction ───────────────────────────────────
     # Step 1 — Snap CTC word STARTS to note onsets (existing).
@@ -1166,6 +1304,18 @@ def main() -> int:
             logger.info("Step 3 — vocal gating: %d boundaries trimmed to voice activity", n_gated)
     else:
         logger.info("Pitch correction disabled")
+    _write_event(
+        job_dir,
+        "stage03b.correction_path_selected",
+        message="Pitch/onset correction path selected",
+        details={
+            "pitch_engine": pitch_engine,
+            "pitch_enabled": not args.no_pitch and args.snap_window > 0,
+            "snap_window": args.snap_window,
+            "onset_snaps": n_snapped,
+            "phrase_extensions": n_extended,
+        },
+    )
 
     # ── Validate timestamps ────────────────────────────────────────────────
     inverted = 0
@@ -1226,9 +1376,36 @@ def main() -> int:
         "Written: %s (%.1f KB, alignment_mode=forced)",
         output_path.name, output_path.stat().st_size / 1e3,
     )
+    _write_event(
+        job_dir,
+        "stage03b.transcript_written",
+        message="Forced alignment transcript written",
+        artifact=output_path.name,
+        details={
+            "segment_count": len(segments),
+            "word_count": total_words_aligned,
+            "section_count": len(section_distribution),
+            "unknown_marker_count": len(all_unknown),
+            "unknown_markers": all_unknown,
+            "pitch_engine": pitch_engine,
+            "alignment_mode": "forced",
+            "size_bytes": output_path.stat().st_size,
+        },
+    )
 
     _update_status(job_dir, "aligning_lyrics", 100)
     logger.info("Stage 03b complete.")
+    _write_event(
+        job_dir,
+        "stage03b.completed",
+        message="Stage 03b forced lyric alignment completed",
+        details={
+            "segment_count": len(segments),
+            "word_count": total_words_aligned,
+            "section_count": len(section_distribution),
+            "unknown_marker_count": len(all_unknown),
+        },
+    )
     return 0
 
 

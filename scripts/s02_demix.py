@@ -28,8 +28,11 @@ import time
 from pathlib import Path
 
 # hw_detect lives in the same scripts/ directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.config import load_app_config
+from scripts.common.observability import write_event
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +42,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Demucs runs in its own conda env — this Python is NOT the current one.
-DEMUCS_PYTHON_DEFAULT = (
-    "C:/Users/Katz/miniforge3/envs/demucs_env/python.exe"
-)
-
 # Accepted input extensions that Demucs can handle directly.
 # Stage 01 should have already normalised video → WAV, but we handle both.
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
@@ -82,6 +81,23 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
     status_path.write_text(json.dumps(existing, indent=2))
 
 
+def _stage02_event(
+    job_dir: Path,
+    event: str,
+    level: str = "info",
+    message: str = "",
+    **details,
+) -> None:
+    write_event(
+        job_dir,
+        event,
+        "demixing",
+        level=level,
+        message=message,
+        details=details,
+    )
+
+
 def _run_demucs(
     demucs_python: str,
     model: str,
@@ -90,6 +106,7 @@ def _run_demucs(
     jobs: int,
     input_path: Path,
     output_dir: Path,
+    timeout: int,
 ) -> None:
     """
     Invoke Demucs as a subprocess in the demucs_env.
@@ -110,7 +127,11 @@ def _run_demucs(
 
     logger.info("Running Demucs: %s", " ".join(cmd))
 
-    result = subprocess.run(cmd, capture_output=False)
+    try:
+        result = subprocess.run(cmd, capture_output=False, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Demucs timed out after {timeout}s") from exc
+
     if result.returncode != 0:
         raise RuntimeError(
             f"Demucs exited with code {result.returncode}. "
@@ -158,6 +179,7 @@ def _collect_stems(model: str, input_path: Path, output_dir: Path, job_dir: Path
 def main() -> int:
     # ── Hardware detection (sets argparse defaults) ────────────────────────
     hw: HardwareProfile = detect()
+    app_config = load_app_config()
 
     # ── CLI ────────────────────────────────────────────────────────────────
     parser = argparse.ArgumentParser(
@@ -169,7 +191,7 @@ def main() -> int:
         help="Path to the job directory (e.g. jobs/my-job).",
     )
     parser.add_argument(
-        "--model", default="htdemucs",
+        "--model", default=app_config.demucs_model,
         help="Demucs model name.",
     )
     parser.add_argument(
@@ -185,11 +207,15 @@ def main() -> int:
         help="Parallel Demucs workers. hw_detect default: %(default)s.",
     )
     parser.add_argument(
-        "--demucs-python", default=DEMUCS_PYTHON_DEFAULT,
+        "--demucs-python", default=app_config.demucs_python,
         help="Python executable inside demucs_env.",
     )
     parser.add_argument(
-        "--log-level", default="INFO",
+        "--demucs-timeout", type=int, default=app_config.demucs_timeout_s,
+        help="Maximum seconds to wait for Demucs before failing the stage.",
+    )
+    parser.add_argument(
+        "--log-level", default=app_config.log_level,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     args = parser.parse_args()
@@ -213,6 +239,15 @@ def main() -> int:
         "Stage 02 · Demix  device=%s  segment=%ds  jobs=%d",
         args.device, args.segment, args.jobs,
     )
+    _stage02_event(
+        job_dir,
+        "stage02.started",
+        device=args.device,
+        segment=args.segment,
+        jobs=args.jobs,
+        model=args.model,
+        timeout=args.demucs_timeout,
+    )
 
     # ── Validate demucs_env Python ─────────────────────────────────────────
     demucs_python = Path(args.demucs_python)
@@ -222,6 +257,14 @@ def main() -> int:
             "Run setup_env.ps1 first.",
             demucs_python,
         )
+        _stage02_event(
+            job_dir,
+            "stage02.failed",
+            level="error",
+            message=f"demucs_env Python not found at {demucs_python}",
+            reason="demucs_python_missing",
+            path=str(demucs_python),
+        )
         return 1
 
     # ── Find input ─────────────────────────────────────────────────────────
@@ -229,17 +272,34 @@ def main() -> int:
         input_path = _find_input(job_dir)
     except FileNotFoundError as e:
         logger.error("%s", e)
+        _stage02_event(
+            job_dir,
+            "stage02.failed",
+            level="error",
+            message=str(e),
+            reason="input_missing",
+        )
         return 1
 
     logger.info("Input: %s", input_path.name)
+    _stage02_event(job_dir, "stage02.input_found", input=str(input_path), size_bytes=input_path.stat().st_size)
     _update_status(job_dir, "demixing", 0)
 
     # ── Run Demucs ─────────────────────────────────────────────────────────
     # Demucs writes its output tree inside job_dir/demucs_tmp/
     demucs_tmp = job_dir / "demucs_tmp"
     demucs_tmp.mkdir(exist_ok=True)
+    _stage02_event(job_dir, "stage02.temp_dir_created", path=str(demucs_tmp))
 
     try:
+        _stage02_event(
+            job_dir,
+            "stage02.demucs_started",
+            demucs_python=str(demucs_python),
+            model=args.model,
+            device=args.device,
+            timeout=args.demucs_timeout,
+        )
         _run_demucs(
             demucs_python = str(demucs_python),
             model         = args.model,
@@ -248,30 +308,55 @@ def main() -> int:
             jobs          = args.jobs,
             input_path    = input_path,
             output_dir    = demucs_tmp,
+            timeout       = args.demucs_timeout,
         )
         _update_status(job_dir, "demixing", 80)
 
         _collect_stems(args.model, input_path, demucs_tmp, job_dir)
+        _stage02_event(job_dir, "stage02.stems_collected", model=args.model)
 
     except (RuntimeError, FileNotFoundError) as e:
         logger.error("Demix failed: %s", e)
+        _stage02_event(
+            job_dir,
+            "stage02.failed",
+            level="error",
+            message=str(e),
+            reason="demucs_failed",
+        )
         _update_status(job_dir, "failed", 0, str(e))
         return 1
     finally:
         # Always clean up temp dir
         if demucs_tmp.exists():
             shutil.rmtree(demucs_tmp, ignore_errors=True)
+            _stage02_event(job_dir, "stage02.temp_dir_cleanup", path=str(demucs_tmp), exists=False)
 
     # ── Validate output ────────────────────────────────────────────────────
     for stem_name in ("vocals.wav", "instrumental.wav"):
         stem_path = job_dir / stem_name
         if not stem_path.exists() or stem_path.stat().st_size == 0:
             logger.error("Output missing or empty: %s", stem_name)
+            _stage02_event(
+                job_dir,
+                "stage02.failed",
+                level="error",
+                message=f"Missing output: {stem_name}",
+                reason="output_missing",
+                artifact=stem_name,
+            )
             _update_status(job_dir, "failed", 0, f"Missing output: {stem_name}")
             return 1
         logger.info("Output OK: %s (%.1f MB)", stem_name, stem_path.stat().st_size / 1e6)
+        _stage02_event(
+            job_dir,
+            "stage02.output_validated",
+            artifact=stem_name,
+            size_bytes=stem_path.stat().st_size,
+        )
 
     _update_status(job_dir, "demixing", 100)
+    _stage02_event(job_dir, "stage02.completed")
     logger.info("Stage 02 complete.")
     return 0
 

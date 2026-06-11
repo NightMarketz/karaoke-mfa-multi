@@ -1,9 +1,8 @@
-"""
+r"""
 s06_generate_ass.py — Generate ASS karaoke subtitles via pysubs2.
 
-Produces Aegisub-quality karaoke using dual-layer technique:
-    Layer 0 (base)      — full line in "waiting" color, always visible
-    Layer 1 (highlight) — same line with \kf tags, progressive fill
+Produces Aegisub-quality karaoke using a single visible dialogue layer:
+    Layer 0 — line with \kf tags and progressive fill
 
 The \kf tag fills left-to-right using the style's secondary color (\2c).
 Primary color (\1c) = not-yet-sung text. Secondary color (\2c) = sung fill.
@@ -46,7 +45,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
+
+from scripts.common.observability import record_artifact, write_event
+from scripts.common.config import load_app_config
+from scripts.common.provenance import file_sha256, write_manifest
+from scripts.review_wizard.highlight_velocity import build_word_highlight_segments
+from scripts.review_wizard.timing_layers import (
+    SAFE_EXTENSION_CLASSES,
+    apply_audio_backed_tail_extensions,
+    build_audio_activity_map,
+    build_audio_backed_timing,
+    build_timing_diagnostics,
+    classify_line_timing,
+    gap_should_be_absorbed,
+    is_review_only_audio_timing,
+    summarize_audio_backed_timing,
+    summarize_timing_layers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +74,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class KaraokeStyle:
-    """
+    r"""
     One ASS style definition.
     primary_color   = not-yet-sung text color   (\1c)  &HBBGGRR& format
     secondary_color = progressive fill color    (\2c)  filled by \kf
@@ -281,11 +298,116 @@ CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
     "ad_lib": DEFAULT_STYLES["ad_lib"],
 }
 
-PRESETS = {
-    "default":   DEFAULT_STYLES,
-    "neon":      NEON_STYLES,
-    "cyberpunk": CYBERPUNK_STYLES,
+SECTION_CODED_STYLES: dict[str, KaraokeStyle] = {
+    "intro": KaraokeStyle(
+        name="Intro",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(190, 220, 220),
+        secondary_color=_c(90, 210, 220),
+        outline_color=_c(0, 40, 48),
+        back_color=_c(0, 0, 0, 90),
+        outline=2.0,
+        shadow=1.0,
+        alignment=2,
+        margin_v=42,
+    ),
+    "verse": KaraokeStyle(
+        name="Verse",
+        fontname="Segoe UI Bold",
+        fontsize=52,
+        bold=True,
+        italic=False,
+        primary_color=_c(245, 245, 245),
+        secondary_color=_c(255, 255, 255),
+        outline_color=_c(20, 20, 20),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.4,
+        shadow=1.2,
+        alignment=2,
+        margin_v=42,
+    ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Segoe UI Bold",
+        fontsize=54,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 245, 190),
+        secondary_color=_c(255, 220, 40),
+        outline_color=_c(70, 54, 0),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.5,
+        shadow=1.2,
+        alignment=2,
+        margin_v=42,
+    ),
+    "chorus": KaraokeStyle(
+        name="Chorus",
+        fontname="Segoe UI Bold",
+        fontsize=64,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 235, 248),
+        secondary_color=_c(255, 70, 190),
+        outline_color=_c(90, 0, 52),
+        back_color=_c(0, 0, 0, 70),
+        outline=3.0,
+        shadow=1.6,
+        alignment=2,
+        margin_v=42,
+    ),
+    "bridge": KaraokeStyle(
+        name="Bridge",
+        fontname="Segoe UI Bold",
+        fontsize=52,
+        bold=True,
+        italic=True,
+        primary_color=_c(220, 255, 225),
+        secondary_color=_c(80, 220, 120),
+        outline_color=_c(0, 55, 20),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.5,
+        shadow=1.2,
+        alignment=2,
+        margin_v=42,
+    ),
+    "drop": KaraokeStyle(
+        name="Drop",
+        fontname="Segoe UI Bold",
+        fontsize=60,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 235, 210),
+        secondary_color=_c(255, 130, 40),
+        outline_color=_c(80, 34, 0),
+        back_color=_c(0, 0, 0, 80),
+        outline=3.0,
+        shadow=1.4,
+        alignment=2,
+        margin_v=42,
+    ),
+    "outro": KaraokeStyle(
+        name="Outro",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(190, 205, 235),
+        secondary_color=_c(110, 150, 220),
+        outline_color=_c(0, 25, 70),
+        back_color=_c(0, 0, 0, 90),
+        outline=2.0,
+        shadow=1.0,
+        alignment=2,
+        margin_v=42,
+    ),
+    "ad_lib": DEFAULT_STYLES["ad_lib"],
 }
+
+from scripts.karaoke_styles.library import PRESETS
 
 
 # ---------------------------------------------------------------------------
@@ -301,8 +423,24 @@ def _ms_to_ass(ms: int) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-def _build_karaoke_text(words: list[dict], line_start_ms: int, effect: str, use_flash_default: bool = False) -> str:
-    """
+def _escape_ass_text(text: str) -> str:
+    return (
+        text.replace("{", "")
+        .replace("}", "")
+        .replace("\\", "")
+        .replace("\n", " ")
+        .strip()
+    )
+
+
+def _build_karaoke_text(
+    words: list[dict],
+    line_start_ms: int,
+    effect: str,
+    use_flash_default: bool = False,
+    line_style: str | None = None,
+) -> str:
+    r"""
     Build the \kf tagged text for one karaoke line.
 
     Format: {\kf<duration_cs>}word {\kf<duration_cs>}word2 ...
@@ -317,12 +455,91 @@ def _build_karaoke_text(words: list[dict], line_start_ms: int, effect: str, use_
     # the fastest syllables without distorting the timing of longer words.
     MIN_WORD_MS = 80
 
+    word_segment_groups = []
+    for word in words:
+        segments = build_word_highlight_segments(word)
+        if not segments:
+            continue
+        start_ms = int(min(float(segment["start"]) for segment in segments) * 1000)
+        end_ms = int(max(float(segment["end"]) for segment in segments) * 1000)
+        if end_ms - start_ms < MIN_WORD_MS:
+            end_ms = start_ms + MIN_WORD_MS
+        word_segment_groups.append((segments, start_ms, end_ms))
+
+    def append_segment(
+        target: list[str],
+        *,
+        duration_cs: int,
+        visible_segment: str,
+    ) -> None:
+        if effect == "fade_in":
+            target.append(f"{{\\fad(500,0)\\be1\\kf{duration_cs}}}{visible_segment}")
+        elif effect == "bounce":
+            target.append(f"{{\\be1\\t(\\fscx115\\fscy115)\\t(\\fscx100\\fscy100)\\kf{duration_cs}}}{visible_segment}")
+        elif effect == "flash" or (effect == "highlight" and use_flash_default):
+            target.append(f"{{\\bord8\\t(0,200,\\bord2)\\be1\\kf{duration_cs}}}{visible_segment}")
+        elif effect == "none":
+            target.append(f"{{\\k{duration_cs}}}{visible_segment}")
+        else:
+            target.append(f"{{\\be1\\kf{duration_cs}}}{visible_segment}")
+
+    timing = classify_line_timing({"style": line_style or "", "words": words})
+    gap_policies = timing["inter_word_gaps"]
+
+    visual_parts = []
+    prev_end_ms = line_start_ms
+    for index, (segments, start_ms, end_ms) in enumerate(word_segment_groups):
+        next_start_ms = word_segment_groups[index + 1][1] if index + 1 < len(word_segment_groups) else None
+        gap_policy = gap_policies[index] if index < len(gap_policies) else None
+        should_absorb_gap = gap_policy is not None and gap_should_be_absorbed(gap_policy)
+        visual_end_ms = max(end_ms, next_start_ms) if next_start_ms is not None and should_absorb_gap else end_ms
+
+        gap_cs = max(0, (start_ms - prev_end_ms) // 10)
+        if gap_cs > 0:
+            visual_parts.append(f"{{\\k{gap_cs}}}")
+
+        word_parts = []
+        segment_prev_end_ms = start_ms
+        visible_segments = [segment for segment in segments if str(segment.get("text", ""))]
+        for segment_index, segment in enumerate(visible_segments):
+            visible_segment = _escape_ass_text(str(segment["text"]))
+            if not visible_segment:
+                continue
+            segment_start_ms = int(float(segment["start"]) * 1000)
+            segment_end_ms = int(float(segment["end"]) * 1000)
+            if segment_index == len(visible_segments) - 1:
+                segment_end_ms = max(segment_end_ms, visual_end_ms)
+            if segment_end_ms - segment_start_ms < MIN_WORD_MS:
+                segment_end_ms = segment_start_ms + MIN_WORD_MS
+            segment_gap_cs = max(0, (segment_start_ms - segment_prev_end_ms) // 10)
+            if segment_gap_cs > 0:
+                word_parts.append(f"{{\\k{segment_gap_cs}}}")
+            append_segment(
+                word_parts,
+                duration_cs=max(1, (segment_end_ms - segment_start_ms) // 10),
+                visible_segment=visible_segment,
+            )
+            segment_prev_end_ms = segment_end_ms
+
+        if word_parts:
+            visual_parts.append("".join(word_parts))
+        prev_end_ms = visual_end_ms
+
+    return " ".join(
+        p if p.startswith("{") else p
+        for p in visual_parts
+    ).strip()
+
     parts = []
     prev_end_ms = line_start_ms
 
     for word in words:
-        start_ms = int(word["start"] * 1000)
-        end_ms   = int(word["end"]   * 1000)
+        segments = build_word_highlight_segments(word)
+        if not segments:
+            continue
+
+        start_ms = int(min(float(segment["start"]) for segment in segments) * 1000)
+        end_ms = int(max(float(segment["end"]) for segment in segments) * 1000)
 
         # Apply minimum duration floor
         if end_ms - start_ms < MIN_WORD_MS:
@@ -333,21 +550,39 @@ def _build_karaoke_text(words: list[dict], line_start_ms: int, effect: str, use_
         if gap_cs > 0:
             parts.append(f"{{\\k{gap_cs}}}")
 
-        duration_cs = max(1, (end_ms - start_ms) // 10)
-        
-        if effect == "fade_in":
-            parts.append(f"{{\\fad(500,0)\\be1\\kf{duration_cs}}}{word['word']}")
-        elif effect == "bounce":
-            parts.append(f"{{\\be1\\t(\\fscx115\\fscy115)\\t(\\fscx100\\fscy100)\\kf{duration_cs}}}{word['word']}")
-        elif effect == "flash" or (effect == "highlight" and use_flash_default):
-            # Glitch/Digital flash: large border shrinks fast to normal
-            parts.append(f"{{\\bord8\\t(0,200,\\bord2)\\be1\\kf{duration_cs}}}{word['word']}")
-        elif effect == "none":
-            parts.append(f"{{\\k{duration_cs}}}{word['word']}")
-        else:
-            # Default: clean \kf fill, no flash
-            # (flash branch above already handles effect=="flash" and use_flash_default)
-            parts.append(f"{{\\be1\\kf{duration_cs}}}{word['word']}")
+        word_parts = []
+        segment_prev_end_ms = start_ms
+        for segment in segments:
+            visible_segment = _escape_ass_text(str(segment["text"]))
+            if not visible_segment:
+                continue
+            segment_start_ms = int(float(segment["start"]) * 1000)
+            segment_end_ms = int(float(segment["end"]) * 1000)
+            if segment_end_ms - segment_start_ms < MIN_WORD_MS:
+                segment_end_ms = segment_start_ms + MIN_WORD_MS
+            segment_gap_cs = max(0, (segment_start_ms - segment_prev_end_ms) // 10)
+            if segment_gap_cs > 0:
+                word_parts.append(f"{{\\k{segment_gap_cs}}}")
+
+            duration_cs = max(1, (segment_end_ms - segment_start_ms) // 10)
+
+            if effect == "fade_in":
+                word_parts.append(f"{{\\fad(500,0)\\be1\\kf{duration_cs}}}{visible_segment}")
+            elif effect == "bounce":
+                word_parts.append(f"{{\\be1\\t(\\fscx115\\fscy115)\\t(\\fscx100\\fscy100)\\kf{duration_cs}}}{visible_segment}")
+            elif effect == "flash" or (effect == "highlight" and use_flash_default):
+                # Glitch/Digital flash: large border shrinks fast to normal
+                word_parts.append(f"{{\\bord8\\t(0,200,\\bord2)\\be1\\kf{duration_cs}}}{visible_segment}")
+            elif effect == "none":
+                word_parts.append(f"{{\\k{duration_cs}}}{visible_segment}")
+            else:
+                # Default: clean \kf fill, no flash
+                # (flash branch above already handles effect=="flash" and use_flash_default)
+                word_parts.append(f"{{\\be1\\kf{duration_cs}}}{visible_segment}")
+            segment_prev_end_ms = segment_end_ms
+
+        if word_parts:
+            parts.append("".join(word_parts))
 
         prev_end_ms = end_ms
 
@@ -367,8 +602,9 @@ def _generate_ass(
     resolution: str,
     fade_in_ms:  int,
     fade_out_ms: int,
+    app_config=None,
 ) -> str:
-    """
+    r"""
     Build complete ASS file content as a string.
 
     Uses dual-layer technique:
@@ -378,6 +614,7 @@ def _generate_ass(
     This produces the classic "light up as you sing" effect without
     the text disappearing between syllables.
     """
+    _cfg = app_config if app_config is not None else load_app_config()
     width, height = resolution.split("x")
 
     # ── Script Info ────────────────────────────────────────────────────────
@@ -390,7 +627,9 @@ YCbCr Matrix: TV.601
 """
 
     # ── Styles ────────────────────────────────────────────────────────────
-    # Include both base (opacity variant) and kf variants
+    # Include only the visible karaoke style. A previous dual-layer renderer
+    # emitted a dim base line plus a kf line at the same coordinates, which
+    # made burned-in previews look like duplicated lyrics.
     style_lines = ["[V4+ Styles]",
                    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
                    "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
@@ -398,20 +637,6 @@ YCbCr Matrix: TV.601
                    "Alignment, MarginL, MarginR, MarginV, Encoding"]
 
     for style_key, s in styles.items():
-        # Base style — primary color dimmed (layer 0)
-        # We darken primary to 60% opacity for the base layer
-        r, g, b = _parse_color(s.primary_color)
-        dimmed = _c(r, g, b, a=100)  # semi-transparent base text
-
-        style_lines.append(
-            f"Style: {s.name}Base,"
-            f"{s.fontname},{s.fontsize},"
-            f"{dimmed},{s.secondary_color},{s.outline_color},{s.back_color},"
-            f"{_bool_to_ass(s.bold)},{_bool_to_ass(s.italic)},0,0,"
-            f"100,100,0,0,1,{s.outline},{s.shadow},"
-            f"{s.alignment},20,20,{s.margin_v},1"
-        )
-        # KF style — full primary color (layer 1, highlight on top)
         style_lines.append(
             f"Style: {s.name},"
             f"{s.fontname},{s.fontsize},"
@@ -434,15 +659,15 @@ YCbCr Matrix: TV.601
     for i, line in enumerate(lines):
         start_ms = int(line["start"] * 1000)
         end_ms   = int(line["end"]   * 1000)
-        dstart   = max(0, start_ms - 200)
-        dend     = end_ms + 300
+        dstart   = max(0, start_ms - _cfg.generate_ass_preroll_ms)
+        dend     = end_ms + _cfg.generate_ass_postroll_ms
         display_windows.append((dstart, dend))
 
     # Clamp each display_end so it does not overlap the next display_start
     for i in range(len(display_windows) - 1):
         dstart_curr, dend_curr = display_windows[i]
         dstart_next, _         = display_windows[i + 1]
-        GAP_MS = 50  # keep at least 50ms of silence between back-to-back lines
+        GAP_MS = _cfg.generate_ass_gap_ms
         if dend_curr > dstart_next - GAP_MS:
             display_windows[i] = (dstart_curr, max(dstart_curr + 100, dstart_next - GAP_MS))
 
@@ -458,23 +683,18 @@ YCbCr Matrix: TV.601
         start_ts      = _ms_to_ass(display_start_ms)
         end_ts        = _ms_to_ass(display_end_ms)
         fade_tag      = f"{{\\fad({fade_in_ms},{fade_out_ms})}}"
-        plain_text    = line["text"]
-
         kf_text = _build_karaoke_text(
             line["words"],
             start_ms,
             line.get("effect", "highlight"),
             use_flash_default=s.flash_on_highlight,
+            line_style=style_key,
         )
 
-        # Layer 0: base — plain text, dimmed, always visible during line
+        # Single visible karaoke layer. The \kf text itself keeps the
+        # not-yet-sung text visible and applies the progressive fill.
         event_lines.append(
-            f"Dialogue: 0,{start_ts},{end_ts},{s.name}Base,,0,0,0,,"
-            f"{fade_tag}{plain_text}"
-        )
-        # Layer 1: kf — progressive fill on top of base
-        event_lines.append(
-            f"Dialogue: 1,{start_ts},{end_ts},{s.name},,0,0,0,,"
+            f"Dialogue: 0,{start_ts},{end_ts},{s.name},,0,0,0,,"
             f"{fade_tag}{kf_text}"
         )
 
@@ -511,9 +731,92 @@ def _validate_ass(content: str) -> list[str]:
     if dialogue_count == 0:
         errors.append("No Dialogue lines generated")
     else:
-        logger.info("Generated %d Dialogue lines (%d lines × 2 layers)",
-                    dialogue_count, dialogue_count // 2)
+        logger.info("Generated %d Dialogue lines", dialogue_count)
     return errors
+
+
+def _ass_metrics(content: str) -> dict[str, int]:
+    return {
+        "dialogue_count": content.count("\nDialogue:"),
+        "kf_count": content.count("\\kf"),
+    }
+
+
+def _audio_timing_diagnostics(audio_timings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def compact_audio_evidence(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        compact: dict[str, Any] = {}
+        for key in ("active", "start_s", "end_s", "duration_s", "voiced_ratio", "rms", "threshold"):
+            if key not in value:
+                continue
+            item = value[key]
+            if isinstance(item, float):
+                compact[key] = round(item, 4)
+            else:
+                compact[key] = item
+        return compact
+
+    diagnostics: list[dict[str, Any]] = []
+    for line_index, timing in enumerate(audio_timings):
+        line_classification = timing.get("line_classification")
+        diagnostic_tags = timing.get("diagnostic_tags")
+        if line_classification or diagnostic_tags:
+            diagnostic = {
+                "line_index": line_index,
+                "line_classification": line_classification,
+                "diagnostic_tags": diagnostic_tags or [],
+                "confidence": timing.get("confidence"),
+                "recommended_fallback": timing.get("recommended_fallback"),
+            }
+            if timing.get("sound_suggestion"):
+                diagnostic["sound_suggestion"] = timing.get("sound_suggestion")
+            diagnostics.append(diagnostic)
+
+        tail = timing.get("tail") or {}
+        tail_classification = tail.get("classification")
+        if is_review_only_audio_timing(timing):
+            continue
+        if tail_classification in {
+            "possible_lost_tail",
+            "unwritten_interline_melisma",
+            "false_long_tail",
+        } or tail.get("sound_suggestion"):
+            diagnostic = {
+                "line_index": line_index,
+                "tail_classification": tail_classification,
+                "confidence": tail.get("confidence"),
+                "recommended_fallback": tail.get("recommended_fallback"),
+            }
+            if tail.get("sound_suggestion"):
+                diagnostic["sound_suggestion"] = tail.get("sound_suggestion")
+            if tail.get("structural_tail_classification"):
+                diagnostic["structural_tail_classification"] = tail.get("structural_tail_classification")
+            if tail.get("review_flags"):
+                diagnostic["review_flags"] = tail.get("review_flags")
+            audio_evidence = compact_audio_evidence(tail.get("audio_evidence"))
+            if audio_evidence:
+                diagnostic["audio_evidence"] = audio_evidence
+            diagnostics.append(diagnostic)
+    return diagnostics
+
+
+def _display_window_clamp_count(lines: list[dict]) -> int:
+    display_windows: list[tuple[int, int]] = []
+    for line in lines:
+        start_ms = int(line["start"] * 1000)
+        end_ms = int(line["end"] * 1000)
+        display_windows.append((max(0, start_ms - 200), end_ms + 300))
+
+    clamp_count = 0
+    for i in range(len(display_windows) - 1):
+        dstart_curr, dend_curr = display_windows[i]
+        dstart_next, _ = display_windows[i + 1]
+        if dend_curr > dstart_next - 50:
+            clamped_end = max(dstart_curr + 100, dstart_next - 50)
+            if clamped_end != dend_curr:
+                clamp_count += 1
+    return clamp_count
 
 
 def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") -> None:
@@ -524,6 +827,8 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
             existing = json.loads(status_path.read_text())
         except json.JSONDecodeError:
             pass
+        if not isinstance(existing, dict):
+            existing = {}
     existing.update({
         "stage": stage, "progress": progress,
         "error": error, "updated_at": time.time(),
@@ -531,56 +836,169 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
     status_path.write_text(json.dumps(existing, indent=2))
 
 
+def _load_run_id(job_dir: Path) -> str:
+    status_path = job_dir / "status.json"
+    if not status_path.exists():
+        return "manual"
+    try:
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return "manual"
+    if not isinstance(status, dict):
+        return "manual"
+    run_id = status.get("run_id")
+    return str(run_id) if run_id else "manual"
+
+
+def _stage06_event(
+    job_dir: Path,
+    event: str,
+    level: str = "info",
+    message: str = "",
+    **details: Any,
+) -> None:
+    write_event(
+        job_dir,
+        event,
+        "generating",
+        level=level,
+        message=message,
+        details=details,
+    )
+
+
+def _stage06_missing_job_event(
+    job_dir: Path,
+    level: str,
+    message: str,
+    **details: Any,
+) -> None:
+    parent = job_dir.parent if job_dir.parent != job_dir else Path.cwd()
+    write_event(
+        parent / "_stage06",
+        "stage06.failed",
+        "generating",
+        level=level,
+        message=message,
+        details={"missing_job_dir": str(job_dir), **details},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    app_config = load_app_config()
     parser = argparse.ArgumentParser(
         description="Stage 06 — Generate ASS karaoke subtitles.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--job-dir",     required=True, type=Path)
-    parser.add_argument("--preset",      default="default",
+    parser.add_argument("--preset",      default=app_config.generate_style_preset_id,
                         choices=list(PRESETS.keys()),
                         help="Style preset.")
-    parser.add_argument("--resolution",  default="1920x1080",
+    parser.add_argument("--resolution",  default=app_config.generate_resolution,
                         help="Output resolution (must match s07).")
-    parser.add_argument("--fade-in",     type=int, default=300,
+    parser.add_argument("--fade-in",     type=int, default=app_config.generate_fade_in_ms,
                         help="Fade-in duration per line in ms.")
-    parser.add_argument("--fade-out",    type=int, default=500,
+    parser.add_argument("--fade-out",    type=int, default=app_config.generate_fade_out_ms,
                         help="Fade-out duration per line in ms.")
-    parser.add_argument("--log-level",   default="INFO",
+    parser.add_argument("--log-level",   default=app_config.log_level,
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
 
     job_dir: Path = args.job_dir.resolve()
+    log_handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if job_dir.exists():
+        log_handlers.append(logging.FileHandler(job_dir / "pipeline.log", mode="a"))
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(job_dir / "pipeline.log", mode="a"),
-        ],
+        force=True,
+        handlers=log_handlers,
     )
 
     if not job_dir.exists():
-        logger.error("Job directory does not exist: %s", job_dir)
+        message = f"Job directory does not exist: {job_dir}"
+        logger.error(message)
+        _stage06_missing_job_event(
+            job_dir,
+            level="error",
+            message=message,
+            reason="job_dir_missing",
+            path=str(job_dir),
+        )
         return 1
 
     logger.info("Stage 06 · Generate ASS  preset=%s  resolution=%s",
                 args.preset, args.resolution)
 
     # ── Validate input ─────────────────────────────────────────────────────
+    _stage06_event(
+        job_dir,
+        "stage06.started",
+        preset=args.preset,
+        resolution=args.resolution,
+        fade_in_ms=args.fade_in,
+        fade_out_ms=args.fade_out,
+    )
+    _stage06_event(
+        job_dir,
+        "stage06.preset_selected",
+        preset=args.preset,
+        style_count=len(PRESETS[args.preset]),
+    )
+
     analysis_path = job_dir / "analysis.json"
     if not analysis_path.exists() or analysis_path.stat().st_size == 0:
-        logger.error("analysis.json missing or empty. Run Stage 05 first.")
+        message = "analysis.json missing or empty. Run Stage 05 first."
+        logger.error(message)
+        _stage06_event(
+            job_dir,
+            "stage06.input_missing",
+            level="error",
+            message=message,
+            reason="missing_input",
+            artifact="analysis.json",
+        )
+        _stage06_event(
+            job_dir,
+            "stage06.failed",
+            level="error",
+            message=message,
+            reason="missing_input",
+            artifact="analysis.json",
+        )
         return 1
 
-    analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    try:
+        analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        message = f"analysis.json is not valid JSON: {exc}"
+        logger.error(message)
+        _stage06_event(
+            job_dir,
+            "stage06.failed",
+            level="error",
+            message=message,
+            reason="invalid_input_json",
+            artifact="analysis.json",
+        )
+        return 1
+
     lines    = analysis.get("lines", [])
     if not lines:
-        logger.error("analysis.json has no lines.")
+        message = "analysis.json has no lines."
+        logger.error(message)
+        _stage06_event(
+            job_dir,
+            "stage06.failed",
+            level="error",
+            message=message,
+            reason="no_lines",
+            artifact="analysis.json",
+        )
         return 1
 
     logger.info("Lines to render: %d", len(lines))
@@ -590,6 +1008,7 @@ def main() -> int:
     # They originate from LLM hallucination in s05 or timestamp corruption
     # in s04. We discard them with a WARNING so the issue is visible in logs.
     valid_lines = []
+    skipped_inverted = []
     for line in lines:
         if line.get("end", 0) <= line.get("start", 0):
             logger.warning(
@@ -597,6 +1016,13 @@ def main() -> int:
                 "start=%.4f end=%.4f text='%s'",
                 line.get("start", 0), line.get("end", 0),
                 line.get("text", "")[:60],
+            )
+            skipped_inverted.append(
+                {
+                    "start": line.get("start", 0),
+                    "end": line.get("end", 0),
+                    "text": str(line.get("text", ""))[:60],
+                }
             )
         else:
             valid_lines.append(line)
@@ -606,10 +1032,25 @@ def main() -> int:
             "%d/%d lines discarded due to inverted timestamps.",
             len(lines) - len(valid_lines), len(lines),
         )
+        _stage06_event(
+            job_dir,
+            "stage06.inverted_lines_skipped",
+            level="warning",
+            skipped_count=len(skipped_inverted),
+            input_line_count=len(lines),
+            examples=skipped_inverted[:5],
+        )
     lines = valid_lines
 
     if not lines:
         logger.error("All lines had inverted timestamps — nothing to render.")
+        _stage06_event(
+            job_dir,
+            "stage06.failed",
+            level="error",
+            message="All lines had inverted timestamps - nothing to render.",
+            reason="all_lines_inverted",
+        )
         return 1
 
     _update_status(job_dir, "generating", 0)
@@ -623,14 +1064,64 @@ def main() -> int:
         s = line.get("style", "verse")
         style_counts[s] = style_counts.get(s, 0) + 1
     logger.info("Style distribution: %s", style_counts)
+    timing_summary = summarize_timing_layers(lines)
+    timing_diagnostics = build_timing_diagnostics(lines)
+    render_lines = lines
+    timing_audio_layers: dict[str, Any] = {"available": False}
+    vocals_path = job_dir / "vocals.wav"
+    if vocals_path.exists() and vocals_path.stat().st_size > 0:
+        try:
+            audio_activity = build_audio_activity_map(lines, vocals_path)
+            audio_timings = build_audio_backed_timing(lines, audio_activity=audio_activity)
+            render_lines = apply_audio_backed_tail_extensions(lines, audio_timings)
+            timing_audio_layers = {
+                "available": True,
+                "summary": summarize_audio_backed_timing(audio_timings),
+                "diagnostics": _audio_timing_diagnostics(audio_timings),
+                "applied_tail_extensions": sum(
+                    1
+                    for timing in audio_timings
+                    if not is_review_only_audio_timing(timing)
+                    and timing.get("tail", {}).get("classification") in SAFE_EXTENSION_CLASSES
+                ),
+                "applied_tail_trims": sum(
+                    1
+                    for timing in audio_timings
+                    if not is_review_only_audio_timing(timing)
+                    and timing.get("tail", {}).get("classification") == "false_long_tail"
+                ),
+            }
+        except Exception as exc:
+            timing_audio_layers = {
+                "available": False,
+                "error": str(exc),
+            }
+    _stage06_event(
+        job_dir,
+        "stage06.style_distribution",
+        style_distribution=style_counts,
+        line_count=len(lines),
+    )
+    _stage06_event(
+        job_dir,
+        "stage06.timestamp_validation",
+        display_window_clamp_count=_display_window_clamp_count(lines),
+        line_count=len(lines),
+        timing_layers=timing_summary,
+        timing_diagnostics=timing_diagnostics["summary"],
+        timing_audio_layers=timing_audio_layers,
+    )
 
     ass_content = _generate_ass(
-        lines        = lines,
+        lines        = render_lines,
         styles       = styles,
         resolution   = args.resolution,
         fade_in_ms   = args.fade_in,
         fade_out_ms  = args.fade_out,
+        app_config   = app_config,
     )
+    ass_metrics = _ass_metrics(ass_content)
+    _stage06_event(job_dir, "stage06.ass_generated", **ass_metrics)
 
     _update_status(job_dir, "generating", 70)
 
@@ -639,6 +1130,22 @@ def main() -> int:
     if errors:
         for e in errors:
             logger.error("ASS validation: %s", e)
+        _stage06_event(
+            job_dir,
+            "stage06.validation_failed",
+            level="error",
+            message=errors[0],
+            error_count=len(errors),
+            errors=errors,
+        )
+        _stage06_event(
+            job_dir,
+            "stage06.failed",
+            level="error",
+            message=errors[0],
+            reason="validation_failed",
+            error=errors[0],
+        )
         _update_status(job_dir, "failed", 0, errors[0])
         return 1
 
@@ -648,8 +1155,55 @@ def main() -> int:
     output_path.write_bytes(ass_content.encode("utf-8-sig"))
     logger.info("Written: %s (%.1f KB)", output_path.name,
                 output_path.stat().st_size / 1e3)
+    manifest_path = write_manifest(
+        job_dir / "output.ass.manifest.json",
+        {
+            "stage": "stage06",
+            "run_id": _load_run_id(job_dir),
+            "preset": args.preset,
+            "renderer_mode": "single_layer_kf",
+            "inputs": {
+                "analysis.json": {
+                    "path": "analysis.json",
+                    "sha256": file_sha256(analysis_path),
+                }
+            },
+            "outputs": {
+                "output.ass": {
+                    "path": "output.ass",
+                }
+            },
+            "metrics": {
+                "analysis_line_count": len(lines),
+                "dialogue_count": ass_metrics["dialogue_count"],
+                "kf_count": ass_metrics["kf_count"],
+            },
+            "style_distribution": style_counts,
+            "timing_layers": timing_summary,
+            "timing_diagnostics": timing_diagnostics,
+            "timing_audio_layers": timing_audio_layers,
+        },
+        output_paths={"output.ass": output_path},
+    )
+    artifact_details = record_artifact(job_dir, "generating", output_path)
+    _stage06_event(
+        job_dir,
+        "stage06.ass_written",
+        path=str(output_path),
+        size_bytes=artifact_details["size_bytes"],
+        manifest_path=str(manifest_path),
+        manifest_sha256=file_sha256(manifest_path),
+    )
 
     _update_status(job_dir, "generating", 100)
+    _stage06_event(
+        job_dir,
+        "stage06.completed",
+        line_count=len(lines),
+        dialogue_count=ass_metrics["dialogue_count"],
+        kf_count=ass_metrics["kf_count"],
+        output="output.ass",
+    )
     logger.info("Stage 06 complete.")
     return 0
 

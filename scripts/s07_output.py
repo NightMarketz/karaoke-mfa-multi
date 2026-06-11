@@ -39,15 +39,26 @@ import time
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.config import load_app_config
+from scripts.common.observability import (
+    build_observability_summary,
+    record_artifact,
+    write_event,
+)
+from scripts.common.provenance import (
+    ProvenanceError,
+    file_sha256,
+    load_manifest,
+    validate_file_hash,
+    write_manifest,
+)
 
 logger = logging.getLogger(__name__)
 
-# Default resolution for the black background canvas.
-# ASS subtitles are composited on top of this.
-DEFAULT_RESOLUTION = "1920x1080"
-DEFAULT_FRAMERATE  = "30"
+STAGE = "rendering"
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +113,115 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
         "updated_at": time.time(),
     })
     status_path.write_text(json.dumps(existing, indent=2))
+
+
+def _fail_stage07(
+    job_dir: Path,
+    reason: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    write_event(
+        job_dir,
+        "stage07.failed",
+        STAGE,
+        level="error",
+        message=message,
+        details={"reason": reason, **(details or {})},
+    )
+    build_observability_summary(job_dir)
+
+
+def _check_input_artifact(
+    job_dir: Path,
+    path: Path,
+    *,
+    required: bool,
+    empty_is_missing: bool = True,
+) -> dict[str, Any]:
+    details = record_artifact(job_dir, STAGE, path, required=required)
+    exists = bool(details["exists"])
+    size_bytes = int(details["size_bytes"])
+    available = exists and (size_bytes > 0 or not empty_is_missing)
+    event_details = {
+        **details,
+        "artifact": path.name,
+        "available": available,
+    }
+    write_event(
+        job_dir,
+        "stage07.input_artifact_checked",
+        STAGE,
+        level="info" if available or not required else "error",
+        message=f"{path.name} {'available' if available else 'missing or empty'}",
+        details=event_details,
+        artifact=path.name,
+    )
+    if not available:
+        write_event(
+            job_dir,
+            "stage07.input_missing",
+            STAGE,
+            level="error" if required else "warning",
+            message=f"{path.name} missing or empty",
+            details=event_details,
+            artifact=path.name,
+        )
+    return event_details
+
+
+def _validate_ass_manifest(job_dir: Path, ass_path: Path) -> dict[str, Any]:
+    manifest_path = job_dir / "output.ass.manifest.json"
+    manifest = load_manifest(manifest_path)
+    inputs = manifest.get("inputs")
+    if isinstance(inputs, dict) and "analysis.json" in inputs:
+        analysis_details = inputs.get("analysis.json")
+        if not isinstance(analysis_details, dict):
+            raise ProvenanceError("manifest analysis.json entry must be an object")
+        expected_analysis_sha256 = analysis_details.get("sha256")
+        if not isinstance(expected_analysis_sha256, str) or not expected_analysis_sha256:
+            raise ProvenanceError("manifest missing analysis.json sha256")
+        validate_file_hash(job_dir / "analysis.json", expected_analysis_sha256)
+    outputs = manifest.get("outputs")
+    if not isinstance(outputs, dict):
+        raise ProvenanceError("manifest missing outputs: output.ass.manifest.json")
+    ass_details = outputs.get("output.ass")
+    if not isinstance(ass_details, dict):
+        raise ProvenanceError("manifest missing output.ass entry")
+    expected_sha256 = ass_details.get("sha256")
+    if not isinstance(expected_sha256, str) or not expected_sha256:
+        raise ProvenanceError("manifest missing output.ass sha256")
+    validate_file_hash(ass_path, expected_sha256)
+    return manifest
+
+
+def _probe_media_duration(path: Path, timeout: int = 15) -> float | None:
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if probe.returncode != 0:
+            return None
+        data = json.loads(probe.stdout)
+        format_duration = data.get("format", {}).get("duration")
+        if format_duration is not None:
+            return float(format_duration)
+        for stream in data.get("streams", []):
+            duration = stream.get("duration")
+            if duration is not None:
+                return float(duration)
+    except Exception:
+        return None
+    return None
 
 
 def _validate_mp4(path: Path) -> list[str]:
@@ -236,6 +356,7 @@ def _build_ffmpeg_cmd(
 def main() -> int:
     # ── Hardware detection ─────────────────────────────────────────────────
     hw: HardwareProfile = detect()
+    app_config = load_app_config()
 
     # ── CLI ────────────────────────────────────────────────────────────────
     parser = argparse.ArgumentParser(
@@ -258,27 +379,27 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--resolution", default=DEFAULT_RESOLUTION,
+        "--resolution", default=app_config.generate_resolution,
         help="Output canvas resolution (WxH).",
     )
     parser.add_argument(
-        "--framerate", default=DEFAULT_FRAMERATE,
+        "--framerate", default=app_config.output_framerate,
         help="Output framerate.",
     )
     parser.add_argument(
-        "--vocals-volume", type=float, default=1.0,
+        "--vocals-volume", type=float, default=app_config.output_vocals_volume,
         help="Volume multiplier for the vocals track.",
     )
     parser.add_argument(
-        "--instrumental-volume", type=float, default=1.0,
+        "--instrumental-volume", type=float, default=app_config.output_instrumental_volume,
         help="Volume multiplier for the instrumental track.",
     )
     parser.add_argument(
-        "--audio-codec", default="aac",
+        "--audio-codec", default=app_config.output_audio_codec,
         help="Audio codec.",
     )
     parser.add_argument(
-        "--audio-bitrate", default="192k",
+        "--audio-bitrate", default=app_config.output_audio_bitrate,
         help="Audio bitrate.",
     )
     parser.add_argument(
@@ -289,29 +410,56 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--timeout", type=int, default=600,
+        "--timeout", type=int, default=app_config.output_ffmpeg_timeout_s,
         help="ffmpeg timeout in seconds.",
     )
     parser.add_argument(
-        "--log-level", default="INFO",
+        "--log-level", default=app_config.log_level,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     args = parser.parse_args()
 
     # ── Logging ────────────────────────────────────────────────────────────
     job_dir: Path = args.job_dir.resolve()
+    log_handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if job_dir.exists():
+        log_handlers.append(logging.FileHandler(job_dir / "pipeline.log", mode="a"))
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(job_dir / "pipeline.log", mode="a"),
-        ],
+        force=True,
+        handlers=log_handlers,
     )
 
     if not job_dir.exists():
         logger.error("Job directory does not exist: %s", job_dir)
+        event_dir = job_dir.parent / "_stage07"
+        write_event(
+            event_dir,
+            "stage07.failed",
+            STAGE,
+            level="error",
+            message=f"Job directory does not exist: {job_dir}",
+            details={"reason": "job_dir_missing", "missing_job_dir": str(job_dir)},
+        )
+        build_observability_summary(event_dir)
         return 1
+
+    write_event(
+        job_dir,
+        "stage07.started",
+        STAGE,
+        message="Stage 07 render started",
+        details={
+            "vcodec": args.vcodec,
+            "quality": args.quality,
+            "resolution": args.resolution,
+            "framerate": args.framerate,
+            "audio_codec": args.audio_codec,
+            "audio_bitrate": args.audio_bitrate,
+            "no_subtitles": args.no_subtitles,
+        },
+    )
 
     logger.info(
         "Stage 07 · Output  vcodec=%s  quality=%d (%s)  resolution=%s",
@@ -323,30 +471,52 @@ def main() -> int:
 
     # ── Validate inputs ────────────────────────────────────────────────────
     instrumental_path = job_dir / "instrumental.wav"
-    if not instrumental_path.exists() or instrumental_path.stat().st_size == 0:
+    instrumental_details = _check_input_artifact(job_dir, instrumental_path, required=True)
+    if not instrumental_details["available"]:
         logger.error(
             "instrumental.wav missing or empty. Run Stage 02 (s02_demix.py) first."
+        )
+        _fail_stage07(
+            job_dir,
+            "missing_input",
+            "instrumental.wav missing or empty",
+            {"artifact": "instrumental.wav"},
         )
         return 1
 
     vocals_path = job_dir / "vocals.wav"
-    has_vocals = vocals_path.exists() and vocals_path.stat().st_size > 0
+    vocals_details = _check_input_artifact(job_dir, vocals_path, required=False)
+    has_vocals = bool(vocals_details["available"])
     if not has_vocals:
         logger.warning("vocals.wav missing or empty. Output will be instrumental only.")
 
     ass_path: Path | None = None
+    ass_manifest: dict[str, Any] | None = None
     if not args.no_subtitles:
         ass_path = job_dir / "output.ass"
-        if not ass_path.exists():
+        ass_details = _check_input_artifact(job_dir, ass_path, required=True)
+        if not ass_details["available"] and not ass_path.exists():
             logger.error(
                 "output.ass not found in %s. "
                 "Run Stage 06 (s06_generate_ass.py) first, "
                 "or use --no-subtitles for a dummy render.",
                 job_dir,
             )
+            _fail_stage07(
+                job_dir,
+                "missing_input",
+                "output.ass not found",
+                {"artifact": "output.ass"},
+            )
             return 1
-        if ass_path.stat().st_size == 0:
+        if not ass_details["available"]:
             logger.error("output.ass is empty (0 bytes).")
+            _fail_stage07(
+                job_dir,
+                "missing_input",
+                "output.ass is empty",
+                {"artifact": "output.ass"},
+            )
             return 1
         # Quick sanity check: valid ASS starts with [Script Info]
         header = ass_path.read_text(encoding="utf-8", errors="replace")[:64]
@@ -356,13 +526,69 @@ def main() -> int:
                 "(missing [Script Info] header). "
                 "pysubs2 may have written a corrupt file."
             )
+            write_event(
+                job_dir,
+                "stage07.input_missing",
+                STAGE,
+                level="error",
+                message="output.ass missing [Script Info] header",
+                details={"artifact": "output.ass", "reason": "invalid_ass_header"},
+                artifact="output.ass",
+            )
+            _fail_stage07(
+                job_dir,
+                "invalid_input",
+                "output.ass missing [Script Info] header",
+                {"artifact": "output.ass"},
+            )
+            return 1
+        try:
+            ass_manifest = _validate_ass_manifest(job_dir, ass_path)
+        except ProvenanceError as exc:
+            logger.error("output.ass provenance invalid: %s", exc)
+            _update_status(job_dir, "failed", 0, f"Invalid ASS provenance: {exc}")
+            write_event(
+                job_dir,
+                "stage07.render_failed",
+                STAGE,
+                level="error",
+                message=f"Invalid ASS provenance: {exc}",
+                details={
+                    "reason": "ass_manifest_invalid",
+                    "artifact": "output.ass",
+                    "manifest": "output.ass.manifest.json",
+                },
+                artifact="output.ass",
+            )
+            _fail_stage07(
+                job_dir,
+                "ass_manifest_invalid",
+                f"Invalid ASS provenance: {exc}",
+                {
+                    "artifact": "output.ass",
+                    "manifest": "output.ass.manifest.json",
+                },
+            )
             return 1
         logger.info("Subtitles: %s (%.1f KB)", ass_path.name, ass_path.stat().st_size / 1e3)
     else:
+        _check_input_artifact(job_dir, job_dir / "output.ass", required=False)
         logger.info("Subtitles: skipped (--no-subtitles)")
 
     output_path = job_dir / "output.mp4"
     _update_status(job_dir, "rendering", 0)
+    write_event(
+        job_dir,
+        "stage07.audio_mix_selected",
+        STAGE,
+        message="Audio mix selected",
+        details={
+            "mode": "mixed_vocals_instrumental" if has_vocals else "instrumental_only",
+            "has_vocals": has_vocals,
+            "instrumental_volume": args.instrumental_volume,
+            "vocals_volume": args.vocals_volume,
+        },
+    )
 
     # ── Build and run ffmpeg ───────────────────────────────────────────────
     # 1. Inputs
@@ -381,13 +607,12 @@ def main() -> int:
     
     # ffprobe for duration
     try:
-        import subprocess as _sp, json as _json
-        _probe = _sp.run(
+        _probe = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json",
              "-show_streams", str(instrumental_path)],
             capture_output=True, text=True, timeout=15,
         )
-        _data = _json.loads(_probe.stdout)
+        _data = json.loads(_probe.stdout)
         _audio_dur = float(next(
             s["duration"] for s in _data.get("streams", [])
             if s.get("codec_type") == "audio"
@@ -400,6 +625,21 @@ def main() -> int:
         "-f", "lavfi",
         "-i", f"color=c=black:s={args.resolution}:r={args.framerate}:d={canvas_duration:.3f}",
     ]
+    write_event(
+        job_dir,
+        "stage07.canvas_selected",
+        STAGE,
+        message="Synthetic background canvas selected",
+        details={
+            "background": "black",
+            "resolution": args.resolution,
+            "framerate": args.framerate,
+            "duration_seconds": canvas_duration,
+            "source": "instrumental_duration_plus_buffer"
+            if canvas_duration != 3600.0
+            else "fallback",
+        },
+    )
 
     # 2. Filters
     # Video Filter: Subtitles
@@ -433,6 +673,19 @@ def main() -> int:
 
     logger.info("ffmpeg command:\n  %s", " ".join(cmd))
     _update_status(job_dir, "rendering", 10)
+    write_event(
+        job_dir,
+        "stage07.ffmpeg_started",
+        STAGE,
+        message="ffmpeg render started",
+        details={
+            "timeout_seconds": args.timeout,
+            "vcodec": args.vcodec,
+            "audio_codec": args.audio_codec,
+            "input_count": 3 if has_vocals else 2,
+            "command": cmd,
+        },
+    )
 
     t0 = time.time()
     try:
@@ -440,17 +693,85 @@ def main() -> int:
     except subprocess.TimeoutExpired:
         logger.error("ffmpeg timed out after %ds.", args.timeout)
         _update_status(job_dir, "failed", 0, f"ffmpeg timeout ({args.timeout}s)")
+        duration_ms = int((time.time() - t0) * 1000)
+        write_event(
+            job_dir,
+            "stage07.ffmpeg_timeout",
+            STAGE,
+            level="error",
+            message=f"ffmpeg timed out after {args.timeout}s",
+            duration_ms=duration_ms,
+            details={"timeout_seconds": args.timeout},
+        )
+        write_event(
+            job_dir,
+            "stage07.render_failed",
+            STAGE,
+            level="error",
+            message=f"ffmpeg timeout ({args.timeout}s)",
+            duration_ms=duration_ms,
+            details={"reason": "ffmpeg_timeout", "timeout_seconds": args.timeout},
+        )
+        _fail_stage07(
+            job_dir,
+            "ffmpeg_timeout",
+            f"ffmpeg timeout ({args.timeout}s)",
+            {"timeout_seconds": args.timeout},
+        )
         return 1
     except FileNotFoundError:
         logger.error("ffmpeg not found in PATH.")
         _update_status(job_dir, "failed", 0, "ffmpeg not in PATH")
+        duration_ms = int((time.time() - t0) * 1000)
+        write_event(
+            job_dir,
+            "stage07.ffmpeg_missing",
+            STAGE,
+            level="error",
+            message="ffmpeg not found in PATH",
+            duration_ms=duration_ms,
+            details={"executable": "ffmpeg"},
+        )
+        write_event(
+            job_dir,
+            "stage07.render_failed",
+            STAGE,
+            level="error",
+            message="ffmpeg not in PATH",
+            duration_ms=duration_ms,
+            details={"reason": "ffmpeg_missing"},
+        )
+        _fail_stage07(job_dir, "ffmpeg_missing", "ffmpeg not in PATH")
         return 1
 
     elapsed = time.time() - t0
+    write_event(
+        job_dir,
+        "stage07.ffmpeg_finished",
+        STAGE,
+        message=f"ffmpeg exited with code {result.returncode}",
+        duration_ms=int(elapsed * 1000),
+        details={"returncode": result.returncode},
+    )
 
     if result.returncode != 0:
         logger.error("ffmpeg exited with code %d.", result.returncode)
         _update_status(job_dir, "failed", 0, f"ffmpeg exit {result.returncode}")
+        write_event(
+            job_dir,
+            "stage07.render_failed",
+            STAGE,
+            level="error",
+            message=f"ffmpeg exit {result.returncode}",
+            duration_ms=int(elapsed * 1000),
+            details={"reason": "ffmpeg_nonzero", "returncode": result.returncode},
+        )
+        _fail_stage07(
+            job_dir,
+            "ffmpeg_nonzero",
+            f"ffmpeg exit {result.returncode}",
+            {"returncode": result.returncode},
+        )
         return 1
 
     logger.info("ffmpeg completed in %.1fs.", elapsed)
@@ -462,15 +783,110 @@ def main() -> int:
         for err in errors:
             logger.error("Output validation: %s", err)
         _update_status(job_dir, "failed", 0, f"Invalid MP4: {errors[0]}")
+        write_event(
+            job_dir,
+            "stage07.render_failed",
+            STAGE,
+            level="error",
+            message=f"Invalid MP4: {errors[0]}",
+            details={"reason": "output_validation_failed", "errors": errors},
+        )
+        _fail_stage07(
+            job_dir,
+            "output_validation_failed",
+            f"Invalid MP4: {errors[0]}",
+            {"errors": errors},
+        )
         return 1
 
     size_mb = output_path.stat().st_size / 1e6
+    output_duration = _probe_media_duration(output_path, timeout=30)
+    manifest_inputs: dict[str, Any] = {
+        "instrumental.wav": {
+            "path": "instrumental.wav",
+            "sha256": file_sha256(instrumental_path),
+            "size_bytes": instrumental_path.stat().st_size,
+        }
+    }
+    if has_vocals:
+        manifest_inputs["vocals.wav"] = {
+            "path": "vocals.wav",
+            "sha256": file_sha256(vocals_path),
+            "size_bytes": vocals_path.stat().st_size,
+        }
+    if ass_path is not None:
+        manifest_inputs["output.ass"] = {
+            "path": "output.ass",
+            "sha256": file_sha256(ass_path),
+            "size_bytes": ass_path.stat().st_size,
+            "manifest": "output.ass.manifest.json",
+            "manifest_sha256": file_sha256(job_dir / "output.ass.manifest.json"),
+        }
+        if ass_manifest is not None:
+            manifest_inputs["output.ass"]["source_stage"] = ass_manifest.get("stage")
+            manifest_inputs["output.ass"]["run_id"] = ass_manifest.get("run_id")
+    mp4_manifest_path = write_manifest(
+        job_dir / "output.mp4.manifest.json",
+        {
+            "stage": "stage07",
+            "inputs": manifest_inputs,
+            "outputs": {
+                "output.mp4": {
+                    "path": "output.mp4",
+                },
+            },
+            "settings": {
+                "vcodec": args.vcodec,
+                "quality": args.quality,
+                "resolution": args.resolution,
+                "framerate": args.framerate,
+                "audio_codec": args.audio_codec,
+                "audio_bitrate": args.audio_bitrate,
+                "no_subtitles": args.no_subtitles,
+                "has_vocals": has_vocals,
+                "instrumental_volume": args.instrumental_volume,
+                "vocals_volume": args.vocals_volume,
+            },
+            "metrics": {
+                "encode_seconds": elapsed,
+                "duration_seconds": output_duration,
+                "size_bytes": output_path.stat().st_size,
+            },
+        },
+        output_paths={"output.mp4": output_path},
+    )
+    output_details: dict[str, Any] = {
+        "path": str(output_path),
+        "name": output_path.name,
+        "size_bytes": output_path.stat().st_size,
+        "manifest_path": str(mp4_manifest_path),
+        "manifest_sha256": file_sha256(mp4_manifest_path),
+    }
+    if output_duration is not None:
+        output_details["duration_seconds"] = output_duration
+    write_event(
+        job_dir,
+        "stage07.output_written",
+        STAGE,
+        message="output.mp4 written",
+        details=output_details,
+        artifact=output_path.name,
+    )
     logger.info(
         "Output OK: %s (%.1f MB)  encode=%.1fs",
         output_path.name, size_mb, elapsed,
     )
 
     _update_status(job_dir, "done", 100)
+    write_event(
+        job_dir,
+        "stage07.completed",
+        STAGE,
+        message="Stage 07 render completed",
+        duration_ms=int(elapsed * 1000),
+        details={"output": str(output_path), "size_bytes": output_path.stat().st_size},
+    )
+    build_observability_summary(job_dir)
     logger.info("Stage 07 complete.")
     return 0
 

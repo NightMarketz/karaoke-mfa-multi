@@ -10,6 +10,15 @@
 jobs_dir  = "jobs"
 log_level = "INFO"   # DEBUG | INFO | WARNING | ERROR
 
+[server]
+host = "0.0.0.0"
+port = 5000
+secret_key = "karaoke-local-dev"
+max_upload_mb = 512
+
+[ui]
+default_style_preset = "single-style-kf"
+
 [hardware]
 profile = "auto"
 
@@ -37,7 +46,7 @@ transcribe_vad       = false
 # Stage 04 · HubertFA
 # PyTorch — DirectML supported.
 align_device     = "directml"
-align_batch_size = 16
+align_batch_size = 8
 
 # Stage 05 · Gemma 4 via Ollama
 # Ollama manages its own GPU allocation — do not override device here.
@@ -76,6 +85,7 @@ ffmpeg_quality       = 23
 
 [demix]
 model = "htdemucs"
+timeout_s = 1800
 # Path to the Python executable in demucs_env.
 # Demucs runs in its own conda env to isolate its heavy dependencies.
 python = "C:/Users/Katz/miniforge3/envs/demucs_env/python.exe"
@@ -87,21 +97,36 @@ mode            = "auto"     # "auto" | "whisper" | "forced"
 model_size      = "large-v3"
 language        = "auto"     # Whisper language code: "auto" | "en" | "ja" | "pt"
 forced_language = "eng"      # ISO-639-3 for MMS forced aligner: eng | jpn | por | zho
+low_confidence_threshold = 0.25
 
 [align]
 hubertfa_dir = "vendor/HubertFA"
 checkpoint   = "models/hubertfa/model.onnx"
-language     = "auto"
+language     = "en"
+hubertfa_timeout_s = 600
+# CTC forced-alignment can produce small overlaps (~20–50 ms) at phrase
+# boundaries. Tolerating up to 50 ms avoids hard-failing valid jobs.
+overlap_tolerance_s = 0.05
 
 [analyze]
+ollama_url   = "http://localhost:11434"
+language     = "en"
+temperature  = 0.3
+timeout_s    = 600
 # ollama_model and num_ctx come from [hardware.*] — not duplicated here.
 max_tokens   = 4096
 
 [generate]
-style_preset = "default"   # "default" | "neon" | "minimal"
+style_preset = "single-style-kf"
 resolution   = "1920x1080"
+fade_in_ms   = 300
+fade_out_ms  = 500
 
 [output]
 audio_codec    = "aac"
 audio_bitrate  = "192k"
+vocals_volume  = 1.0
+instrumental_volume = 1.0
+framerate      = "30"
+ffmpeg_timeout_s = 600
 # video codec and quality come from [hardware.*]

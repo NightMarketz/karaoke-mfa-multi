@@ -1,4 +1,4 @@
-"""
+r"""
 s08_validate.py — Pipeline contract tests and quality metrics.
 
 Runs after a complete pipeline execution to verify correctness of every
@@ -35,6 +35,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scripts.common.observability import build_observability_summary, write_event
+from scripts.common.provenance import ProvenanceError, file_sha256, load_manifest, validate_file_hash
+from scripts.common.validation import find_timestamp_errors, find_word_coverage_errors
+
 logger = logging.getLogger(__name__)
 
 # ── ANSI colours ─────────────────────────────────────────────────────────────
@@ -45,6 +51,8 @@ _RESET  = "\033[0m"
 
 _failures: list[str] = []
 _warnings: list[str] = []
+_current_job_dir: Path | None = None
+_overlap_tolerance_s: float = 0.05
 
 
 def _ok(msg: str) -> None:
@@ -53,11 +61,15 @@ def _ok(msg: str) -> None:
 
 def _warn(msg: str) -> None:
     _warnings.append(msg)
+    if _current_job_dir is not None:
+        write_event(_current_job_dir, "validation_warning", "validating", level="warning", message=msg)
     print(f"  {_YELLOW}[WARN]{_RESET}  {msg}")
 
 
 def _fail(msg: str) -> None:
     _failures.append(msg)
+    if _current_job_dir is not None:
+        write_event(_current_job_dir, "validation_failure", "validating", level="error", message=msg)
     print(f"  {_RED}[FAIL]{_RESET}  {msg}")
 
 
@@ -79,7 +91,7 @@ def _load_json(path: Path) -> dict | list | None:
         _fail(f"Empty file: {path.name}")
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as e:
         _fail(f"{path.name} is not valid JSON: {e}")
         return None
@@ -101,9 +113,75 @@ def _percentile(values: list[float], p: float) -> float:
     return sorted_v[lo] + (sorted_v[hi] - sorted_v[lo]) * (k - lo)
 
 
+def _manifest_sha(manifest: dict[str, Any], section: str, artifact: str) -> str:
+    entries = manifest.get(section)
+    if not isinstance(entries, dict):
+        raise ProvenanceError(f"manifest missing {section}")
+    details = entries.get(artifact)
+    if not isinstance(details, dict):
+        raise ProvenanceError(f"manifest missing {artifact} entry")
+    sha256 = details.get("sha256")
+    if not isinstance(sha256, str) or not sha256:
+        raise ProvenanceError(f"manifest missing {artifact} sha256")
+    return sha256
+
+
+def _ass_dialogue_count(path: Path) -> int:
+    content = path.read_text(encoding="utf-8-sig", errors="replace")
+    return content.count("\nDialogue:")
+
+
 # ---------------------------------------------------------------------------
 # Stage 03 / 03b — transcript.json
 # ---------------------------------------------------------------------------
+def validate_job_contracts(job_dir: Path) -> None:
+    _section("Job Contracts - meta/status")
+
+    meta_path = job_dir / "meta.json"
+    meta = _load_json(meta_path) if meta_path.exists() else None
+    legacy = _load_json(job_dir / "metadata.json") if (job_dir / "metadata.json").exists() else None
+
+    if meta is None:
+        if legacy is not None:
+            _warn("metadata.json found without meta.json - legacy contract only")
+        else:
+            _fail("Missing required meta.json")
+    elif isinstance(meta, dict):
+        required_meta = {
+            "job_id",
+            "song_name",
+            "preset",
+            "created_at",
+            "duration_s",
+            "has_lyrics",
+            "source",
+        }
+        missing = required_meta - set(meta.keys())
+        if missing:
+            _fail(f"meta.json missing keys: {missing}")
+        else:
+            _ok("meta.json contract OK")
+
+    if isinstance(meta, dict) and isinstance(legacy, dict):
+        meta_id = meta.get("job_id")
+        legacy_id = legacy.get("job_id") or legacy.get("id")
+        if meta_id and legacy_id and meta_id != legacy_id:
+            _fail("meta.json and metadata.json have conflicting job identifiers")
+        else:
+            _warn("metadata.json is present as legacy metadata")
+
+    status = _load_json(job_dir / "status.json")
+    if not isinstance(status, dict):
+        _fail("status.json must be an object")
+        return
+
+    required_status = {"stage", "progress", "error", "updated_at"}
+    missing_status = required_status - set(status.keys())
+    if missing_status:
+        _fail(f"status.json missing keys: {missing_status}")
+    else:
+        _ok("status.json contract OK")
+
 
 def validate_transcript(job_dir: Path) -> dict[str, Any] | None:
     _section("Stage 03/03b — transcript.json")
@@ -213,25 +291,23 @@ def validate_aligned(job_dir: Path) -> dict[str, Any] | None:
 
     total = len(words)
     if hfa == 0:
-        _fail("0% HubertFA alignment — HubertFA may have crashed silently")
+        fallback_sources = {"ctc_forced", "whisper_fallback"}
+        if any("fallback" in str(source) or source in fallback_sources for source in sources):
+            _warn("0% HubertFA alignment - using fallback timings")
+        else:
+            _fail("0% HubertFA alignment - no fallback source was recorded")
     elif hfa / total < 0.6:
         _warn(f"HubertFA rate {hfa}/{total} ({100*hfa//total}%) < 60% — many fallbacks")
     else:
         _ok(f"HubertFA alignment rate: {hfa}/{total} ({100*hfa//total}%)")
 
     # Timestamp monotonicity
-    inverted = 0
-    for i, w in enumerate(words):
-        start = w.get("start", 0)
-        end   = w.get("end",   0)
-        if start > end:
-            inverted += 1
-            _fail(f"Word '{w.get('word')}' inverted: {start:.4f} > {end:.4f}")
-
-    if inverted == 0:
-        _ok("All word timestamps: start <= end")
+    timestamp_errors = find_timestamp_errors(words, overlap_tolerance_s=_overlap_tolerance_s)
+    if not timestamp_errors:
+        _ok("All word timestamps: start < end and monotonic")
     else:
-        _fail(f"{inverted} word(s) with inverted timestamps")
+        for error in timestamp_errors:
+            _fail(error)
 
     # low_confidence propagation check
     lc_words = [w for w in words if w.get("low_confidence")]
@@ -259,7 +335,7 @@ def validate_analysis(job_dir: Path, transcript: dict | None, aligned: dict | No
 
     # Schema check
     required = {"text", "start", "end", "style", "words"}
-    valid_styles = {"verse", "chorus", "bridge", "intro", "outro", "ad_lib"}
+    valid_styles = {"verse", "prechorus", "chorus", "bridge", "drop", "intro", "outro", "ad_lib"}
     bad_styles = []
 
     for i, line in enumerate(lines):
@@ -289,15 +365,16 @@ def validate_analysis(job_dir: Path, transcript: dict | None, aligned: dict | No
 
     # Word coverage: every aligned word should appear in analysis
     if aligned:
-        aligned_words = {w["word"].lower() for w in aligned.get("words", [])}
-        analysis_words = {
-            w["word"].lower()
+        aligned_words = aligned.get("words", [])
+        analysis_words = [
+            w
             for line in lines
             for w in line.get("words", [])
-        }
-        uncovered = aligned_words - analysis_words
-        if uncovered:
-            _warn(f"{len(uncovered)} aligned word(s) not in analysis.json")
+        ]
+        coverage_errors = find_word_coverage_errors(aligned_words, analysis_words)
+        if coverage_errors:
+            for error in coverage_errors:
+                _fail(error)
         else:
             _ok(f"Word coverage: all {len(aligned_words)} aligned words present")
 
@@ -349,22 +426,19 @@ def validate_ass(job_dir: Path) -> None:
         _fail("No Dialogue lines in ASS")
         return
 
-    _ok(f"Dialogue lines: {n_lines} ({n_lines // 2} visible lines × 2 layers)")
-
-    # Pair check: should be even (layer 0 + layer 1 for each line)
-    if n_lines % 2 != 0:
-        _warn(f"Odd number of Dialogue lines ({n_lines}) — expected even (2 per lyric line)")
+    _ok(f"Dialogue lines: {n_lines}")
 
     # Timestamp checks
     inverted_ts = 0
-    overlaps = 0
 
     timestamps: list[tuple[int, int]] = []
+    timestamps_by_layer: dict[int, list[tuple[int, int]]] = {}
     for d in dialogues:
         parts = d.split(",")
         if len(parts) < 3:
             continue
         try:
+            layer = int(parts[0].split(":", 1)[1].strip())
             s_ms = _ts_to_ms(parts[1].strip())
             e_ms = _ts_to_ms(parts[2].strip())
         except (ValueError, IndexError):
@@ -372,27 +446,115 @@ def validate_ass(job_dir: Path) -> None:
         if e_ms <= s_ms:
             inverted_ts += 1
         timestamps.append((s_ms, e_ms))
+        timestamps_by_layer.setdefault(layer, []).append((s_ms, e_ms))
 
     if inverted_ts:
         _fail(f"{inverted_ts} Dialogue lines with end ≤ start")
     else:
         _ok("All Dialogue timestamps: end > start")
 
-    # Check overlaps within each layer
-    layer0 = timestamps[0::2]  # even indices
-    layer0_overlaps = sum(
-        1 for i in range(len(layer0) - 1)
-        if layer0[i][1] > layer0[i + 1][0]
-    )
-    if layer0_overlaps:
-        _warn(f"{layer0_overlaps} display window overlap(s) in layer 0")
+    # Check overlaps within each ASS layer. Single-layer karaoke is the
+    # default, but this keeps validation correct for imported/editable ASS.
+    layer_overlaps: dict[int, int] = {}
+    for layer, layer_timestamps in timestamps_by_layer.items():
+        ordered = sorted(layer_timestamps)
+        overlap_count = sum(
+            1 for i in range(len(ordered) - 1)
+            if ordered[i][1] > ordered[i + 1][0]
+        )
+        if overlap_count:
+            layer_overlaps[layer] = overlap_count
+
+    if layer_overlaps:
+        details = ", ".join(
+            f"layer {layer}: {count}" for layer, count in sorted(layer_overlaps.items())
+        )
+        _fail(f"display window overlap(s): {details}")
     else:
-        _ok("No display window overlaps in layer 0")
+        _ok("No display window overlaps within ASS layers")
 
 
 # ---------------------------------------------------------------------------
 # Drift metrics — compare transcript.json vs reference_mapping.json
 # ---------------------------------------------------------------------------
+
+def validate_provenance(job_dir: Path) -> None:
+    _section("Artifact Provenance Graph")
+
+    ass_path = job_dir / "output.ass"
+    current_ass_sha256: str | None = None
+    if ass_path.exists():
+        try:
+            manifest = load_manifest(job_dir / "output.ass.manifest.json")
+            validate_file_hash(ass_path, _manifest_sha(manifest, "outputs", "output.ass"))
+            current_ass_sha256 = file_sha256(ass_path)
+            _ok("output.ass hash matches output.ass.manifest.json")
+
+            renderer_mode = manifest.get("renderer_mode")
+            if renderer_mode != "single_layer_kf":
+                _fail(f"output.ass renderer_mode must be single_layer_kf, got {renderer_mode!r}")
+            else:
+                _ok("renderer_mode: single_layer_kf")
+
+            metrics = manifest.get("metrics")
+            if not isinstance(metrics, dict):
+                _fail("output.ass.manifest.json missing metrics")
+            else:
+                dialogue_count = _ass_dialogue_count(ass_path)
+                if metrics.get("dialogue_count") != dialogue_count:
+                    _fail(
+                        "output.ass.manifest.json dialogue_count mismatch: "
+                        f"{metrics.get('dialogue_count')} != {dialogue_count}"
+                    )
+                else:
+                    _ok(f"ASS dialogue_count provenance OK: {dialogue_count}")
+
+                analysis_path = job_dir / "analysis.json"
+                if analysis_path.exists():
+                    analysis = _load_json(analysis_path)
+                    if isinstance(analysis, dict):
+                        lines = analysis.get("lines", [])
+                        if metrics.get("analysis_line_count") != len(lines):
+                            _fail(
+                                "output.ass.manifest.json analysis_line_count mismatch: "
+                                f"{metrics.get('analysis_line_count')} != {len(lines)}"
+                            )
+                        else:
+                            _ok(f"analysis_line_count provenance OK: {len(lines)}")
+
+            inputs = manifest.get("inputs")
+            if isinstance(inputs, dict) and "analysis.json" in inputs and (job_dir / "analysis.json").exists():
+                validate_file_hash(job_dir / "analysis.json", _manifest_sha(manifest, "inputs", "analysis.json"))
+                _ok("analysis.json hash matches output.ass.manifest.json")
+        except ProvenanceError as exc:
+            _fail(f"output.ass.manifest.json invalid: {exc}")
+    else:
+        _warn("output.ass absent - ASS provenance skipped")
+
+    mp4_path = job_dir / "output.mp4"
+    if not mp4_path.exists():
+        _warn("output.mp4 absent - MP4 provenance skipped")
+        return
+
+    try:
+        manifest = load_manifest(job_dir / "output.mp4.manifest.json")
+        validate_file_hash(mp4_path, _manifest_sha(manifest, "outputs", "output.mp4"))
+        _ok("output.mp4 hash matches output.mp4.manifest.json")
+
+        expected_ass_sha256 = _manifest_sha(manifest, "inputs", "output.ass")
+        if current_ass_sha256 is None:
+            if not ass_path.exists():
+                raise ProvenanceError("output.mp4.manifest.json declares output.ass but output.ass is missing")
+            current_ass_sha256 = file_sha256(ass_path)
+        if expected_ass_sha256 != current_ass_sha256:
+            raise ProvenanceError(
+                "output.mp4.manifest.json output.ass input hash mismatch: "
+                f"{expected_ass_sha256} != {current_ass_sha256}"
+            )
+        _ok("output.mp4 input output.ass hash matches current output.ass")
+    except ProvenanceError as exc:
+        _fail(f"output.mp4.manifest.json invalid: {exc}")
+
 
 def validate_drift(job_dir: Path, ref_path: Path | None, transcript: dict | None) -> None:
     _section("Drift Metrics — CTC vs Ground Truth")
@@ -481,6 +643,9 @@ def validate_drift(job_dir: Path, ref_path: Path | None, transcript: dict | None
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    global _current_job_dir, _overlap_tolerance_s
+    _failures.clear()
+    _warnings.clear()
     parser = argparse.ArgumentParser(
         description="Stage 08 — Pipeline contract tests and quality metrics.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -490,9 +655,13 @@ def main() -> int:
                         help="Path to reference_mapping.json for drift metrics.")
     parser.add_argument("--log-level", default="WARNING",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument("--overlap-tolerance", type=float, default=0.05,
+                        help="Seconds of backward overlap to allow before flagging as error.")
     args = parser.parse_args()
 
     job_dir = args.job_dir.resolve()
+    _current_job_dir = job_dir
+    _overlap_tolerance_s = args.overlap_tolerance
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -502,11 +671,21 @@ def main() -> int:
     print(f"  Pipeline Validation — {job_dir.name}")
     print(f"{'=' * 60}")
 
-    transcript = validate_transcript(job_dir)
-    aligned    = validate_aligned(job_dir)
-    validate_analysis(job_dir, transcript, aligned)
-    validate_ass(job_dir)
-    validate_drift(job_dir, args.reference, transcript)
+    write_event(job_dir, "validation_started", "validating")
+    unexpected_error = ""
+    try:
+        validate_job_contracts(job_dir)
+        transcript = validate_transcript(job_dir)
+        aligned    = validate_aligned(job_dir)
+        validate_analysis(job_dir, transcript, aligned)
+        validate_ass(job_dir)
+        validate_provenance(job_dir)
+        validate_drift(job_dir, args.reference, transcript)
+    except Exception as exc:
+        unexpected_error = str(exc)
+        _fail(f"Unexpected validation error: {unexpected_error}")
+    finally:
+        _current_job_dir = None
 
     # -- Summary -----------------------------------------------------------
     print(f"\n{'=' * 60}")
@@ -523,7 +702,25 @@ def main() -> int:
             print(f"    {_YELLOW}[WARN]{_RESET}  {w}")
     print(f"{'=' * 60}\n")
 
-    return 1 if _failures else 0
+    exit_code = 1 if _failures else 0
+    write_event(
+        job_dir,
+        "validation_finished",
+        "validating",
+        level="error" if _failures else "info",
+        message="validation failed" if _failures else "validation passed",
+        details={
+            "exit_code": exit_code,
+            "failure_count": len(_failures),
+            "warning_count": len(_warnings),
+            "failures": list(_failures),
+            "warnings": list(_warnings),
+        },
+    )
+    build_observability_summary(job_dir)
+    if unexpected_error:
+        raise RuntimeError(unexpected_error)
+    return exit_code
 
 
 if __name__ == "__main__":

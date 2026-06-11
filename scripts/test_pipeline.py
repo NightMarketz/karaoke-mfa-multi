@@ -11,20 +11,140 @@ import subprocess
 import json
 import requests
 import argparse
+import hashlib
 from pathlib import Path
+
+try:
+    import tomllib
+except ImportError:  # pragma: no cover - Python < 3.11 fallback
+    tomllib = None
 
 # Fix Windows encoding issues for checkmark/cross symbols
 if sys.platform == "win32":
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 # Paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.common.config import load_app_config
+
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 JOBS_DIR = PROJECT_ROOT / "jobs"
 DEFAULT_TEST_JOB = JOBS_DIR / "test-struggle"
 DEFAULT_INPUT = DEFAULT_TEST_JOB / "input.wav"
+FFPROBE_TIMEOUT_S = 30
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def _read_json_object(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+def resolve_stage06_preset(
+    job_dir: Path,
+    pipeline_toml: Path = PROJECT_ROOT / "pipeline.toml",
+) -> str:
+    """Resolve the ASS style preset with job metadata taking precedence."""
+    meta = _read_json_object(job_dir / "meta.json")
+    preset = meta.get("preset")
+    if isinstance(preset, str) and preset.strip():
+        return preset.strip()
+
+    try:
+        return load_app_config(pipeline_toml).generate_style_preset_id
+    except (OSError, tomllib.TOMLDecodeError):
+        return load_app_config(Path("__missing_pipeline.toml")).generate_style_preset_id
+
+def build_stage06_args(
+    job_dir: Path,
+    pipeline_toml: Path = PROJECT_ROOT / "pipeline.toml",
+) -> list[str]:
+    preset = resolve_stage06_preset(job_dir, pipeline_toml)
+    return ["--job-dir", str(job_dir), "--preset", preset]
+
+def _ass_dialogue_count(content: str) -> int:
+    return content.count("\nDialogue:")
+
+def _has_base_dialogue(content: str) -> bool:
+    return any(
+        line.startswith("Dialogue:") and "Base,," in line
+        for line in content.splitlines()
+    )
+
+def _manifest_sha(manifest: dict, section: str, artifact: str) -> str | None:
+    entries = manifest.get(section)
+    if not isinstance(entries, dict):
+        return None
+    item = entries.get(artifact)
+    if not isinstance(item, dict):
+        return None
+    sha = item.get("sha256")
+    return sha if isinstance(sha, str) and sha else None
+
+def validate_integration_provenance(job_dir: Path) -> bool:
+    """Validate the final ASS/MP4 provenance graph after Stage 07."""
+    analysis_path = job_dir / "analysis.json"
+    ass_path = job_dir / "output.ass"
+    ass_manifest_path = job_dir / "output.ass.manifest.json"
+    mp4_path = job_dir / "output.mp4"
+    mp4_manifest_path = job_dir / "output.mp4.manifest.json"
+
+    is_ok = True
+    is_ok &= validate(ass_manifest_path.exists(), "output.ass.manifest.json exists")
+    is_ok &= validate(mp4_manifest_path.exists(), "output.mp4.manifest.json exists")
+    if not is_ok:
+        return False
+
+    try:
+        analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+        ass_content = ass_path.read_text(encoding="utf-8")
+        ass_manifest = json.loads(ass_manifest_path.read_text(encoding="utf-8"))
+        mp4_manifest = json.loads(mp4_manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return validate(False, "provenance artifacts are readable JSON/text", str(exc))
+
+    lines = analysis.get("lines") if isinstance(analysis, dict) else None
+    line_count = len(lines) if isinstance(lines, list) else -1
+    dialogue_count = _ass_dialogue_count(ass_content)
+    is_ok &= validate(
+        dialogue_count == line_count,
+        "ASS dialogue count equals analysis line count",
+        f"Dialogue={dialogue_count}, analysis lines={line_count}",
+    )
+    is_ok &= validate(not _has_base_dialogue(ass_content), "ASS has no Base,, dialogue")
+
+    current_ass_sha = file_sha256(ass_path)
+    current_analysis_sha = file_sha256(analysis_path)
+    current_mp4_sha = file_sha256(mp4_path)
+    declared_analysis_sha = _manifest_sha(ass_manifest, "inputs", "analysis.json")
+    is_ok &= validate(
+        declared_analysis_sha == current_analysis_sha,
+        "output.ass.manifest.json references current analysis.json hash",
+    )
+    is_ok &= validate(
+        _manifest_sha(ass_manifest, "outputs", "output.ass") == current_ass_sha,
+        "output.ass.manifest.json references current output.ass hash",
+    )
+    is_ok &= validate(
+        _manifest_sha(mp4_manifest, "outputs", "output.mp4") == current_mp4_sha,
+        "output.mp4.manifest.json references current output.mp4 hash",
+    )
+    is_ok &= validate(
+        _manifest_sha(mp4_manifest, "inputs", "output.ass") == current_ass_sha,
+        "output.mp4.manifest.json references current output.ass hash",
+    )
+    return bool(is_ok)
 
 def validate(condition, message, hint=""):
     """Standardized validation reporting."""
@@ -36,8 +156,9 @@ def validate(condition, message, hint=""):
     print(f"  ✓ {message}")
     return True
 
-def check_ollama(url="http://localhost:11434"):
+def check_ollama(url: str | None = None):
     """Check if Ollama is running and accessible."""
+    url = url or load_app_config().ollama_url
     try:
         resp = requests.get(f"{url}/api/tags", timeout=5)
         return resp.status_code == 200
@@ -65,7 +186,12 @@ def _get_wav_duration(path: Path) -> float:
         "-of", "default=noprint_wrappers=1:nokey=1", 
         str(path)
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=FFPROBE_TIMEOUT_S
+        )
+    except subprocess.TimeoutExpired:
+        return 0.0
     try:
         return float(result.stdout.strip())
     except Exception:
@@ -306,24 +432,25 @@ def main():
 
     # ── Stage 05: Analyze ────────────────────────────────────
     print("\n--- Checking Pre-requisites (Stage 05) ---")
-    if not check_ollama():
-        validate(False, "Ollama connection", "Is Ollama running at localhost:11434?")
-        sys.exit(1)
-    else:
-        validate(True, "Ollama connection")
-
     s05_args = ["--job-dir", str(job_dir)]
     lyrics_file = job_dir / "lyrics.txt"
     if lyrics_file.exists():
         s05_args.extend(["--lyrics", str(lyrics_file)])
+        validate(True, "Ollama skipped for forced lyrics path")
+    else:
+        ollama_url = load_app_config().ollama_url
+        if not check_ollama(ollama_url):
+            validate(False, "Ollama connection", f"Is Ollama running at {ollama_url}?")
+            sys.exit(1)
+        validate(True, "Ollama connection")
 
-    if not run_script("s05_analyze.py", s05_args, timeout=600):
+    if not run_script("s05_analyze.py", s05_args, timeout=load_app_config().ollama_timeout_s):
         sys.exit(1)
     if not validate_stage_05(job_dir):
         sys.exit(1)
 
     # ── Stage 06: Generate ASS ───────────────────────────────
-    if not run_script("s06_generate_ass.py", ["--job-dir", str(job_dir)]):
+    if not run_script("s06_generate_ass.py", build_stage06_args(job_dir)):
         sys.exit(1)
     if not validate_stage_06(job_dir):
         sys.exit(1)
@@ -332,6 +459,8 @@ def main():
     if not run_script("s07_output.py", ["--job-dir", str(job_dir)], timeout=300):
         sys.exit(1)
     if not validate_stage_07(job_dir):
+        sys.exit(1)
+    if not validate_integration_provenance(job_dir):
         sys.exit(1)
 
     print("\n====================================================")

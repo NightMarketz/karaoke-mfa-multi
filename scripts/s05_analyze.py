@@ -60,13 +60,14 @@ import urllib.error
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.common.config import load_app_config
+from scripts.common.observability import write_event
+from scripts.common.validation import find_timestamp_errors
 
 logger = logging.getLogger(__name__)
-
-OLLAMA_DEFAULT_URL   = "http://localhost:11434"
-OLLAMA_DEFAULT_MODEL = "gemma4:27b"
 
 # Maximum words per display line — LLM is instructed to respect this,
 # but we also enforce it in post-processing as a hard cap.
@@ -188,12 +189,14 @@ def _correct_low_confidence(
 SECTION_TO_STYLE: dict[str, str] = {
     "intro":         "intro",
     "verse":         "verse",
-    "pre-chorus":    "verse",
-    "pre-chorus 2":  "verse",
+    "pre-chorus":    "prechorus",
+    "prechorus":     "prechorus",
+    "pre-chorus 2":  "prechorus",
     "chorus":        "chorus",
     "chorus 2":      "chorus",
     "interlude":     "bridge",
     "bridge":        "bridge",
+    "drop":          "drop",
     "outro chorus":  "outro",
     "outro hook":    "outro",
     "outro":         "outro",
@@ -203,8 +206,10 @@ SECTION_TO_STYLE: dict[str, str] = {
 STYLE_DEFAULTS: dict[str, dict[str, str]] = {
     "intro":   {"color": "soft",    "effect": "fade_in"},
     "verse":   {"color": "default", "effect": "highlight"},
+    "prechorus": {"color": "warm",  "effect": "highlight"},
     "chorus":  {"color": "intense", "effect": "highlight"},
     "bridge":  {"color": "cool",    "effect": "highlight"},
+    "drop":    {"color": "warm",    "effect": "highlight"},
     "outro":   {"color": "warm",    "effect": "fade_in"},
     "ad_lib":  {"color": "soft",    "effect": "none"},
 }
@@ -492,16 +497,33 @@ def _validate_analysis(data: dict) -> list[str]:
     if "lines" not in data or not data["lines"]:
         return ["'lines' is missing or empty"]
 
-    first = data["lines"][0]
-    for key in ("text", "start", "end", "style", "words"):
-        if key not in first:
-            errors.append(f"First line missing key: '{key}'")
+    valid_styles = {"verse", "prechorus", "chorus", "bridge", "drop", "intro", "outro", "ad_lib"}
+    bad_styles = []
 
-    valid_styles = {"verse", "chorus", "bridge", "intro", "outro", "ad_lib"}
-    bad_styles = [
-        l["style"] for l in data["lines"]
-        if l.get("style") not in valid_styles
-    ]
+    for index, line in enumerate(data["lines"]):
+        for key in ("text", "start", "end", "style", "words"):
+            if key not in line:
+                errors.append(f"Line {index} missing key: '{key}'")
+        if "start" in line and "end" in line and line["end"] <= line["start"]:
+            errors.append(f"Line {index} end <= start: {line['start']} -> {line['end']}")
+        if line.get("style") not in valid_styles:
+            bad_styles.append(line.get("style"))
+
+        words = line.get("words")
+        if not isinstance(words, list) or not words:
+            continue
+        line_end = float(line.get("end", 0.0))
+        errors.extend(
+            f"Line {index}: {error}"
+            for error in find_timestamp_errors(words, segment_end=line_end)
+        )
+        first_word = words[0]
+        last_word = words[-1]
+        if abs(float(line.get("start", 0.0)) - float(first_word.get("start", 0.0))) > 0.001:
+            errors.append(f"Line {index} start does not match first word")
+        if abs(float(line.get("end", 0.0)) - float(last_word.get("end", 0.0))) > 0.001:
+            errors.append(f"Line {index} end does not match last word")
+
     if bad_styles:
         errors.append(f"Unknown style values: {set(bad_styles)}")
 
@@ -523,27 +545,62 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
     status_path.write_text(json.dumps(existing, indent=2))
 
 
+def _stage05_event(
+    job_dir: Path,
+    event: str,
+    level: str = "info",
+    message: str = "",
+    **details: Any,
+) -> None:
+    write_event(
+        job_dir,
+        event,
+        "analyzing",
+        level=level,
+        message=message,
+        details=details,
+    )
+
+
+def _stage05_missing_job_event(
+    job_dir: Path,
+    level: str,
+    message: str,
+    **details: Any,
+) -> None:
+    parent = job_dir.parent if job_dir.parent != job_dir else Path.cwd()
+    write_event(
+        parent / "_stage05",
+        "stage05.failed",
+        "analyzing",
+        level=level,
+        message=message,
+        details={"missing_job_dir": str(job_dir), **details},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> int:
     hw: HardwareProfile = detect()
+    app_config = load_app_config()
 
     parser = argparse.ArgumentParser(
         description="Stage 05 — Lyric analysis (deterministic or LLM).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--job-dir",     required=True, type=Path)
-    parser.add_argument("--ollama-url",  default=OLLAMA_DEFAULT_URL)
+    parser.add_argument("--ollama-url",  default=app_config.ollama_url)
     parser.add_argument("--model",       default=hw.ollama_model,
                         help="Ollama model. hw_detect default: %(default)s.")
-    parser.add_argument("--temperature", type=float, default=0.3)
+    parser.add_argument("--temperature", type=float, default=app_config.ollama_temperature)
     parser.add_argument("--num-ctx",     type=int, default=hw.ollama_num_ctx,
                         help="Context window. hw_detect default: %(default)s.")
-    parser.add_argument("--timeout",     type=int, default=600,
+    parser.add_argument("--timeout",     type=int, default=app_config.ollama_timeout_s,
                         help="Per-request timeout in seconds.")
-    parser.add_argument("--language",    default="en",
+    parser.add_argument("--language",    default=app_config.analyze_language,
                         help="Language hint passed to the LLM in the prompt.")
     parser.add_argument("--lyrics",      type=Path, default=None,
                         metavar="PATH",
@@ -553,29 +610,49 @@ def main() -> int:
                             "classification, (2) used to correct low_confidence words "
                             "from transcript.json before sending to the LLM."
                         ))
-    parser.add_argument("--log-level",   default="INFO",
+    parser.add_argument("--force-rule-based", action="store_true",
+                        help="Skip Ollama and group aligned words deterministically.")
+    parser.add_argument("--log-level",   default=app_config.log_level,
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
 
     job_dir: Path = args.job_dir.resolve()
+    log_handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if job_dir.exists():
+        log_handlers.append(logging.FileHandler(job_dir / "pipeline.log", mode="a"))
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(job_dir / "pipeline.log", mode="a"),
-        ],
+        force=True,
+        handlers=log_handlers,
     )
 
     if not job_dir.exists():
-        logger.error("Job directory does not exist: %s", job_dir)
+        message = f"Job directory does not exist: {job_dir}"
+        logger.error(message)
+        _stage05_missing_job_event(
+            job_dir,
+            level="error",
+            message=message,
+            reason="job_dir_missing",
+            path=str(job_dir),
+        )
         return 1
 
     # ── Validate inputs ────────────────────────────────────────────────────
     for fname in ("transcript.json", "aligned.json"):
         p = job_dir / fname
         if not p.exists() or p.stat().st_size == 0:
-            logger.error("%s missing or empty. Run earlier stages first.", fname)
+            message = f"{fname} missing or empty. Run earlier stages first."
+            logger.error(message)
+            _stage05_event(
+                job_dir,
+                "stage05.failed",
+                level="error",
+                message=message,
+                reason="missing_input",
+                artifact=fname,
+            )
             return 1
 
     # ── Load data ──────────────────────────────────────────────────────────
@@ -584,7 +661,16 @@ def main() -> int:
 
     words = aligned.get("words", [])
     if not words:
-        logger.error("aligned.json has no words.")
+        message = "aligned.json has no words."
+        logger.error(message)
+        _stage05_event(
+            job_dir,
+            "stage05.failed",
+            level="error",
+            message=message,
+            reason="aligned_words_empty",
+            artifact="aligned.json",
+        )
         return 1
 
     language       = transcript.get("language", args.language)
@@ -595,6 +681,15 @@ def main() -> int:
         "Stage 05 · Analyze  alignment_mode=%s  words=%d  segments=%d  language=%s",
         alignment_mode, len(words), len(segments), language,
     )
+    _stage05_event(
+        job_dir,
+        "stage05.started",
+        alignment_mode=alignment_mode,
+        language=language,
+        word_count=len(words),
+        segment_count=len(segments),
+        force_rule_based=args.force_rule_based,
+    )
 
     # ── Low-confidence word correction via lyrics.txt ─────────────────────
     lyrics_path: Path | None = args.lyrics
@@ -603,13 +698,33 @@ def main() -> int:
         if auto.exists():
             lyrics_path = auto
             logger.info("Auto-discovered lyrics: %s", lyrics_path)
+            _stage05_event(
+                job_dir,
+                "stage05.lyrics_reference_loaded",
+                source="auto",
+                path=str(lyrics_path),
+            )
 
     if lyrics_path and lyrics_path.exists():
         logger.info("Loaded reference lyrics from %s", lyrics_path)
+        if args.lyrics is not None:
+            _stage05_event(
+                job_dir,
+                "stage05.lyrics_reference_loaded",
+                source="cli",
+                path=str(lyrics_path),
+            )
         words = _correct_low_confidence(words, transcript, lyrics_path)
     else:
         lc = [w for w in words if w.get("low_confidence")]
         if lc:
+            _stage05_event(
+                job_dir,
+                "stage05.low_confidence_without_lyrics",
+                level="warning",
+                count=len(lc),
+                words=[w["word"] for w in lc],
+            )
             logger.warning(
                 "%d low-confidence words in aligned output (no lyrics for correction): %s",
                 len(lc), [w["word"] for w in lc],
@@ -620,12 +735,27 @@ def main() -> int:
     # ══════════════════════════════════════════════════════════════════════
     # PATH A: Forced alignment — deterministic, no LLM
     # ══════════════════════════════════════════════════════════════════════
-    if alignment_mode == "forced" and segments:
+    if args.force_rule_based:
+        logger.info("Rule-based analysis forced by CLI; Ollama skipped")
+        _stage05_event(job_dir, "stage05.path_selected", path="rule_based_forced")
+        _stage05_event(job_dir, "stage05.ollama_skipped", reason="force_rule_based")
+        _update_status(job_dir, "analyzing", 50)
+        lines = _rule_based_grouper(words)
+
+    elif alignment_mode == "forced" and segments:
+        path = "forced_alignment"
+        skip_reason = "forced_alignment"
         logger.info(
-            "Forced alignment detected — using deterministic segment grouper "
+            "Forced alignment detected - using deterministic segment grouper "
             "(%d segments, LLM skipped)",
             len(segments),
         )
+        _stage05_event(
+            job_dir,
+            "stage05.path_selected",
+            path=path,
+        )
+        _stage05_event(job_dir, "stage05.ollama_skipped", reason=skip_reason)
         _update_status(job_dir, "analyzing", 50)
         lines = _segment_aware_grouper(segments, words)
 
@@ -634,14 +764,36 @@ def main() -> int:
     # ══════════════════════════════════════════════════════════════════════
     else:
         logger.info("Whisper path — using LLM for line grouping (model=%s)", args.model)
+        _stage05_event(job_dir, "stage05.path_selected", path="llm", model=args.model)
 
         # Check Ollama connectivity (only needed for LLM path)
         logger.info("Checking Ollama at %s...", args.ollama_url)
         err = _check_ollama(args.ollama_url, args.model)
         if err:
             logger.error("Ollama check failed: %s", err)
+            _stage05_event(
+                job_dir,
+                "stage05.ollama_check_failed",
+                level="error",
+                message=err,
+                error=err,
+            )
+            _stage05_event(
+                job_dir,
+                "stage05.failed",
+                level="error",
+                message=err,
+                reason="ollama_check_failed",
+                error=err,
+            )
             return 1
         logger.info("Ollama OK — model %s is available", args.model)
+        _stage05_event(
+            job_dir,
+            "stage05.ollama_check_succeeded",
+            model=args.model,
+            url=args.ollama_url,
+        )
 
         prompt = _build_prompt(words, language, lyrics_path)
         logger.debug("Prompt (%d chars):\n%s", len(prompt), prompt)
@@ -650,6 +802,12 @@ def main() -> int:
 
         for attempt in range(1, MAX_RETRIES + 1):
             logger.info("LLM call attempt %d/%d...", attempt, MAX_RETRIES)
+            _stage05_event(
+                job_dir,
+                "stage05.llm_attempt_started",
+                attempt=attempt,
+                max_retries=MAX_RETRIES,
+            )
             _update_status(job_dir, "analyzing", 10 + attempt * 20)
 
             try:
@@ -663,6 +821,22 @@ def main() -> int:
                 )
             except RuntimeError as e:
                 logger.error("Ollama stream failed: %s", e)
+                _stage05_event(
+                    job_dir,
+                    "stage05.llm_attempt_failed",
+                    level="error",
+                    message=str(e),
+                    attempt=attempt,
+                    error=str(e),
+                )
+                _stage05_event(
+                    job_dir,
+                    "stage05.failed",
+                    level="error",
+                    message=str(e),
+                    reason="llm_attempt_failed",
+                    error=str(e),
+                )
                 _update_status(job_dir, "failed", 0, str(e))
                 return 1
 
@@ -671,12 +845,33 @@ def main() -> int:
 
             if lines is not None:
                 logger.info("LLM response parsed OK on attempt %d (%d lines)", attempt, len(lines))
+                _stage05_event(
+                    job_dir,
+                    "stage05.llm_parse_succeeded",
+                    attempt=attempt,
+                    line_count=len(lines),
+                    response_length=len(raw),
+                )
                 break
             else:
+                _stage05_event(
+                    job_dir,
+                    "stage05.llm_parse_failed",
+                    level="warning",
+                    attempt=attempt,
+                    response_length=len(raw),
+                )
                 logger.warning("Attempt %d: LLM returned unparseable JSON — retrying", attempt)
 
         # Fallback if all retries failed
         if lines is None:
+            _stage05_event(
+                job_dir,
+                "stage05.fallback_used",
+                level="warning",
+                reason="llm_unparseable",
+                max_retries=MAX_RETRIES,
+            )
             lines = _rule_based_grouper(words)
 
     # ── Build and validate output ─────────────────────────────────────────
@@ -684,7 +879,33 @@ def main() -> int:
     errors   = _validate_analysis(analysis)
     if errors:
         for e in errors:
-            logger.warning("Analysis validation: %s", e)
+            logger.error("Analysis validation: %s", e)
+        _stage05_event(
+            job_dir,
+            "stage05.analysis_invalid",
+            level="error",
+            message=errors[0],
+            error_count=len(errors),
+            first_error=errors[0],
+        )
+        _stage05_event(
+            job_dir,
+            "stage05.validation_failed",
+            level="error",
+            message=errors[0],
+            error_count=len(errors),
+            first_error=errors[0],
+        )
+        _stage05_event(
+            job_dir,
+            "stage05.failed",
+            level="error",
+            message=errors[0],
+            reason="validation_failed",
+            error=errors[0],
+        )
+        _update_status(job_dir, "failed", 0, errors[0])
+        return 1
 
     # Log style distribution for quick verification
     style_dist: dict[str, int] = {}
@@ -701,12 +922,24 @@ def main() -> int:
         "Written: %s (%d lines, %.1f KB)",
         output_path.name, len(lines), output_path.stat().st_size / 1e3,
     )
+    _stage05_event(
+        job_dir,
+        "stage05.analysis_written",
+        path=str(output_path),
+        line_count=len(lines),
+        size_bytes=output_path.stat().st_size,
+    )
 
     _update_status(job_dir, "analyzing", 100)
+    _stage05_event(
+        job_dir,
+        "stage05.completed",
+        line_count=len(lines),
+        style_distribution=style_dist,
+    )
     logger.info("Stage 05 complete.")
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-
