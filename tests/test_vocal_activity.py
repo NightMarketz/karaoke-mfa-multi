@@ -4,9 +4,9 @@ import unittest
 import wave
 from pathlib import Path
 
-import pytest
+from tests._optional_imports import import_or_skip
 
-pytest.importorskip("numpy")
+import_or_skip("numpy")
 from scripts.review_wizard.vocal_activity import VocalActivityProbe
 from scripts.review_wizard.timing_layers import build_audio_activity_map, build_audio_backed_timing
 

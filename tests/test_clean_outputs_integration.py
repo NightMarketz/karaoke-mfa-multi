@@ -9,9 +9,9 @@ import unittest
 import wave
 from pathlib import Path
 
-import pytest
+from tests._optional_imports import import_or_skip
 
-pytest.importorskip("numpy")
+import_or_skip("numpy")
 
 from scripts.common.provenance import file_sha256
 from scripts import struggle_regeneration_audit as audit

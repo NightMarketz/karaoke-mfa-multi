@@ -25,20 +25,20 @@
       <span>{{ meta.song_name }}</span>
     </a>
     <nav class="cockpit-nav">
-      <a class="cockpit-nav-item" href="/?job={{ meta.job_id }}">
-        <span aria-hidden="true">+</span><span>New</span>
+      <a class="cockpit-nav-item" href="/?job={{ meta.job_id }}" title="New karaoke">
+        <span class="cockpit-nav-icon icon-new" aria-hidden="true"></span><span>New</span>
       </a>
-      <a class="cockpit-nav-item" href="/?job={{ meta.job_id }}#recent-projects">
-        <span aria-hidden="true">[]</span><span>Projects</span>
+      <a class="cockpit-nav-item" href="/?job={{ meta.job_id }}#recent-projects" title="Recent projects">
+        <span class="cockpit-nav-icon icon-projects" aria-hidden="true"></span><span>Projects</span>
       </a>
-      <a class="cockpit-nav-item is-active" href="/?job={{ meta.job_id }}&amp;mode=review">
-        <span aria-hidden="true">*</span><span>Review</span>
+      <a class="cockpit-nav-item is-active" href="/?job={{ meta.job_id }}&amp;mode=review" title="Review">
+        <span class="cockpit-nav-icon icon-review" aria-hidden="true"></span><span>Review</span>
       </a>
-      <a class="cockpit-nav-item" href="/job/{{ meta.job_id }}/review?stage=preview">
-        <span aria-hidden="true">v</span><span>Preview</span>
+      <a class="cockpit-nav-item" href="/job/{{ meta.job_id }}/review?stage=preview" title="Preview">
+        <span class="cockpit-nav-icon icon-preview" aria-hidden="true"></span><span>Preview</span>
       </a>
-      <a class="cockpit-nav-item {{ 'is-disabled' if export_blocked else '' }}" href="/job/{{ meta.job_id }}/review?stage=export">
-        <span aria-hidden="true">o</span><span>Export</span>
+      <a class="cockpit-nav-item {{ 'is-disabled' if export_blocked else '' }}" href="/job/{{ meta.job_id }}/review?stage=export" title="Export">
+        <span class="cockpit-nav-icon icon-export" aria-hidden="true"></span><span>Export</span>
       </a>
     </nav>
     <div class="cockpit-sidebar-status mono">
@@ -265,6 +265,7 @@
                       title="{{ marker.label }} {{ marker.display_title }}"
                       aria-label="{{ marker.label }} {{ marker.display_title }}"
                       aria-current="{{ 'true' if marker.is_active else 'false' }}"
+                      tabindex="{{ '0' if marker.is_active or loop.first else '-1' }}"
                       data-timeline-marker
                       data-point-id="{{ marker.id }}"
                       data-level="{{ marker.level }}"

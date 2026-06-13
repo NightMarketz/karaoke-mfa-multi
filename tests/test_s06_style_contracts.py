@@ -6,10 +6,10 @@ metrics extraction that every render path depends on.
 
 import unittest
 
-import pytest
+from tests._optional_imports import import_or_skip
 
-pytest.importorskip("numpy")
-pytest.importorskip("pysubs2")
+import_or_skip("numpy")
+import_or_skip("pysubs2")
 
 from scripts.s06_generate_ass import (
     _ass_metrics,

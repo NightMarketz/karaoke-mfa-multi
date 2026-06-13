@@ -7,7 +7,6 @@ a key, these tests break and make the impact explicit.
 """
 
 import json
-import pytest
 from pathlib import Path
 
 

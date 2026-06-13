@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
+from tests._optional_imports import import_or_skip
 
-pytest.importorskip("flask")
+import_or_skip("flask")
 import server
 from scripts.review_wizard.contracts import Issue, Project, QualityReport
 from scripts.review_wizard.store import save_project

@@ -9,9 +9,9 @@ import wave
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
+from tests._optional_imports import import_or_skip
 
-pytest.importorskip("numpy")
+import_or_skip("numpy")
 from scripts.common.observability import read_events
 from scripts.common.provenance import file_sha256
 from scripts.karaoke_styles.library import PRESETS as LIBRARY_PRESETS, get_preset, list_preset_ids

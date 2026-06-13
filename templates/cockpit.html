@@ -10,21 +10,21 @@
       <span>Karaoke MFA Multi</span>
     </a>
     <nav class="cockpit-nav">
-      <a class="cockpit-nav-item {{ 'is-active' if mode == 'new' else '' }}" href="/">
-        <span aria-hidden="true">+</span><span>New</span>
+      <a class="cockpit-nav-item {{ 'is-active' if mode == 'new' else '' }}" href="/" title="New karaoke">
+        <span class="cockpit-nav-icon icon-new" aria-hidden="true"></span><span>New</span>
       </a>
-      <a class="cockpit-nav-item" href="#recent-projects">
-        <span aria-hidden="true">[]</span><span>Projects</span>
+      <a class="cockpit-nav-item" href="#recent-projects" title="Recent projects">
+        <span class="cockpit-nav-icon icon-projects" aria-hidden="true"></span><span>Projects</span>
       </a>
       {% if selected_job %}
-      <a class="cockpit-nav-item {{ 'is-active' if mode == 'review' else '' }}" href="/?job={{ selected_job.job_id }}&mode=review">
-        <span aria-hidden="true">*</span><span>Review</span>
+      <a class="cockpit-nav-item {{ 'is-active' if mode == 'review' else '' }}" href="/?job={{ selected_job.job_id }}&mode=review" title="Review">
+        <span class="cockpit-nav-icon icon-review" aria-hidden="true"></span><span>Review</span>
       </a>
       {% else %}
-      <span class="cockpit-nav-item is-disabled"><span aria-hidden="true">*</span><span>Review</span></span>
+      <span class="cockpit-nav-item is-disabled" title="Review unavailable"><span class="cockpit-nav-icon icon-review" aria-hidden="true"></span><span>Review</span></span>
       {% endif %}
-      <span class="cockpit-nav-item is-disabled"><span aria-hidden="true">v</span><span>Exports</span></span>
-      <span class="cockpit-nav-item is-disabled"><span aria-hidden="true">o</span><span>Settings</span></span>
+      <span class="cockpit-nav-item is-disabled" title="Exports unavailable"><span class="cockpit-nav-icon icon-export" aria-hidden="true"></span><span>Exports</span></span>
+      <span class="cockpit-nav-item is-disabled" title="Settings unavailable"><span class="cockpit-nav-icon icon-settings" aria-hidden="true"></span><span>Settings</span></span>
     </nav>
     <div class="cockpit-sidebar-status mono">
       <span>{{ service_summary.label }}</span>

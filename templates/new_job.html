@@ -10,7 +10,7 @@
 
 {% if server_busy %}
 <div class="alert alert-warn" style="margin-bottom:1.5rem;padding:1rem 1.25rem;border:1px solid var(--color-warn,#f59e0b);border-radius:4px;background:rgba(245,158,11,0.08);">
-  <strong class="mono">// SERVER BUSY</strong> — a pipeline is already running
+  <strong class="mono">// SERVER BUSY</strong> &mdash; a pipeline is already running
   {% if running_job_id %}(<a href="/job/{{ running_job_id }}" class="mono">{{ running_job_id }}</a>){% endif %}.
   New submissions are blocked until it completes.
 </div>

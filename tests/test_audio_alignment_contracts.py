@@ -11,8 +11,6 @@ import inspect
 import pathlib
 import re
 
-import pytest
-
 from scripts.common.config import (
     DEFAULT_GENERATE_ASS_PREROLL_MS,
     DEFAULT_GENERATE_ASS_POSTROLL_MS,
