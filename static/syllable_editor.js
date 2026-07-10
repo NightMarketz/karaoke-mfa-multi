@@ -33,6 +33,9 @@ const state = {
   loop: null,   // {start,end} playback loop
   rate: 1,      // playback speed
   dirty: false, // unsaved edits on the current word
+  filter: 'pending', // queue filter: pending | worst | all
+  undo: [],     // local undo stack for the current word (snapshots)
+  origKey: '',  // signature of the word's original segments (for dirty check)
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -49,6 +52,19 @@ function confClass(c) { return c == null ? '' : c >= 0.75 ? 'hi' : c >= THRESHOL
 function confMark(c) { const k = confClass(c); return k === 'hi' ? '✓' : k === 'mid' ? '~' : k === 'lo' ? '!' : ''; }
 function confVar(c) { const k = confClass(c); return k === 'hi' ? 'good' : k === 'mid' ? 'warn' : 'bad'; }
 function setDirty(v) { state.dirty = v; document.body.classList.toggle('dirty', v); }
+function segKey() { return JSON.stringify([state.bounds, state.texts]); }
+function recomputeDirty() { setDirty(segKey() !== state.origKey); }
+
+// ---- local undo (per word) -----------------------------------------------
+function snapshot() { return { bounds: state.bounds.slice(), texts: state.texts.slice(), confs: state.confs.slice(), sel: state.sel }; }
+function pushUndo() { state.undo.push(snapshot()); if (state.undo.length > 60) state.undo.shift(); }
+function undo() {
+  if (!state.undo.length) { toast('Nada para desfazer'); return; }
+  const s = state.undo.pop();
+  state.bounds = s.bounds; state.texts = s.texts; state.confs = s.confs; state.sel = s.sel;
+  recomputeDirty();
+  renderSegments();
+}
 
 // ---- data ----------------------------------------------------------------
 async function loadQueue() {
@@ -149,18 +165,67 @@ function updateProgress() {
   const fill = $('#pfill'); if (fill) fill.style.width = total ? (done / total * 100) + '%' : '0';
 }
 
+function qitemEl(it, i) {
+  const div = document.createElement('div');
+  div.className = 'qitem' + (i === state.current ? ' active' : '') + (it.resolved ? ' resolved' : '');
+  const cc = confClass(it.min_confidence);
+  div.innerHTML = `<span class="word-t">${escapeHtml(it.word_text || '·')}</span>` +
+    `<span class="conf ${cc}"><span>${confMark(it.min_confidence)}</span>${it.min_confidence.toFixed(2)}</span>`;
+  div.addEventListener('click', () => select(i));
+  return div;
+}
+// Build the display list: a flat worst-first list ('worst') or verses grouped
+// by line, each group ordered by reading position and floated up by its worst
+// confidence.
+function queueSections() {
+  const rows = state.queue.map((it, idx) => ({ it, idx }));
+  if (state.filter === 'worst') {
+    return [{ header: null, rows: rows.filter(r => !r.it.resolved).sort((a, b) => a.it.min_confidence - b.it.min_confidence) }];
+  }
+  const visible = state.filter === 'all' ? rows : rows.filter(r => !r.it.resolved);
+  const groups = new Map();
+  for (const r of visible) {
+    const k = r.it.line_id || '';
+    if (!groups.has(k)) groups.set(k, { line_text: r.it.line_text, rows: [], worst: 1, total: 0 });
+    const g = groups.get(k);
+    g.rows.push(r); g.worst = Math.min(g.worst, r.it.min_confidence);
+  }
+  const arr = [...groups.values()];
+  arr.forEach(g => g.rows.sort((a, b) => a.it.word_start - b.it.word_start));
+  arr.sort((a, b) => a.worst - b.worst);
+  return arr.map(g => ({ header: g, rows: g.rows }));
+}
 function renderQueue() {
   const q = $('#queue');
   q.innerHTML = '';
-  state.queue.forEach((it, i) => {
-    const div = document.createElement('div');
-    div.className = 'qitem' + (i === state.current ? ' active' : '') + (it.resolved ? ' resolved' : '');
-    const cc = confClass(it.min_confidence);
-    div.innerHTML = `<span class="word-t">${escapeHtml(it.word_text || '·')}</span>` +
-      `<span class="conf ${cc}"><span>${confMark(it.min_confidence)}</span>${it.min_confidence.toFixed(2)}</span>`;
-    div.addEventListener('click', () => select(i));
-    q.appendChild(div);
+  let shown = 0;
+  for (const sect of queueSections()) {
+    if (sect.header) {
+      const done = sect.rows.filter(r => r.it.resolved).length;
+      const h = document.createElement('div');
+      h.className = 'qgroup';
+      h.innerHTML = `<span class="gt">${escapeHtml(sect.header.line_text || '(sem verso)')}</span>` +
+        `<span class="gc">${sect.rows.length - done}/${sect.rows.length}</span>`;
+      q.appendChild(h);
+    }
+    for (const r of sect.rows) { q.appendChild(qitemEl(r.it, r.idx)); shown++; }
+  }
+  if (!shown) q.innerHTML = '<div class="qempty">Nada aqui neste filtro.</div>';
+}
+function setupFilters() {
+  document.querySelectorAll('#filters .chip').forEach(b => {
+    b.addEventListener('click', () => {
+      state.filter = b.dataset.f;
+      document.querySelectorAll('#filters .chip').forEach(x => x.classList.toggle('on', x === b));
+      renderQueue();
+    });
   });
+}
+function setupHelp() {
+  const m = $('#shortcuts');
+  $('#help').addEventListener('click', () => { m.hidden = !m.hidden; });
+  $('#closeHelp').addEventListener('click', () => { m.hidden = true; });
+  m.addEventListener('click', e => { if (e.target === m) m.hidden = true; });
 }
 
 // ---- editor --------------------------------------------------------------
@@ -181,6 +246,7 @@ function ensureEditor() {
   $('#nudgeR').addEventListener('click', () => nudge(0.1));
   $('#split').addEventListener('click', splitAtPlayhead);
   $('#merge').addEventListener('click', mergeSelected);
+  $('#undo').addEventListener('click', undo);
   $('#reset').addEventListener('click', resetWord);
   $('#save').addEventListener('click', () => save(false));
   $('#accept').addEventListener('click', () => save(true));
@@ -278,6 +344,7 @@ function loadSegments(it) {
   segs.forEach(s => { state.bounds.push(s.end); state.texts.push(s.text || ''); state.confs.push(s.confidence); });
   state.sel = Math.min(1, state.bounds.length - 1);
   state.loop = { start: it.word_start, end: it.word_end };
+  state.origKey = segKey();
 }
 
 function select(i) {
@@ -287,6 +354,7 @@ function select(i) {
   ensureEditor();
   const it = state.queue[i];
   loadSegments(it);
+  state.undo = [];
   setDirty(false);
   state.view = baseWin(it);
   els.ctx.innerHTML = `<b>${escapeHtml(it.line_text || '')}</b> · word [${it.word_start.toFixed(2)}–${it.word_end.toFixed(2)}s] · min conf <span style="color:var(--${confVar(it.min_confidence)})">${it.min_confidence.toFixed(2)}</span>`;
@@ -429,7 +497,13 @@ function renderSegList() {
       `<input class="txt" value="${escapeHtml(state.texts[i])}" data-i="${i}" aria-label="Syllable ${i + 1} text">` +
       `<span class="rng">${state.bounds[i].toFixed(2)}–${state.bounds[i + 1].toFixed(2)}s (${(state.bounds[i + 1] - state.bounds[i]).toFixed(2)}s)</span>` +
       (conf != null ? `<span class="c" style="color:var(--${confVar(conf)})">${confMark(conf)} ${conf.toFixed(2)}</span>` : '');
-    row.querySelector('input').addEventListener('input', e => { state.texts[i] = e.target.value; setDirty(true); });
+    const inp = row.querySelector('input');
+    let edited = false;                       // one undo snapshot per editing session
+    inp.addEventListener('focus', () => { edited = false; });
+    inp.addEventListener('input', e => {
+      if (!edited) { pushUndo(); edited = true; }
+      state.texts[i] = e.target.value; recomputeDirty();
+    });
     row.querySelector('[data-play]').addEventListener('click', () => playSegment(i));
     list.appendChild(row);
   }
@@ -444,7 +518,7 @@ function clampBound(b, t) {
 }
 function setBound(b, t) {
   state.bounds[b] = round3(clampBound(b, t));
-  setDirty(true);
+  recomputeDirty();
   renderSegments();
 }
 function snapTime(t) {
@@ -458,6 +532,7 @@ function snapTime(t) {
 function startDrag(e) {
   e.preventDefault();
   e.currentTarget.focus();
+  pushUndo();
   const b = Number(e.currentTarget.dataset.b);
   state.sel = b;
   renderSegments();
@@ -468,19 +543,21 @@ function startDrag(e) {
 }
 function nudge(dt) {
   if (state.sel < 0 || state.sel >= state.bounds.length) state.sel = 1;
+  pushUndo();
   setBound(state.sel, state.bounds[state.sel] + dt);
 }
 function splitAtPlayhead() {
   const t = state.audioEl ? state.audioEl.currentTime : (state.loop.start + state.loop.end) / 2;
   for (let i = 0; i < state.texts.length; i++) {
     if (t > state.bounds[i] + MIN_SEG && t < state.bounds[i + 1] - MIN_SEG) {
+      pushUndo();
       const txt = state.texts[i];
       const mid = Math.max(1, Math.round(txt.length / 2));
       state.texts.splice(i, 1, txt.slice(0, mid), txt.slice(mid));
       state.bounds.splice(i + 1, 0, round3(t));
       state.confs.splice(i, 1, state.confs[i], state.confs[i]);
       state.sel = i + 1;
-      setDirty(true);
+      recomputeDirty();
       renderSegments();
       return;
     }
@@ -490,15 +567,24 @@ function splitAtPlayhead() {
 function mergeSelected() {
   const b = state.sel;
   if (b <= 0 || b >= state.bounds.length - 1) { toast('Select an internal boundary to merge'); return; }
+  pushUndo();
   state.texts.splice(b - 1, 2, (state.texts[b - 1] || '') + (state.texts[b] || ''));
   const ca = state.confs[b - 1], cb = state.confs[b];
   state.confs.splice(b - 1, 2, ca == null || cb == null ? null : Math.min(ca, cb));
   state.bounds.splice(b, 1);
   state.sel = Math.min(b, state.bounds.length - 1);
-  setDirty(true);
+  recomputeDirty();
   renderSegments();
 }
-function resetWord() { loadSegments(cur()); setDirty(false); renderSegments(); drawWave(); }
+function resetWord() {
+  if (segKey() === state.origKey) return;   // nothing to reset
+  pushUndo();
+  const orig = state.origKey;
+  loadSegments(cur());
+  state.origKey = orig;                      // keep the original signature stable
+  recomputeDirty();
+  renderSegments(); drawWave();
+}
 
 // ---- playback ------------------------------------------------------------
 function cycleRate() {
@@ -595,6 +681,13 @@ function advance() {
 
 // ---- keyboard ------------------------------------------------------------
 document.addEventListener('keydown', e => {
+  const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+  // globals that work even when a button/handle is focused (but not while typing)
+  if (!typing) {
+    if (e.key === '?') { e.preventDefault(); const m = $('#shortcuts'); m.hidden = !m.hidden; return; }
+    if (e.key === 'Escape') { const m = $('#shortcuts'); if (m && !m.hidden) { m.hidden = true; return; } }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undo(); return; }
+  }
   if (['INPUT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName)) return;  // let native controls handle keys
   if (state.current < 0) return;
   const step = e.shiftKey ? 0.1 : 0.02;
@@ -614,4 +707,6 @@ document.addEventListener('keydown', e => {
 function round3(t) { return Math.round(t * 1000) / 1000; }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
+setupFilters();
+setupHelp();
 loadQueue();

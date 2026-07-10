@@ -110,6 +110,26 @@
   .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(8px);background:#12121c;border:1px solid var(--accent);color:var(--fg);padding:10px 16px;border-radius:6px;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;z-index:20}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   .toast.err{border-color:var(--bad)}
+  /* queue filters + line grouping */
+  .filters{display:flex;gap:4px;padding:6px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .chip{font-size:11px;padding:4px 9px;background:#14142a;border:1px solid var(--line);border-radius:12px;color:var(--dim);cursor:pointer}
+  .chip:hover{border-color:var(--line-hi)}
+  .chip.on{color:#001014;background:var(--accent);border-color:var(--accent);font-weight:bold}
+  .qgroup{display:flex;justify-content:space-between;gap:8px;padding:9px 16px 4px;font-size:11px;letter-spacing:.04em;color:var(--dim);border-top:1px solid var(--line)}
+  .qgroup:first-child{border-top:none}
+  .qgroup .gt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#a9a9c8}
+  .qgroup .gc{flex:none}
+  .qempty{padding:30px 16px;text-align:center;color:var(--dim);font-size:12px}
+  /* header help button + shortcuts modal */
+  .hbtn{background:#171727;color:var(--accent);border:1px solid var(--line);border-radius:50%;width:26px;height:26px;padding:0;font-size:14px;line-height:1;cursor:pointer}
+  .hbtn:hover{border-color:var(--line-hi)}
+  .modal{position:fixed;inset:0;background:rgba(3,3,8,.62);display:flex;align-items:center;justify-content:center;z-index:30;padding:20px}
+  .modal[hidden]{display:none}
+  .modal-card{background:var(--panel);border:1px solid var(--line-hi);border-radius:8px;padding:20px 24px;max-width:480px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+  .modal-card h3{margin:0 0 14px;color:var(--accent);letter-spacing:.1em}
+  .modal-card dl{margin:0 0 16px;display:grid;grid-template-columns:auto 1fr;gap:8px 16px;font-size:13px;align-items:baseline}
+  .modal-card dt{white-space:nowrap}
+  .modal-card dd{margin:0;color:var(--dim)}
   @media(max-width:720px){.wrap{grid-template-columns:1fr}.queue{max-height:26vh}.stage{height:210px}.legend{display:none}}
   @media(prefers-reduced-motion:reduce){
     *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
@@ -127,12 +147,19 @@
   <span class="progress" title="progress"><i id="pfill"></i></span>
   <span class="dim" id="counter">…</span>
   <span class="dim dirty-dot" id="dirtydot" title="unsaved edits"></span>
-  <a class="dim" style="margin-left:auto" href="/job/{{ job_id }}/review">← back to review</a>
+  <span style="margin-left:auto"></span>
+  <button id="help" class="hbtn" title="Atalhos (?)" aria-label="Keyboard shortcuts">?</button>
+  <a class="dim" href="/job/{{ job_id }}/review">← back to review</a>
 </header>
 
 <div class="wrap">
   <aside class="queue">
-    <h2>PENDING · conf &lt; {{ uncertain_threshold }}</h2>
+    <h2>QUEUE · conf &lt; {{ uncertain_threshold }}</h2>
+    <div class="filters" id="filters">
+      <button class="chip on" data-f="pending">Pendentes</button>
+      <button class="chip" data-f="worst">Piores</button>
+      <button class="chip" data-f="all">Todas</button>
+    </div>
     <div id="queue"></div>
   </aside>
   <section class="main" id="main">
@@ -141,6 +168,27 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="modal" id="shortcuts" hidden>
+  <div class="modal-card">
+    <h3>ATALHOS</h3>
+    <dl>
+      <dt><kbd>space</kbd></dt><dd>play / pause</dd>
+      <dt>clique na sílaba</dt><dd>ouvir só ela</dd>
+      <dt>clique / arraste na waveform</dt><dd>scrub / seek</dd>
+      <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>nudge 0.02s (<kbd>shift</kbd> 0.1s)</dd>
+      <dt><kbd>tab</kbd></dt><dd>focar as alças de fronteira</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>navegar a fila</dd>
+      <dt><kbd>enter</kbd></dt><dd>salvar e ir para a próxima</dd>
+      <dt><kbd>+</kbd> <kbd>−</kbd> / roda</dt><dd>zoom</dd>
+      <dt><kbd>shift</kbd>+roda</dt><dd>scroll horizontal</dd>
+      <dt>arraste perto do <span style="color:var(--purple)">tick roxo</span></dt><dd>snap ao onset (<kbd>shift</kbd> = livre)</dd>
+      <dt><kbd>ctrl</kbd>+<kbd>z</kbd></dt><dd>desfazer edição</dd>
+      <dt><kbd>?</kbd></dt><dd>abrir / fechar este painel</dd>
+    </dl>
+    <button id="closeHelp" class="primary">Fechar</button>
+  </div>
+</div>
 
 <template id="editor-tpl">
   <div class="ctx" id="ctx"></div>
@@ -177,6 +225,7 @@
       <button id="nudgeR" title="Nudge boundary right">+ 0.1s</button>
       <button id="split">Split</button>
       <button id="merge">Merge</button>
+      <button id="undo" title="Undo (Ctrl+Z)">↶ Undo</button>
       <button id="reset" class="ghost">Reset</button>
     </span>
     <span style="margin-left:auto"></span>
