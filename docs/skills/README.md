@@ -1,38 +1,38 @@
-# Skills Inventory
+# Skills do projeto
 
-This page lists the current project-local skills. Use
-[Skill Routing](routing.md) to decide when a skill applies, and use
-[Skill Gap Analysis](gap-analysis.md) before creating new skills.
+Skills locais no formato SDD (spec-first, não TDD). Cada skill tem regra de
+domínio + passo de **verificação executável**. Use [routing.md](routing.md) para
+decidir quando cada uma se aplica.
 
-## Active Project Skills
+## Superfícies
 
-- `.Codex/skills/pap-ollama/SKILL.md` - canonical PAP-Ollama workflow.
-- `.Codex/skills/hardcoded-config-audit/SKILL.md` - evidence-first audit for
-  hardcoded paths, models, thresholds, defaults, and configuration refactors.
+- **`.claude/skills/`** — canônica para Claude Code (esta sessão).
+- **`.Codex/skills/`** — mirror para Codex, conteúdo idêntico (referenciado por [`../../AGENTS.md`](../../AGENTS.md)).
 
-## Canonical Codex Skill
+Os dois hosts leem diretórios diferentes, então a duplicação é da plataforma;
+mantenha as duas cópias iguais ao editar.
 
-- `.Codex/skills/pap-ollama/SKILL.md`
+## Active Project Skills (skills ativas — 4)
 
-This is the project-local Codex PAP-Ollama workflow referenced by `AGENTS.md`.
-It writes prompts and outputs under `.Codex/tasks`.
+| Skill | Quando | Verificação |
+|---|---|---|
+| `pap-ollama` | Geração local via Ollama (Plan-Audit-Patch). Manual (`disable-model-invocation`). | suíte verde; draft nunca aplicado sem auditoria |
+| `hardcoded-config-audit` | Mudar path/model/host/porta/timeout/threshold hardcoded ou centralizar config. | `test_app_config` + suíte |
+| `audio-alignment-audit` | Mudar constante de timing/alinhamento (min_dur, MIN_WORD_MS, snap, preroll/postroll/gap, melisma). | `test_audio_alignment_contracts.py` |
+| `pipeline-stage-contracts` | Mudar artefato/schema/ordem de estágio (transcript/aligned/analysis/ass/manifest). | `test_pipeline_stage_contracts.py` |
 
-## Compatibility Skills
+## Skills adiadas (rubric não atingido *ainda*)
 
-- `.claude/skills/pap-ollama/SKILL.md`
-- `.agents/skills/pap-ollama/SKILL.md`
+Só vira skill o que **recorre + tem regra de domínio com julgamento + tem
+verificação executável**. Estas ficam adiadas até haver recorrência real; por ora
+a regra vive na spec:
 
-The `.claude` skill is referenced by `CLAUDE.md`. The `.agents` folder exists
-locally for Antigravity-style agent workflows and is ignored by git, so it
-should not be treated as the repository source of truth.
+- **`review-wizard-qa`** — fluxo do Review Wizard (points, issues, preview, export gate). Regra já capturada em [../../spec/STATE_MACHINES.md](../../spec/STATE_MACHINES.md); vira skill quando o QA do wizard recorrer como tarefa.
+- **`karaoke-style-library`** — presets/seção→estilo/efeitos. Regra em [ADR-004](../../spec/ADR/ADR-004-versioned-style-library.md); `test_karaoke_style_library.py` já protege. Skill só se edições de estilo virarem frequentes.
+- **`provenance-artifact-audit`** — manifests/hash/reuso. Coberto por `pipeline-stage-contracts` + `test_provenance_contracts.py`; não minta skill separada sem necessidade recorrente.
 
-## PAP-Ollama Rule
+## Regra de criação
 
-Codex plans and audits. Ollama drafts locally. Any output from Ollama must be
-checked against the context contract before code is changed.
-
-## Creation Rule
-
-Do not create a new skill just because a workflow is repeated once. Create a
-skill only when the gap analysis identifies repeated work, clear project rules,
-and testable verification criteria.
+Não crie skill porque um workflow se repetiu uma vez. Crie só quando houver
+trabalho recorrente, regra clara de projeto e critério de verificação testável
+(ver [gap-analysis.md](gap-analysis.md) e [../../spec/TASK_SPEC_TEMPLATE.md](../../spec/TASK_SPEC_TEMPLATE.md)).

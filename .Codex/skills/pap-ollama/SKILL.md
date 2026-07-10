@@ -1,31 +1,45 @@
 ---
-description: Workflow PAP local: Codex plans, Ollama drafts, Codex audits and applies a minimal patch.
+name: pap-ollama
+description: Use when the user asks for local code generation via Ollama, token savings, or a Codex + Ollama loop ("gerar local", "economizar tokens", "rodar com Ollama"). Plan-Audit-Patch — the agent plans and audits, Ollama drafts locally, only a minimal verified patch is applied.
 disable-model-invocation: true
 ---
 
 # PAP-Ollama Workflow
 
-This is the canonical project-local PAP-Ollama skill for Codex.
+Manual-only. Codex is the architect and auditor; Ollama is the local executor.
+**Local model output is an untrusted draft** — never applied without audit. This
+is the canonical Codex surface; `.claude/skills/pap-ollama` mirrors it for Claude Code.
 
-## Stage 1 - Domain Context Discovery
+## Core Rule
+Nothing Ollama produces reaches the code until it is audited against the context
+contract and reduced to the smallest verified patch.
 
-Generate `.Codex/tasks/context-contract.md` with focus on audio processing,
-forced alignment, minimum word duration, and karaoke timing constraints.
+## When to Use / When Not
+- **Use when:** offloading bulk code generation to a local model to save tokens, on this repo's audio/alignment domain.
+- **Do NOT use when:** a change is one line, security-sensitive, or needs judgment the local model can't verify — do it directly.
 
-## Stage 2 - Prompt For Ollama
+## SDD Contract (spec-first)
+Before drafting, write the source of truth:
+- **Context contract:** `.Codex/tasks/context-contract.md` — the domain rules the draft must obey (audio processing, forced alignment, `min_dur` 50ms, `MIN_WORD_MS` 80ms, artifact contracts). See [../../../spec/PROJECT_CONSTITUTION.md](../../../spec/PROJECT_CONSTITUTION.md).
+- **Must NOT change:** stage ids `s01–s08`, artifact names, the timing constants, the export gate.
 
-Generate `.Codex/tasks/current-prompt.md`.
+## Required Workflow
+1. **Domain context discovery** — write `.Codex/tasks/context-contract.md`.
+2. **Prompt** — write `.Codex/tasks/current-prompt.md` for Ollama.
+3. **Local execution** — run the draft:
+   ```powershell
+   .\.Codex\skills\pap-ollama\scripts\run-ollama.ps1
+   ```
+4. **Audit & minimal patch** — review `.Codex/tasks/current-output.md` against the context contract; apply only the smallest verified change.
 
-## Stage 3 - Local Execution
+## Common Mistakes
+- Applying the draft wholesale instead of a minimal audited patch.
+- Skipping the context contract (no spec = no gate).
+- Letting the draft touch anything on the "must NOT change" list.
 
-Run:
-
-```powershell
-.\.Codex\skills\pap-ollama\scripts\run-ollama.ps1
+## Executable Verification
+```bash
+pytest tests
 ```
-
-## Stage 4 - Audit And Minimal Patch
-
-Review `.Codex/tasks/current-output.md` against the context contract. Treat
-local model output as an untrusted draft and apply only the smallest verified
-patch.
+Pass criterion: suite green and no timing/artifact contract changed unless the
+matching contract test was updated in the same commit.

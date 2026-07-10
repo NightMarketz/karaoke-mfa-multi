@@ -1,28 +1,18 @@
-# Architecture Map
+# Arquitetura (visão)
 
-## Pipeline Stages
+Resumo. O detalhe técnico canônico está em [../../spec/SDD.md](../../spec/SDD.md).
 
-- `scripts/s01_input.py` - input validation and WAV normalization.
-- `scripts/s02_demix.py` - Demucs source separation.
-- `scripts/s03_transcribe.py` - Whisper transcription when lyrics are absent.
-- `scripts/s03b_lyrics_align.py` - lyrics-first CTC alignment.
-- `scripts/s04_align.py` - HubertFA phoneme alignment and fallback timing.
-- `scripts/s05_analyze.py` - line grouping and style analysis.
-- `scripts/s06_generate_ass.py` - ASS subtitle generation.
-- `scripts/s07_output.py` - MP4 rendering with ffmpeg.
-- `scripts/s08_validate.py` - pipeline validation.
+- **Servidor**: `server.py`, Flask puro, single-user local, **sem auth**. 22 rotas; toda `/job/<id>` passa por guarda de path.
+- **Estado**: cada job é um diretório `jobs/{job_id}/` — única fonte de verdade ([ADR-001](../../spec/ADR/ADR-001-file-based-architecture.md)).
+- **Pipeline**: processos Python `s01–s08` orquestrados por `scripts/pipeline_runner.py`; cada estágio via subprocess, com watchdog = timeout do estágio + 60s.
+- **Caminho MVP**: com `lyrics.txt` → alinhamento forçado (`s03b`) → `s04` (HubertFA) → `s05` (análise) → `s06` (ASS `\kf`) → `s07` (render ffmpeg) → `s08` (validação). Sem letra, cai no fallback Whisper (`s03`).
+- **Config**: `pipeline.toml`, sobreponível por env `KARAOKE_*`. Precedência CLI > env > toml > default.
+- **Qualidade**: Review Wizard + export gate + manifests SHA-256 barram export com erro perceptual ou artefato adulterado.
 
-## Orchestration
+```
+Upload → s01/s02 (ingest) → [s03b|s03] → s04 → s05 → s06 → s07 → s08 → Review Wizard → export
+```
 
-- `scripts/pipeline_runner.py` runs the staged pipeline for web jobs.
-- `server.py` exposes the Flask UI, job lifecycle, review wizard, and exports.
-- `pipeline.toml` holds project-level pipeline defaults where they already
-  exist.
-
-## Review And Quality
-
-- `scripts/review_wizard/` contains review wizard state, issue, export, and
-  timing analysis modules.
-- `scripts/common/` contains shared observability, path, status, provenance,
-  and validation helpers.
-- `tests/` contains unit and contract tests for pipeline behavior.
+Módulos: `scripts/review_wizard/` (estado, issue, export, timing), `scripts/common/`
+(observabilidade, paths, status, proveniência, validação), `scripts/karaoke_styles/`
+(Style Library). Diagramas em [../../spec/GRAPHS.md](../../spec/GRAPHS.md).

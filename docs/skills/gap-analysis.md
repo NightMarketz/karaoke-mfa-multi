@@ -1,40 +1,47 @@
 # Skill Gap Analysis
 
-This document tracks useful project-local skills that do not exist yet. It is
-an evidence file, not a mandate to create every listed skill.
+Quais skills existem, quais faltam e a evidência exigida antes de criar uma nova.
+A regra de criação (3 barras) está no [README.md](README.md).
+
+## Active Project Skills (implementadas)
+
+Passaram as 3 barras (recorrência + regra de domínio + verificação executável):
+
+- `hardcoded-config-audit` — verificada por `test_app_config`.
+- `pipeline-stage-contracts` — verificada por `test_pipeline_stage_contracts.py`.
+- `audio-alignment-audit` — verificada por `test_audio_alignment_contracts.py`.
+- `pap-ollama` — workflow manual Plan-Audit-Patch (ver [routing.md](routing.md)).
+
+## Deferred candidates (adiadas)
+
+Ainda não recorrem como tarefa própria; a regra já vive na spec e em testes de
+contrato. Não crie até haver recorrência real:
+
+- `review-wizard-qa` — QA do fluxo do Review Wizard. Regra em [../../spec/STATE_MACHINES.md](../../spec/STATE_MACHINES.md); já coberto por `test_review_wizard_*`.
+- `karaoke-style-library` — presets/seção→estilo/efeitos. Regra em [../../spec/ADR/ADR-004-versioned-style-library.md](../../spec/ADR/ADR-004-versioned-style-library.md); coberto por `test_karaoke_style_library`.
+- `provenance-artifact-audit` — manifests/hash/reuso. Coberto por `pipeline-stage-contracts` + `test_provenance_contracts`.
+- `pap-ollama-audit` — a etapa de auditoria já é parte da skill `pap-ollama`; não minta skill separada.
+
+## Evidence
+
+Antes de promover um candidato a skill, junte a evidência:
+
+- Quantas tarefas distintas invocariam a regra (recorrência).
+- Qual regra de domínio com julgamento ela protege (não algo que um linter/CI resolve).
+- Qual comando de teste prova o resultado (verificação executável).
+
+## Priority
+
+Ordem de promoção quando/se a recorrência aparecer:
+
+1. `review-wizard-qa` (maior superfície de decisão perceptual).
+2. `karaoke-style-library` (evita duplicar regra de seção/estilo).
+3. `provenance-artifact-audit` (só se o reuso de artefato virar tarefa recorrente).
+4. `pap-ollama-audit` (baixa — já embutida em `pap-ollama`).
 
 ## Creation Criteria
 
-A candidate skill should be created only when all of these are true:
-
-- The workflow has been repeated or is likely to recur across multiple tasks.
-- The project has domain-specific rules that a general skill will miss.
-- The skill can name concrete inputs, outputs, and verification steps.
-- The skill reduces ambiguity without hiding important engineering judgment.
-
-## Gap Matrix
-
-| Candidate | Evidence | Priority | Creation Criteria |
-| --- | --- | --- | --- |
-| `audio-alignment-audit` | Alignment constraints appear in `AGENTS.md`, `s03b_lyrics_align.py`, `s04_align.py`, `s06_generate_ass.py`, `s08_validate.py`, and review wizard timing modules. | High | Create when auditing or changing word duration, drift, gap, melisma, sustain, or fallback timing behavior. |
-| `hardcoded-config-audit` | Hardcoded paths, models, host/port, thresholds, render defaults, and hardware assumptions were found across setup, server, and pipeline scripts. | High | Create before structural config refactors so each change has evidence, SDD rationale, and tests. |
-| `pipeline-stage-contracts` | Stages `s01` through `s08` exchange fixed artifacts such as `vocals.wav`, `transcript.json`, `aligned.json`, `analysis.json`, `output.ass`, and manifests. | High | Create when editing stage inputs, outputs, invalidation rules, manifests, or pipeline orchestration. |
-| `review-wizard-qa` | Review wizard modules cover stages, review points, issue resolution, quality gates, preview approval, versioning, and export decisions. | Medium | Create when changing review UX behavior, risk approval, export gating, or preview workflow contracts. |
-| `karaoke-style-library` | Style presets, section mapping, effects, and ASS styling are central to output quality and appear in both style library and generation paths. | Medium | Create when adding presets, changing section mapping, or modifying ASS style/effect semantics. |
-| `provenance-artifact-audit` | Provenance helpers, manifests, hashes, artifact reuse audit notes, and clean-output integration tests already exist. | Medium | Create when changing artifact reuse, manifest schema, hash validation, or regeneration audit behavior. |
-| `pap-ollama-audit` | PAP-Ollama is now present across `.Codex`, `.claude`, and `.agents`, with local model output explicitly treated as untrusted draft material. | Low | Create if local Ollama workflows become more than prompt generation and require repeatable audit checklists. |
-
-## Recommended Order
-
-1. `hardcoded-config-audit`
-2. `pipeline-stage-contracts`
-3. `audio-alignment-audit`
-4. `provenance-artifact-audit`
-5. `review-wizard-qa`
-6. `karaoke-style-library`
-7. `pap-ollama-audit`
-
-## Current Decision
-
-Do not create these skills in this slice. Keep the list as a planning and
-review tool until a task needs one of the workflows.
+Só crie a skill quando as 3 barras forem atingidas ao mesmo tempo: recorrência
+real, regra de domínio que exige julgamento, e um passo de verificação
+executável. Caso contrário, mantenha a regra na spec ou num passo de tarefa (ver
+[../../spec/TASK_SPEC_TEMPLATE.md](../../spec/TASK_SPEC_TEMPLATE.md)).
