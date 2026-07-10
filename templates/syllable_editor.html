@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Syllable Review · {{ song_name }}</title>
+<style>
+  :root{
+    --bg:#06060e; --panel:#0d0d1a; --card:#111126; --line:rgba(0,245,255,.12);
+    --line-hi:rgba(0,245,255,.35); --fg:#e7e7f2; --dim:#7a7a94;
+    --accent:#00f5ff; --purple:#7B2FBE; --warn:#ffb000; --bad:#ff4d6d; --good:#28e0a0;
+    --mono:"Share Tech Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--mono);font-size:14px}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  header{display:flex;align-items:baseline;gap:16px;padding:14px 20px;border-bottom:1px solid var(--line)}
+  header .title{color:var(--accent);letter-spacing:.15em;text-shadow:0 0 12px rgba(0,245,255,.35)}
+  header .dim{color:var(--dim)}
+  .wrap{display:grid;grid-template-columns:300px 1fr;gap:0;height:calc(100vh - 52px)}
+  .queue{border-right:1px solid var(--line);overflow-y:auto;background:var(--panel)}
+  .queue h2{font-size:12px;letter-spacing:.2em;color:var(--dim);padding:12px 16px 6px;margin:0;position:sticky;top:0;background:var(--panel);z-index:2}
+  .qitem{padding:10px 16px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .qitem:hover{background:#161630}
+  .qitem.active{background:#1a1a34;border-left:3px solid var(--accent);padding-left:13px}
+  .qitem.resolved{opacity:.4;text-decoration:line-through}
+  .qitem .word-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .qitem .conf{font-size:12px;padding:1px 6px;border-radius:10px;flex:none}
+  .conf.hi{color:var(--good);background:rgba(40,224,160,.10)}
+  .conf.mid{color:var(--warn);background:rgba(255,176,0,.10)}
+  .conf.lo{color:var(--bad);background:rgba(255,77,109,.12)}
+  .main{padding:18px 22px;overflow-y:auto}
+  .ctx{color:var(--dim);margin-bottom:6px}
+  .ctx b{color:var(--fg)}
+  .word{font-size:22px;letter-spacing:.05em;margin:2px 0 14px;color:var(--accent)}
+  .stage{position:relative;background:#07070d;border:1px solid var(--line);border-radius:6px;height:190px;user-select:none;overflow:hidden;touch-action:none}
+  canvas{display:block;width:100%;height:100%}
+  .segs{position:absolute;inset:0}
+  .seg{position:absolute;top:22px;bottom:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;transition:background .1s}
+  .seg::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--seg-c,var(--dim));opacity:.75}
+  .seg.chi{--seg-c:var(--good)} .seg.cmid{--seg-c:var(--warn)} .seg.clo{--seg-c:var(--bad)}
+  .seg .lbl{font-size:12px;background:rgba(0,0,0,.55);padding:1px 5px;border-radius:3px;color:var(--fg)}
+  .seg.selseg{background:rgba(0,245,255,.08)}
+  .handle{position:absolute;top:22px;bottom:0;width:18px;margin-left:-9px;cursor:ew-resize;z-index:5;touch-action:none}
+  .handle::after{content:"";position:absolute;left:8px;top:0;bottom:0;width:2px;background:var(--accent);opacity:.45;transition:opacity .1s,box-shadow .1s}
+  .handle::before{content:"";position:absolute;left:5px;top:50%;width:8px;height:26px;margin-top:-13px;border-radius:3px;background:rgba(0,245,255,.14);border:1px solid var(--line-hi);opacity:0;transition:opacity .1s}
+  .handle:hover::before,.handle.sel::before{opacity:1}
+  .handle:hover::after{opacity:.85}
+  .handle.sel::after{opacity:1;width:2px;box-shadow:0 0 8px var(--accent)}
+  .handle.edge::after{background:var(--purple);left:8px}
+  .handle.edge::before{border-color:rgba(123,47,190,.5);background:rgba(123,47,190,.18)}
+  .playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--good);pointer-events:none;z-index:6;opacity:0}
+  .playhead .pos{position:absolute;top:2px;left:2px;font-size:10px;color:#001014;background:var(--good);padding:0 4px;border-radius:3px;white-space:nowrap}
+  .scrollbar{position:relative;height:12px;margin-top:6px;background:#0b0b16;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .scrollthumb{position:absolute;top:0;bottom:0;background:rgba(0,245,255,.18);border:1px solid var(--line-hi);border-radius:6px;cursor:grab;min-width:18px}
+  .scrollthumb:active{cursor:grabbing}
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+  .zoomgrp{display:flex;gap:4px;align-items:center;margin-right:4px}
+  button{font-family:var(--mono);font-size:13px;background:#171727;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:7px 12px;cursor:pointer;transition:border-color .1s,background .1s}
+  button:hover{border-color:var(--line-hi)}
+  button:active{background:#101020}
+  button.primary{background:var(--accent);color:#001014;border-color:var(--accent);font-weight:bold}
+  button.primary:hover{box-shadow:0 0 12px rgba(0,245,255,.4)}
+  button.ghost{color:var(--dim)}
+  button.icon{padding:7px 10px;min-width:34px}
+  .seglist{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+  .segrow{display:flex;align-items:center;gap:8px;padding:2px 0}
+  .segrow .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--dim)}
+  .segrow.chi .dot{background:var(--good)} .segrow.cmid .dot{background:var(--warn)} .segrow.clo .dot{background:var(--bad)}
+  .segrow input.txt{background:#0d0d16;border:1px solid var(--line);color:var(--fg);font-family:var(--mono);padding:5px 8px;border-radius:4px;width:120px}
+  .segrow input.txt:focus{outline:none;border-color:var(--line-hi)}
+  .segrow .rng{color:var(--dim);font-size:12px}
+  .segrow .c{margin-left:auto;font-size:12px}
+  .hint{color:var(--dim);font-size:12px;margin-top:14px;line-height:1.9;border-top:1px solid var(--line);padding-top:10px}
+  kbd{background:#1c1c30;border:1px solid var(--line);border-radius:3px;padding:1px 5px;color:var(--fg);font-size:11px}
+  .empty{padding:60px 20px;text-align:center;color:var(--dim)}
+  .empty .big{font-size:34px;margin-bottom:12px}
+  .empty.err .big{color:var(--bad)}
+  .spinner{width:26px;height:26px;margin:0 auto 14px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(8px);background:#12121c;border:1px solid var(--accent);color:var(--fg);padding:10px 16px;border-radius:6px;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;z-index:20}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.err{border-color:var(--bad)}
+  @media(max-width:720px){.wrap{grid-template-columns:1fr}.queue{max-height:26vh}}
+</style>
+</head>
+<body
+  data-job-id="{{ job_id }}"
+  data-has-vocals="{{ '1' if has_vocals else '0' }}"
+  data-threshold="{{ uncertain_threshold }}">
+<header>
+  <span class="title">SYLLABLE REVIEW</span>
+  <span class="dim">{{ song_name }}</span>
+  <span class="dim" style="margin-left:auto" id="counter">…</span>
+  <a class="dim" href="/job/{{ job_id }}/review">← back to review</a>
+</header>
+
+<div class="wrap">
+  <aside class="queue">
+    <h2>PENDING · conf &lt; {{ uncertain_threshold }}</h2>
+    <div id="queue"></div>
+  </aside>
+  <section class="main" id="main">
+    <div class="empty" id="loading"><div class="spinner"></div>Loading pending syllables…</div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<template id="editor-tpl">
+  <div class="ctx" id="ctx"></div>
+  <div class="word" id="wordline"></div>
+  <div class="stage" id="stage">
+    <canvas id="wave"></canvas>
+    <div class="segs" id="segs"></div>
+    <div class="playhead" id="playhead"><span class="pos" id="phlabel"></span></div>
+  </div>
+  <div class="scrollbar" id="scrollbar"><div class="scrollthumb" id="scrollthumb"></div></div>
+  <div class="toolbar">
+    <span class="zoomgrp">
+      <button id="zoomOut" class="icon" title="Zoom out (wheel down)">−</button>
+      <button id="zoomIn" class="icon" title="Zoom in (wheel up)">＋</button>
+      <button id="zoomFit" class="ghost" title="Reset zoom">Fit</button>
+    </span>
+    <button id="play" class="primary">▶ Play loop <span class="dim">(space)</span></button>
+    <button id="nudgeL">− 0.1s</button>
+    <button id="nudgeR">+ 0.1s</button>
+    <button id="split">Split at playhead</button>
+    <button id="merge">Merge selected</button>
+    <button id="reset" class="ghost">Reset</button>
+    <span style="margin-left:auto"></span>
+    <button id="accept">Accept as-is</button>
+    <button id="save" class="primary">Save &amp; next <span class="dim">(enter)</span></button>
+    <button id="skip" class="ghost">Skip</button>
+  </div>
+  <div class="seglist" id="seglist"></div>
+  <div class="hint">
+    <kbd>space</kbd> play/pause · <kbd>←</kbd><kbd>→</kbd> nudge boundary 0.02s
+    (<kbd>shift</kbd> 0.1s) · <kbd>Tab</kbd> next boundary · <kbd>↑</kbd><kbd>↓</kbd> queue ·
+    <kbd>enter</kbd> save · drag the cyan handles · wheel = zoom, <kbd>shift</kbd>+wheel = scroll.
+  </div>
+</template>
+
+<script src="/static/syllable_editor.js"></script>
+</body>
+</html>
