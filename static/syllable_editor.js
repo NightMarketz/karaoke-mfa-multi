@@ -1,10 +1,13 @@
 'use strict';
-// Syncsong-style syllable boundary reviewer.
+// Syncsong-style syllable boundary reviewer — waveform-first workspace.
 // Loads the pending (low-confidence) syllable queue, draws the vocal waveform
-// for each word window, and lets the reviewer drag/nudge boundaries, then saves
-// them to /review/syllables/boundary (which rewrites highlight_segments and
-// invalidates the render). The waveform peaks are computed server-side per
-// visible window — the browser never decodes the whole stem.
+// per word window, and lets the reviewer scrub/audition, drag/snap/nudge
+// boundaries, then saves them to /review/syllables/boundary (which rewrites
+// highlight_segments and invalidates the render).
+//
+// The waveform peaks are computed server-side per visible window — the browser
+// never decodes the whole stem. Onset ticks are derived from those peaks
+// (energy flux), so snapping needs no extra backend call.
 
 const body = document.body;
 const JOB = body.dataset.jobId;
@@ -12,18 +15,24 @@ const HAS_VOCALS = body.dataset.hasVocals === '1';
 const THRESHOLD = Number(body.dataset.threshold) || 0.6;
 const MIN_SEG = 0.05;      // minimum segment length (s)
 const RULER = 22;          // px reserved at top of stage for the time ruler
+const LANE = 60;           // px reserved at bottom of stage for the segment lane
+const SNAP_PX = 10;        // drag snaps to an onset tick within this many px
 
 const state = {
   queue: [],
   current: -1,
   bounds: [],   // n+1 boundary times for n segments
   texts: [],    // n segment labels
+  confs: [],    // n per-segment confidences (null after manual split/merge)
   sel: 1,       // selected boundary index
   peaks: null,  // {sample_rate, buckets:[[mn,mx]...]} for current view
+  onsets: [],   // candidate onset times (s) derived from peaks
   view: null,   // {t0,t1} visible time window (zoom/pan applied)
   audioEl: null,
   playing: false,
-  loop: null,   // {start,end}
+  loop: null,   // {start,end} playback loop
+  rate: 1,      // playback speed
+  dirty: false, // unsaved edits on the current word
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -37,6 +46,9 @@ function toast(msg, isErr) {
   toast._t = setTimeout(() => t.classList.remove('show'), 1800);
 }
 function confClass(c) { return c == null ? '' : c >= 0.75 ? 'hi' : c >= THRESHOLD ? 'mid' : 'lo'; }
+function confMark(c) { const k = confClass(c); return k === 'hi' ? '✓' : k === 'mid' ? '~' : k === 'lo' ? '!' : ''; }
+function confVar(c) { const k = confClass(c); return k === 'hi' ? 'good' : k === 'mid' ? 'warn' : 'bad'; }
+function setDirty(v) { state.dirty = v; document.body.classList.toggle('dirty', v); }
 
 // ---- data ----------------------------------------------------------------
 async function loadQueue() {
@@ -55,7 +67,7 @@ async function loadQueue() {
   }
   state.queue = (data.pending || []).map(it => ({ ...it, resolved: false }));
   renderQueue();
-  updateCounter();
+  updateProgress();
   if (!state.queue.length) {
     $('#main').innerHTML = '<div class="empty"><div class="big">✓</div>No uncertain syllables. Nothing to review.</div>';
     return;
@@ -74,22 +86,67 @@ async function loadQueue() {
 let _peaksSeq = 0;
 async function loadPeaks() {
   const seq = ++_peaksSeq;
-  if (!HAS_VOCALS || state.current < 0) { state.peaks = null; drawWave(); return; }
+  if (!HAS_VOCALS || state.current < 0) { state.peaks = null; state.onsets = []; drawWave(); return; }
   const { t0, t1 } = state.view;
   try {
     const r = await fetch(`/job/${JOB}/audio/vocals/peaks?start=${t0.toFixed(3)}&end=${t1.toFixed(3)}&buckets=900`);
     const peaks = await r.json();
     if (seq !== _peaksSeq) return;          // a newer view won the race
     state.peaks = peaks;
-  } catch (e) { if (seq === _peaksSeq) state.peaks = null; }
+    computeOnsets();
+  } catch (e) { if (seq === _peaksSeq) { state.peaks = null; state.onsets = []; } }
   drawWave();
 }
 let _peaksTimer = null;
 function loadPeaksSoon() { clearTimeout(_peaksTimer); _peaksTimer = setTimeout(loadPeaks, 90); }
 
-function updateCounter() {
-  const n = state.queue.filter(it => !it.resolved).length;
-  $('#counter').textContent = `${n} pending`;
+// Onset candidates = prominent peaks in the positive energy flux (rising edges).
+// The stem is smoothed to kill micro-wiggles, thresholded on flux mean+2σ, then
+// picked strongest-first with a ~45ms minimum spacing (min-syllable scale) so
+// short high-resolution windows don't produce a forest of noise ticks.
+// ponytail: energy-flux heuristic; swap for a server-side onset route (Fase 4) if accuracy falls short.
+function computeOnsets() {
+  state.onsets = [];
+  const p = state.peaks;
+  if (!p || !Array.isArray(p.buckets) || !p.buckets.length) return;
+  const b = p.buckets, n = b.length;
+  const raw = new Array(n);
+  for (let i = 0; i < n; i++) raw[i] = Math.max(Math.abs(b[i][0]), Math.abs(b[i][1]));
+  const eng = new Array(n);           // moving-average smooth (radius 2)
+  for (let i = 0; i < n; i++) {
+    let s = 0, c = 0;
+    for (let j = Math.max(0, i - 2); j <= Math.min(n - 1, i + 2); j++) { s += raw[j]; c++; }
+    eng[i] = s / c;
+  }
+  const flux = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) flux[i] = Math.max(0, eng[i] - eng[i - 1]);
+  let m = 0; for (const f of flux) m += f; m /= n;
+  let v = 0; for (const f of flux) v += (f - m) * (f - m); v /= n;
+  const thr = m + 2.0 * Math.sqrt(v);
+  const { t0, t1 } = state.view, span = t1 - t0;
+  const minGap = Math.max(2, Math.floor(0.045 * n / span));   // >= ~45ms between onsets
+  const cand = [];
+  for (let i = 2; i < n - 2; i++) {
+    if (flux[i] >= thr && flux[i] >= flux[i - 1] && flux[i] > flux[i + 1] && eng[i] > 0.06) {
+      cand.push({ i, f: flux[i] });
+    }
+  }
+  cand.sort((a, b) => b.f - a.f);      // strongest first, enforce spacing, cap
+  const chosen = [];
+  for (const c of cand) {
+    if (chosen.length >= 16) break;
+    if (chosen.every(k => Math.abs(k - c.i) >= minGap)) chosen.push(c.i);
+  }
+  chosen.sort((a, b) => a - b);
+  state.onsets = chosen.map(i => t0 + (i / n) * span);
+}
+
+function updateProgress() {
+  const total = state.queue.length;
+  const done = state.queue.filter(it => it.resolved).length;
+  const left = total - done;
+  $('#counter').textContent = total ? `${left} pending · ${done}/${total} done` : '—';
+  const fill = $('#pfill'); if (fill) fill.style.width = total ? (done / total * 100) + '%' : '0';
 }
 
 function renderQueue() {
@@ -98,8 +155,9 @@ function renderQueue() {
   state.queue.forEach((it, i) => {
     const div = document.createElement('div');
     div.className = 'qitem' + (i === state.current ? ' active' : '') + (it.resolved ? ' resolved' : '');
+    const cc = confClass(it.min_confidence);
     div.innerHTML = `<span class="word-t">${escapeHtml(it.word_text || '·')}</span>` +
-      `<span class="conf ${confClass(it.min_confidence)}">${it.min_confidence.toFixed(2)}</span>`;
+      `<span class="conf ${cc}"><span>${confMark(it.min_confidence)}</span>${it.min_confidence.toFixed(2)}</span>`;
     div.addEventListener('click', () => select(i));
     q.appendChild(div);
   });
@@ -114,45 +172,51 @@ function ensureEditor() {
   $('#main').appendChild(tpl);
   els = {
     ctx: $('#ctx'), word: $('#wordline'), stage: $('#stage'), canvas: $('#wave'),
-    segs: $('#segs'), playhead: $('#playhead'), phlabel: $('#phlabel'),
+    scrub: $('#scrub'), segs: $('#segs'), playhead: $('#playhead'), phlabel: $('#phlabel'),
     seglist: $('#seglist'), scrollbar: $('#scrollbar'), thumb: $('#scrollthumb'),
   };
-  $('#play').addEventListener('click', togglePlay);
+  $('#play').addEventListener('click', playWord);
+  $('#rate').addEventListener('click', cycleRate);
   $('#nudgeL').addEventListener('click', () => nudge(-0.1));
   $('#nudgeR').addEventListener('click', () => nudge(0.1));
   $('#split').addEventListener('click', splitAtPlayhead);
   $('#merge').addEventListener('click', mergeSelected);
-  $('#reset').addEventListener('click', () => { loadSegments(cur()); renderSegments(); drawWave(); });
+  $('#reset').addEventListener('click', resetWord);
   $('#save').addEventListener('click', () => save(false));
   $('#accept').addEventListener('click', () => save(true));
-  $('#skip').addEventListener('click', () => advance());
+  $('#skip').addEventListener('click', skip);
   $('#zoomIn').addEventListener('click', () => zoomView(1.4));
   $('#zoomOut').addEventListener('click', () => zoomView(1 / 1.4));
   $('#zoomFit').addEventListener('click', () => { state.view = baseWin(cur()); refreshView(); });
   els.stage.addEventListener('wheel', onWheel, { passive: false });
+  els.scrub.addEventListener('pointerdown', startScrub);
   els.thumb.addEventListener('pointerdown', startScroll);
-  window.addEventListener('resize', () => { drawWave(); updateScrollbar(); });
+  window.addEventListener('resize', () => { layout(); drawWave(); renderSegments(); updateScrollbar(); });
+}
+
+function layout() {
+  if (!els) return;
+  const H = els.stage.getBoundingClientRect().height;
+  els.scrub.style.top = RULER + 'px';
+  els.scrub.style.height = (H - LANE - RULER) + 'px';
 }
 
 // ---- view / zoom / pan ---------------------------------------------------
 function baseWin(it) {
-  // Adaptive zoom: pad proportional to the word span (floor/cap) so short words
-  // are not squeezed into a sliver by a fixed pad, and long words keep context.
+  // Adaptive zoom: pad proportional to the word span (floor/cap).
   const span = Math.max(0.05, it.word_end - it.word_start);
   const pad = Math.min(0.6, Math.max(0.12, span * 0.6));
   return { t0: Math.max(0, it.word_start - pad), t1: it.word_end + pad };
 }
 function fullExt(it) {
-  // Pannable extent: the word plus generous context on each side.
   const span = Math.max(0.05, it.word_end - it.word_start);
   const ctx = Math.min(2.0, Math.max(0.5, span * 1.5));
   return { f0: Math.max(0, it.word_start - ctx), f1: it.word_end + ctx };
 }
 function clampView(v) {
   const { f0, f1 } = fullExt(cur());
-  let span = v.t1 - v.t0;
   const maxSpan = f1 - f0;
-  if (span >= maxSpan) return { t0: f0, t1: f1 };
+  if (v.t1 - v.t0 >= maxSpan) return { t0: f0, t1: f1 };
   if (v.t0 < f0) { v.t1 += f0 - v.t0; v.t0 = f0; }
   if (v.t1 > f1) { v.t0 -= v.t1 - f1; v.t1 = f1; }
   return v;
@@ -194,13 +258,10 @@ function updateScrollbar() {
   if (!els) return;
   const ext = fullExt(cur());
   const total = ext.f1 - ext.f0;
-  const left = ((state.view.t0 - ext.f0) / total) * 100;
-  const w = ((state.view.t1 - state.view.t0) / total) * 100;
-  els.thumb.style.left = Math.max(0, left) + '%';
-  els.thumb.style.width = Math.min(100, w) + '%';
+  els.thumb.style.left = Math.max(0, (state.view.t0 - ext.f0) / total * 100) + '%';
+  els.thumb.style.width = Math.min(100, (state.view.t1 - state.view.t0) / total * 100) + '%';
 }
 
-const win = () => state.view;
 const tToPct = (t) => { const { t0, t1 } = state.view; return ((t - t0) / (t1 - t0)) * 100; };
 const xToT = (clientX) => {
   const { t0, t1 } = state.view;
@@ -226,22 +287,23 @@ function select(i) {
   ensureEditor();
   const it = state.queue[i];
   loadSegments(it);
+  setDirty(false);
   state.view = baseWin(it);
-  els.ctx.innerHTML = `<b>${escapeHtml(it.line_text || '')}</b> · word [${it.word_start.toFixed(2)}–${it.word_end.toFixed(2)}s] · min conf <span style="color:var(--${confClass(it.min_confidence) === 'hi' ? 'good' : confClass(it.min_confidence) === 'mid' ? 'warn' : 'bad'})">${it.min_confidence.toFixed(2)}</span>`;
+  els.ctx.innerHTML = `<b>${escapeHtml(it.line_text || '')}</b> · word [${it.word_start.toFixed(2)}–${it.word_end.toFixed(2)}s] · min conf <span style="color:var(--${confVar(it.min_confidence)})">${it.min_confidence.toFixed(2)}</span>`;
   els.word.textContent = it.word_text || '';
   renderQueue();
+  layout();
   renderSegments();
   updateScrollbar();
   loadPeaks();
 }
 
-// ---- canvas: waveform + ruler --------------------------------------------
+// ---- canvas: waveform + ruler + onset ticks ------------------------------
 function niceStep(span, targetTicks) {
   const raw = span / targetTicks;
   const mag = Math.pow(10, Math.floor(Math.log10(raw)));
   const n = raw / mag;
-  const step = (n < 1.5 ? 1 : n < 3.5 ? 2 : n < 7.5 ? 5 : 10) * mag;
-  return step;
+  return (n < 1.5 ? 1 : n < 3.5 ? 2 : n < 7.5 ? 5 : 10) * mag;
 }
 function drawWave() {
   if (!els || state.current < 0) return;
@@ -252,6 +314,7 @@ function drawWave() {
   const ctx = c.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const W = rect.width, H = rect.height;
+  const laneTop = H - LANE;
   ctx.clearRect(0, 0, W, H);
   const { t0, t1 } = state.view;
   const it = cur();
@@ -261,22 +324,37 @@ function drawWave() {
   const wx0 = (tToPct(it.word_start) / 100) * W, wx1 = (tToPct(it.word_end) / 100) * W;
   ctx.fillRect(wx0, 0, wx1 - wx0, H);
 
-  // waveform (below the ruler band)
-  const midY = (RULER + H) / 2, amp = (H - RULER) / 2 - 2;
+  // segment lane background
+  ctx.fillStyle = 'rgba(255,255,255,0.02)';
+  ctx.fillRect(0, laneTop, W, LANE);
+  ctx.strokeStyle = 'rgba(0,245,255,0.15)';
+  ctx.beginPath(); ctx.moveTo(0, laneTop + 0.5); ctx.lineTo(W, laneTop + 0.5); ctx.stroke();
+
+  // waveform (between ruler and lane)
+  const midY = (RULER + laneTop) / 2, amp = (laneTop - RULER) / 2 - 2;
   const buckets = state.peaks && Array.isArray(state.peaks.buckets) ? state.peaks.buckets : null;
   if (buckets && buckets.length) {
     ctx.fillStyle = 'rgba(0,245,255,0.45)';
     const n = buckets.length;
     for (let x = 0; x < W; x++) {
       const k = Math.min(n - 1, Math.floor(n * x / W));
-      const mn = buckets[k][0], mx = buckets[k][1];
-      const y0 = midY - mx * amp, y1 = midY - mn * amp;
+      const y0 = midY - buckets[k][1] * amp, y1 = midY - buckets[k][0] * amp;
       ctx.fillRect(x, y0, 1, Math.max(1, y1 - y0));
     }
   } else {
     ctx.fillStyle = '#7a7a94';
     ctx.font = '12px monospace';
     ctx.fillText(HAS_VOCALS ? 'loading waveform…' : 'waveform unavailable', 10, midY);
+  }
+
+  // onset ticks (snap targets) just above the lane divider
+  if (state.onsets.length) {
+    ctx.fillStyle = 'rgba(123,47,190,0.85)';
+    for (const o of state.onsets) {
+      if (o < t0 || o > t1) continue;
+      const x = (tToPct(o) / 100) * W;
+      ctx.fillRect(x - 0.75, laneTop - 10, 1.5, 10);
+    }
   }
 
   // time ruler (ticks + labels) over the top band
@@ -302,24 +380,36 @@ function renderSegments() {
   const segs = els.segs;
   segs.innerHTML = '';
   const n = state.texts.length;
+  const H = els.stage.getBoundingClientRect().height;
   for (let i = 0; i < n; i++) {
     const div = document.createElement('div');
-    const cc = confClass(state.confs && state.confs[i]);
+    const cc = confClass(state.confs[i]);
     div.className = 'seg' + (cc ? ' c' + cc : '') + (i === state.sel || i === state.sel - 1 ? ' selseg' : '');
     div.style.left = tToPct(state.bounds[i]) + '%';
     div.style.width = (tToPct(state.bounds[i + 1]) - tToPct(state.bounds[i])) + '%';
-    div.innerHTML = `<span class="lbl">${escapeHtml(state.texts[i] || '·')}</span>`;
+    const mark = confMark(state.confs[i]);
+    div.innerHTML = `<span class="lbl">${escapeHtml(state.texts[i] || '·')}</span>` +
+      (mark ? `<span class="cmark">${mark}</span>` : '');
+    div.title = 'Click to hear this syllable';
+    div.addEventListener('pointerdown', e => { e.stopPropagation(); playSegment(i); });
     segs.appendChild(div);
   }
-  // boundary handles — outer (word-edge) handles marked .edge
+  // boundary handles — focusable sliders; outer (word-edge) handles marked .edge
   for (let b = 0; b < state.bounds.length; b++) {
     const h = document.createElement('div');
     const edge = b === 0 || b === state.bounds.length - 1;
     h.className = 'handle' + (b === state.sel ? ' sel' : '') + (edge ? ' edge' : '');
     h.style.left = tToPct(state.bounds[b]) + '%';
     h.dataset.b = b;
+    h.tabIndex = 0;
+    h.setAttribute('role', 'slider');
+    h.setAttribute('aria-label', `Boundary ${b + 1} of ${state.bounds.length}${edge ? ' (word edge)' : ''}`);
+    h.setAttribute('aria-valuemin', cur().word_start.toFixed(3));
+    h.setAttribute('aria-valuemax', cur().word_end.toFixed(3));
+    h.setAttribute('aria-valuenow', state.bounds[b].toFixed(3));
     h.title = state.bounds[b].toFixed(3) + 's' + (edge ? ' (word edge)' : '');
     h.addEventListener('pointerdown', startDrag);
+    h.addEventListener('focus', () => { if (state.sel !== b) { state.sel = b; renderSegments(); } });
     segs.appendChild(h);
   }
   renderSegList();
@@ -329,16 +419,18 @@ function renderSegList() {
   const list = els.seglist;
   list.innerHTML = '';
   for (let i = 0; i < state.texts.length; i++) {
-    const conf = state.confs ? state.confs[i] : null;
+    const conf = state.confs[i];
     const cc = confClass(conf);
     const row = document.createElement('div');
     row.className = 'segrow' + (cc ? ' c' + cc : '');
     row.innerHTML =
+      `<button class="mini" title="Hear syllable" data-play="${i}">▶</button>` +
       `<span class="dot"></span>` +
-      `<input class="txt" value="${escapeHtml(state.texts[i])}" data-i="${i}">` +
+      `<input class="txt" value="${escapeHtml(state.texts[i])}" data-i="${i}" aria-label="Syllable ${i + 1} text">` +
       `<span class="rng">${state.bounds[i].toFixed(2)}–${state.bounds[i + 1].toFixed(2)}s (${(state.bounds[i + 1] - state.bounds[i]).toFixed(2)}s)</span>` +
-      (conf != null ? `<span class="c" style="color:var(--${cc === 'hi' ? 'good' : cc === 'mid' ? 'warn' : 'bad'})">c ${conf.toFixed(2)}</span>` : '');
-    row.querySelector('input').addEventListener('input', e => { state.texts[i] = e.target.value; });
+      (conf != null ? `<span class="c" style="color:var(--${confVar(conf)})">${confMark(conf)} ${conf.toFixed(2)}</span>` : '');
+    row.querySelector('input').addEventListener('input', e => { state.texts[i] = e.target.value; setDirty(true); });
+    row.querySelector('[data-play]').addEventListener('click', () => playSegment(i));
     list.appendChild(row);
   }
 }
@@ -352,14 +444,24 @@ function clampBound(b, t) {
 }
 function setBound(b, t) {
   state.bounds[b] = round3(clampBound(b, t));
+  setDirty(true);
   renderSegments();
+}
+function snapTime(t) {
+  if (!state.onsets.length) return t;
+  const rect = els.stage.getBoundingClientRect();
+  const tol = SNAP_PX / (rect.width / (state.view.t1 - state.view.t0));
+  let best = t, bd = tol;
+  for (const o of state.onsets) { const d = Math.abs(o - t); if (d < bd) { bd = d; best = o; } }
+  return best;
 }
 function startDrag(e) {
   e.preventDefault();
+  e.currentTarget.focus();
   const b = Number(e.currentTarget.dataset.b);
   state.sel = b;
   renderSegments();
-  const move = ev => setBound(b, xToT(ev.clientX));
+  const move = ev => setBound(b, ev.shiftKey ? xToT(ev.clientX) : snapTime(xToT(ev.clientX)));
   const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
   window.addEventListener('pointermove', move);
   window.addEventListener('pointerup', up);
@@ -376,8 +478,9 @@ function splitAtPlayhead() {
       const mid = Math.max(1, Math.round(txt.length / 2));
       state.texts.splice(i, 1, txt.slice(0, mid), txt.slice(mid));
       state.bounds.splice(i + 1, 0, round3(t));
-      if (state.confs) state.confs.splice(i, 1, state.confs[i], state.confs[i]);
+      state.confs.splice(i, 1, state.confs[i], state.confs[i]);
       state.sel = i + 1;
+      setDirty(true);
       renderSegments();
       return;
     }
@@ -388,26 +491,61 @@ function mergeSelected() {
   const b = state.sel;
   if (b <= 0 || b >= state.bounds.length - 1) { toast('Select an internal boundary to merge'); return; }
   state.texts.splice(b - 1, 2, (state.texts[b - 1] || '') + (state.texts[b] || ''));
-  if (state.confs) state.confs.splice(b - 1, 2, Math.min(state.confs[b - 1], state.confs[b]));
+  const ca = state.confs[b - 1], cb = state.confs[b];
+  state.confs.splice(b - 1, 2, ca == null || cb == null ? null : Math.min(ca, cb));
   state.bounds.splice(b, 1);
   state.sel = Math.min(b, state.bounds.length - 1);
+  setDirty(true);
   renderSegments();
 }
+function resetWord() { loadSegments(cur()); setDirty(false); renderSegments(); drawWave(); }
 
 // ---- playback ------------------------------------------------------------
-function togglePlay() { state.playing ? stop() : play(); }
-function play() {
+function cycleRate() {
+  state.rate = state.rate === 1 ? 0.5 : 1;
+  if (state.audioEl) state.audioEl.playbackRate = state.rate;
+  const btn = $('#rate'); if (btn) { btn.textContent = state.rate + '×'; btn.classList.toggle('on', state.rate !== 1); }
+}
+function togglePlay() { state.playing ? stop() : playWord(); }
+function playWord() {
+  const it = cur();
+  playLoop(it.word_start, it.word_end);
+}
+function playSegment(i) {
+  if (i < 0 || i >= state.texts.length) return;
+  state.sel = Math.min(i + 1, state.bounds.length - 1);
+  renderSegments();
+  playLoop(state.bounds[i], state.bounds[i + 1]);
+}
+function playLoop(start, end) {
   if (!state.audioEl) { toast('No audio to play'); return; }
-  state.audioEl.currentTime = state.loop.start;
+  state.loop = { start, end };
+  state.audioEl.playbackRate = state.rate;
+  state.audioEl.currentTime = start;
   state.audioEl.play();
   state.playing = true;
-  const p = $('#play'); if (p) p.textContent = '❚❚ Pause';
+  const p = $('#play'); if (p) p.textContent = '❚❚ Stop';
 }
 function stop() {
   if (state.audioEl) state.audioEl.pause();
   state.playing = false;
-  const p = $('#play'); if (p) p.innerHTML = '▶ Play loop <span class="dim">(space)</span>';
+  const p = $('#play'); if (p) p.innerHTML = '▶ Word <span class="dim">(space)</span>';
   if (els && els.playhead) els.playhead.style.opacity = 0;
+}
+function seekTo(t) {
+  if (!state.audioEl) return;
+  state.audioEl.currentTime = Math.max(0, t);
+  els.playhead.style.left = tToPct(t) + '%';
+  els.playhead.style.opacity = 1;
+  if (els.phlabel) els.phlabel.textContent = t.toFixed(2) + 's';
+}
+function startScrub(e) {
+  e.preventDefault();
+  seekTo(xToT(e.clientX));
+  const move = ev => seekTo(xToT(ev.clientX));
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
 }
 function onTimeUpdate() {
   if (!state.audioEl || state.current < 0 || !els) return;
@@ -436,9 +574,15 @@ async function save(acceptAsIs) {
     });
     if (!r.ok) { const e = await r.json().catch(() => ({})); toast('Rejected: ' + (e.error || r.status), true); return; }
     it.resolved = true;
+    setDirty(false);
     toast(acceptAsIs ? 'Accepted' : 'Saved · render invalidated');
     advance();
   } catch (e) { toast('Save failed: ' + e, true); }
+}
+function skip() {
+  if (state.dirty && !window.confirm('Discard unsaved edits on this word?')) return;
+  setDirty(false);
+  advance();
 }
 function advance() {
   renderQueue();
@@ -446,19 +590,18 @@ function advance() {
   const any = next >= 0 ? next : state.queue.findIndex(it => !it.resolved);
   if (any >= 0) select(any);
   else { stop(); $('#main').innerHTML = '<div class="empty"><div class="big">✓</div>All pending syllables reviewed.<br><span class="dim">Re-run render (s06/s07) to apply.</span></div>'; els = null; }
-  updateCounter();
+  updateProgress();
 }
 
 // ---- keyboard ------------------------------------------------------------
 document.addEventListener('keydown', e => {
-  if (e.target.tagName === 'INPUT') return;
+  if (['INPUT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName)) return;  // let native controls handle keys
   if (state.current < 0) return;
   const step = e.shiftKey ? 0.1 : 0.02;
   switch (e.key) {
     case ' ': e.preventDefault(); togglePlay(); break;
     case 'ArrowLeft': e.preventDefault(); nudge(-step); break;
     case 'ArrowRight': e.preventDefault(); nudge(step); break;
-    case 'Tab': e.preventDefault(); state.sel = (state.sel + 1) % state.bounds.length; renderSegments(); break;
     case 'ArrowUp': e.preventDefault(); select(state.current - 1); break;
     case 'ArrowDown': e.preventDefault(); select(state.current + 1); break;
     case 'Enter': e.preventDefault(); save(false); break;

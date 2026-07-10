@@ -15,10 +15,12 @@
   body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--mono);font-size:14px}
   a{color:var(--accent);text-decoration:none}
   a:hover{text-decoration:underline}
-  header{display:flex;align-items:baseline;gap:16px;padding:14px 20px;border-bottom:1px solid var(--line)}
+  header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--line)}
   header .title{color:var(--accent);letter-spacing:.15em;text-shadow:0 0 12px rgba(0,245,255,.35)}
   header .dim{color:var(--dim)}
-  .wrap{display:grid;grid-template-columns:300px 1fr;gap:0;height:calc(100vh - 52px)}
+  .progress{width:160px;height:6px;background:#14142a;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+  .progress>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--purple),var(--accent));transition:width .3s}
+  .wrap{display:grid;grid-template-columns:300px 1fr;gap:0;height:calc(100vh - 51px)}
   .queue{border-right:1px solid var(--line);overflow-y:auto;background:var(--panel)}
   .queue h2{font-size:12px;letter-spacing:.2em;color:var(--dim);padding:12px 16px 6px;margin:0;position:sticky;top:0;background:var(--panel);z-index:2}
   .qitem{padding:10px 16px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -26,52 +28,78 @@
   .qitem.active{background:#1a1a34;border-left:3px solid var(--accent);padding-left:13px}
   .qitem.resolved{opacity:.4;text-decoration:line-through}
   .qitem .word-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .qitem .conf{font-size:12px;padding:1px 6px;border-radius:10px;flex:none}
+  .qitem .conf{font-size:12px;padding:1px 6px;border-radius:10px;flex:none;display:flex;gap:4px;align-items:center}
   .conf.hi{color:var(--good);background:rgba(40,224,160,.10)}
   .conf.mid{color:var(--warn);background:rgba(255,176,0,.10)}
   .conf.lo{color:var(--bad);background:rgba(255,77,109,.12)}
-  .main{padding:18px 22px;overflow-y:auto}
-  .ctx{color:var(--dim);margin-bottom:6px}
+  .main{padding:16px 22px;overflow-y:auto}
+  .ctx{color:var(--dim);margin-bottom:4px}
   .ctx b{color:var(--fg)}
-  .word{font-size:22px;letter-spacing:.05em;margin:2px 0 14px;color:var(--accent)}
-  .stage{position:relative;background:#07070d;border:1px solid var(--line);border-radius:6px;height:190px;user-select:none;overflow:hidden;touch-action:none}
+  .wordrow{display:flex;align-items:baseline;gap:14px;margin:2px 0 10px}
+  .word{font-size:22px;letter-spacing:.05em;color:var(--accent)}
+  .legend{display:flex;gap:12px;font-size:11px;color:var(--dim);margin-left:auto}
+  .legend span{display:flex;align-items:center;gap:4px}
+  .legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+  .legend .hi{background:var(--good)} .legend .mid{background:var(--warn)} .legend .lo{background:var(--bad)}
+  .dirty-dot{display:none;width:8px;height:8px;border-radius:50%;background:var(--warn);box-shadow:0 0 6px var(--warn)}
+  .dirty .dirty-dot{display:inline-block}
+
+  /* Waveform-first stage: waveform hero on top, segment lane at the bottom */
+  .stage{position:relative;background:#07070d;border:1px solid var(--line);border-radius:6px;height:260px;user-select:none;overflow:hidden;touch-action:none}
   canvas{display:block;width:100%;height:100%}
-  .segs{position:absolute;inset:0}
-  .seg{position:absolute;top:22px;bottom:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;transition:background .1s}
-  .seg::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--seg-c,var(--dim));opacity:.75}
+  .scrub{position:absolute;left:0;right:0;z-index:2;cursor:crosshair}
+  .segs{position:absolute;inset:0;pointer-events:none;z-index:3}
+  .seg{position:absolute;height:60px;bottom:0;display:flex;align-items:center;justify-content:center;gap:4px;pointer-events:auto;cursor:pointer;border-left:1px solid rgba(255,255,255,.06);transition:background .1s}
+  .seg::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--seg-c,var(--dim));opacity:.8}
   .seg.chi{--seg-c:var(--good)} .seg.cmid{--seg-c:var(--warn)} .seg.clo{--seg-c:var(--bad)}
-  .seg .lbl{font-size:12px;background:rgba(0,0,0,.55);padding:1px 5px;border-radius:3px;color:var(--fg)}
-  .seg.selseg{background:rgba(0,245,255,.08)}
-  .handle{position:absolute;top:22px;bottom:0;width:18px;margin-left:-9px;cursor:ew-resize;z-index:5;touch-action:none}
-  .handle::after{content:"";position:absolute;left:8px;top:0;bottom:0;width:2px;background:var(--accent);opacity:.45;transition:opacity .1s,box-shadow .1s}
-  .handle::before{content:"";position:absolute;left:5px;top:50%;width:8px;height:26px;margin-top:-13px;border-radius:3px;background:rgba(0,245,255,.14);border:1px solid var(--line-hi);opacity:0;transition:opacity .1s}
+  .seg .lbl{font-size:12px;background:rgba(0,0,0,.55);padding:1px 5px;border-radius:3px;color:var(--fg);white-space:nowrap}
+  .seg .cmark{font-size:11px;font-weight:bold;color:var(--seg-c,var(--dim))}
+  .seg:hover{background:rgba(0,245,255,.06)}
+  .seg.selseg{background:rgba(0,245,255,.10)}
+  .handle{position:absolute;top:22px;bottom:0;width:30px;margin-left:-15px;cursor:ew-resize;z-index:6;touch-action:none;pointer-events:auto}
+  /* ponytail: 30px hit area (44px ideal but overlaps on dense boundaries; zoom compensates) */
+  .handle::after{content:"";position:absolute;left:14px;top:0;bottom:0;width:2px;background:var(--accent);opacity:.45;transition:opacity .1s,box-shadow .1s}
+  .handle::before{content:"";position:absolute;left:9px;top:50%;width:12px;height:28px;margin-top:-14px;border-radius:3px;background:rgba(0,245,255,.14);border:1px solid var(--line-hi);opacity:0;transition:opacity .1s}
   .handle:hover::before,.handle.sel::before{opacity:1}
   .handle:hover::after{opacity:.85}
-  .handle.sel::after{opacity:1;width:2px;box-shadow:0 0 8px var(--accent)}
-  .handle.edge::after{background:var(--purple);left:8px}
+  .handle.sel::after{opacity:1;box-shadow:0 0 8px var(--accent)}
+  .handle:focus-visible{outline:none}
+  .handle:focus-visible::before{opacity:1;box-shadow:0 0 0 2px var(--accent),0 0 10px var(--accent)}
+  .handle:focus-visible::after{opacity:1}
+  .handle.edge::after{background:var(--purple)}
   .handle.edge::before{border-color:rgba(123,47,190,.5);background:rgba(123,47,190,.18)}
-  .playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--good);pointer-events:none;z-index:6;opacity:0}
+  .playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--good);pointer-events:none;z-index:7;opacity:0}
   .playhead .pos{position:absolute;top:2px;left:2px;font-size:10px;color:#001014;background:var(--good);padding:0 4px;border-radius:3px;white-space:nowrap}
+
   .scrollbar{position:relative;height:12px;margin-top:6px;background:#0b0b16;border:1px solid var(--line);border-radius:6px;overflow:hidden}
   .scrollthumb{position:absolute;top:0;bottom:0;background:rgba(0,245,255,.18);border:1px solid var(--line-hi);border-radius:6px;cursor:grab;min-width:18px}
   .scrollthumb:active{cursor:grabbing}
-  .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
-  .zoomgrp{display:flex;gap:4px;align-items:center;margin-right:4px}
+
+  .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0}
+  .tgroup{display:flex;gap:6px;align-items:center;padding-right:10px;border-right:1px solid var(--line)}
+  .tgroup:last-of-type{border-right:none}
+  .tgroup .lab{font-size:10px;letter-spacing:.15em;color:var(--dim);margin-right:2px}
   button{font-family:var(--mono);font-size:13px;background:#171727;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:7px 12px;cursor:pointer;transition:border-color .1s,background .1s}
   button:hover{border-color:var(--line-hi)}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
   button:active{background:#101020}
   button.primary{background:var(--accent);color:#001014;border-color:var(--accent);font-weight:bold}
   button.primary:hover{box-shadow:0 0 12px rgba(0,245,255,.4)}
+  button.play{border-color:var(--line-hi);color:var(--accent)}
   button.ghost{color:var(--dim)}
   button.icon{padding:7px 10px;min-width:34px}
+  button.on{background:var(--purple);border-color:var(--purple);color:#fff}
+
   .seglist{margin-top:12px;display:flex;flex-direction:column;gap:6px}
   .segrow{display:flex;align-items:center;gap:8px;padding:2px 0}
+  .segrow .mini{padding:3px 8px;font-size:12px;line-height:1}
   .segrow .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--dim)}
   .segrow.chi .dot{background:var(--good)} .segrow.cmid .dot{background:var(--warn)} .segrow.clo .dot{background:var(--bad)}
   .segrow input.txt{background:#0d0d16;border:1px solid var(--line);color:var(--fg);font-family:var(--mono);padding:5px 8px;border-radius:4px;width:120px}
   .segrow input.txt:focus{outline:none;border-color:var(--line-hi)}
   .segrow .rng{color:var(--dim);font-size:12px}
   .segrow .c{margin-left:auto;font-size:12px}
+
   .hint{color:var(--dim);font-size:12px;margin-top:14px;line-height:1.9;border-top:1px solid var(--line);padding-top:10px}
   kbd{background:#1c1c30;border:1px solid var(--line);border-radius:3px;padding:1px 5px;color:var(--fg);font-size:11px}
   .empty{padding:60px 20px;text-align:center;color:var(--dim)}
@@ -82,7 +110,11 @@
   .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(8px);background:#12121c;border:1px solid var(--accent);color:var(--fg);padding:10px 16px;border-radius:6px;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;z-index:20}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   .toast.err{border-color:var(--bad)}
-  @media(max-width:720px){.wrap{grid-template-columns:1fr}.queue{max-height:26vh}}
+  @media(max-width:720px){.wrap{grid-template-columns:1fr}.queue{max-height:26vh}.stage{height:210px}.legend{display:none}}
+  @media(prefers-reduced-motion:reduce){
+    *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+    .spinner{border-top-color:var(--accent);animation:none}
+  }
 </style>
 </head>
 <body
@@ -92,8 +124,10 @@
 <header>
   <span class="title">SYLLABLE REVIEW</span>
   <span class="dim">{{ song_name }}</span>
-  <span class="dim" style="margin-left:auto" id="counter">…</span>
-  <a class="dim" href="/job/{{ job_id }}/review">← back to review</a>
+  <span class="progress" title="progress"><i id="pfill"></i></span>
+  <span class="dim" id="counter">…</span>
+  <span class="dim dirty-dot" id="dirtydot" title="unsaved edits"></span>
+  <a class="dim" style="margin-left:auto" href="/job/{{ job_id }}/review">← back to review</a>
 </header>
 
 <div class="wrap">
@@ -110,35 +144,54 @@
 
 <template id="editor-tpl">
   <div class="ctx" id="ctx"></div>
-  <div class="word" id="wordline"></div>
+  <div class="wordrow">
+    <span class="word" id="wordline"></span>
+    <span class="legend">
+      <span><i class="hi"></i>alta ✓</span>
+      <span><i class="mid"></i>média ~</span>
+      <span><i class="lo"></i>baixa !</span>
+    </span>
+  </div>
   <div class="stage" id="stage">
     <canvas id="wave"></canvas>
+    <div class="scrub" id="scrub"></div>
     <div class="segs" id="segs"></div>
     <div class="playhead" id="playhead"><span class="pos" id="phlabel"></span></div>
   </div>
   <div class="scrollbar" id="scrollbar"><div class="scrollthumb" id="scrollthumb"></div></div>
   <div class="toolbar">
-    <span class="zoomgrp">
+    <span class="tgroup">
+      <span class="lab">VIEW</span>
       <button id="zoomOut" class="icon" title="Zoom out (wheel down)">−</button>
       <button id="zoomIn" class="icon" title="Zoom in (wheel up)">＋</button>
       <button id="zoomFit" class="ghost" title="Reset zoom">Fit</button>
     </span>
-    <button id="play" class="primary">▶ Play loop <span class="dim">(space)</span></button>
-    <button id="nudgeL">− 0.1s</button>
-    <button id="nudgeR">+ 0.1s</button>
-    <button id="split">Split at playhead</button>
-    <button id="merge">Merge selected</button>
-    <button id="reset" class="ghost">Reset</button>
+    <span class="tgroup">
+      <span class="lab">PLAY</span>
+      <button id="play" class="play">▶ Word <span class="dim">(space)</span></button>
+      <button id="rate" class="icon" title="Playback speed">1×</button>
+    </span>
+    <span class="tgroup">
+      <span class="lab">EDIT</span>
+      <button id="nudgeL" title="Nudge boundary left">− 0.1s</button>
+      <button id="nudgeR" title="Nudge boundary right">+ 0.1s</button>
+      <button id="split">Split</button>
+      <button id="merge">Merge</button>
+      <button id="reset" class="ghost">Reset</button>
+    </span>
     <span style="margin-left:auto"></span>
-    <button id="accept">Accept as-is</button>
-    <button id="save" class="primary">Save &amp; next <span class="dim">(enter)</span></button>
-    <button id="skip" class="ghost">Skip</button>
+    <span class="tgroup" style="border:none">
+      <button id="accept">Accept as-is</button>
+      <button id="skip" class="ghost">Skip</button>
+      <button id="save" class="primary">Save &amp; next <span class="dim">(enter)</span></button>
+    </span>
   </div>
   <div class="seglist" id="seglist"></div>
   <div class="hint">
-    <kbd>space</kbd> play/pause · <kbd>←</kbd><kbd>→</kbd> nudge boundary 0.02s
-    (<kbd>shift</kbd> 0.1s) · <kbd>Tab</kbd> next boundary · <kbd>↑</kbd><kbd>↓</kbd> queue ·
-    <kbd>enter</kbd> save · drag the cyan handles · wheel = zoom, <kbd>shift</kbd>+wheel = scroll.
+    <kbd>space</kbd> play/pause · click a syllable to hear it · click/drag the waveform to scrub ·
+    <kbd>←</kbd><kbd>→</kbd> nudge 0.02s (<kbd>shift</kbd> 0.1s) · <kbd>tab</kbd> focus handles ·
+    <kbd>↑</kbd><kbd>↓</kbd> queue · <kbd>enter</kbd> save · wheel = zoom, <kbd>shift</kbd>+wheel = scroll ·
+    drag near a <span style="color:var(--purple)">purple onset tick</span> to snap (<kbd>shift</kbd> = free).
   </div>
 </template>
 
