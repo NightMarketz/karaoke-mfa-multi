@@ -85,6 +85,7 @@ from scripts.review_wizard.review_points import (
 from scripts.review_wizard.stage_summaries import build_stage_summaries
 from scripts.review_wizard.stages import active_stage_id, stage_view_models
 from scripts.review_wizard.store import load_project, project_path, save_project
+from scripts.review_wizard.versioning import add_edit_operation
 from scripts.review_wizard.text_prep import prepare_text_for_review
 from scripts.review_wizard.wizard import (
     adjust_review_point_timing,
@@ -277,6 +278,79 @@ def _compute_drift_metrics(job_dir: Path) -> dict | None:
     except Exception as e:
         logger.warning("Drift metrics failed: %s", e)
         return None
+
+
+def _read_metrics_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("Pipeline metrics could not read %s: %s", path.name, e)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _metrics_percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    k = (len(ordered) - 1) * percentile / 100
+    lo, hi = int(k), min(int(k) + 1, len(ordered) - 1)
+    return round(ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo), 3)
+
+
+def _compute_pipeline_metrics(job_dir: Path) -> dict[str, Any]:
+    safety = _read_metrics_json(job_dir / "ctc_window_safety_report.json")
+    window_safety_rate = None
+    long_gap_crossings = 0
+    if safety:
+        summary = safety.get("summary")
+        summary = summary if isinstance(summary, dict) else {}
+        total_windows = summary.get("total_windows")
+        safe_windows = summary.get("safe_windows")
+        if total_windows is None:
+            windows_payload = _read_metrics_json(job_dir / "alignment_windows.json")
+            windows = windows_payload.get("windows", []) if windows_payload else []
+            total_windows = len(windows) if isinstance(windows, list) else None
+        if safe_windows is None and total_windows is not None:
+            unsafe_windows = summary.get("unsafe_windows")
+            if isinstance(unsafe_windows, (int, float)):
+                safe_windows = max(0, int(total_windows) - int(unsafe_windows))
+        if isinstance(total_windows, (int, float)) and total_windows > 0 and isinstance(safe_windows, (int, float)):
+            window_safety_rate = round(float(safe_windows) / float(total_windows), 4)
+        if isinstance(summary.get("long_gap_crossing_windows"), (int, float)):
+            long_gap_crossings = int(summary["long_gap_crossing_windows"])
+
+    syllable_payload = _read_metrics_json(job_dir / "syllable_alignment.json")
+    syllables = syllable_payload.get("syllables", []) if syllable_payload else []
+    syllables = syllables if isinstance(syllables, list) else []
+    confidences: list[float] = []
+    projected = 0
+    fallbacks = 0
+    for syllable in syllables:
+        if not isinstance(syllable, dict):
+            continue
+        source = str(syllable.get("source") or "")
+        projected += source == "phone_projection"
+        fallbacks += "fallback" in source
+        try:
+            confidences.append(float(syllable["confidence"]))
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    total_syllables = len([item for item in syllables if isinstance(item, dict)])
+    block_reason = _blocked_final_export_reason(job_dir)
+    return {
+        "window_safety_rate": window_safety_rate,
+        "syllable_projection_rate": round(projected / total_syllables, 4) if total_syllables else None,
+        "syllable_confidence_p50": _metrics_percentile(confidences, 50),
+        "syllable_confidence_p05": _metrics_percentile(confidences, 5),
+        "fallback_usage": round(fallbacks / total_syllables, 4) if total_syllables else None,
+        "long_gap_crossings": long_gap_crossings,
+        "final_export_allowed": block_reason is None,
+        "final_export_block_reason": block_reason,
+    }
 
 
 def _manifest_sha(manifest: dict[str, Any], section: str, artifact: str) -> str:
@@ -811,7 +885,7 @@ def new_job_submit():
         "has_lyrics": (job_dir / "lyrics.txt").exists(),
         "source": "zip" if suno_zip and suno_zip.filename else "files",
     }
-    (job_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    (job_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     write_event(job_dir, "meta_written", "preparing", details=meta)
     _write_status(job_dir, "queued", 0)
     write_event(job_dir, "status_initialized", "queued", details={"stage": "queued", "progress": 0})
@@ -935,6 +1009,7 @@ def review_wizard(job_id: str):
     )
     return render_template(
         "review_wizard.html",
+        job_id=job_id,
         meta=meta,
         project=project.to_dict(),
         export_decision=dataclasses.asdict(can_export_final(project)),
@@ -1138,6 +1213,410 @@ def review_wizard_adjust_point_timing(job_id: str, point_id: str):
             point=point_id,
             **_review_filter_args_from_form(),
         )
+    )
+
+
+_SYLLABLE_BOUNDARY_EPS = 0.001
+
+
+def _find_analysis_word(
+    analysis: dict[str, Any], word_id: str, line_id: Any = None
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    for line in analysis.get("lines", []) or []:
+        if not isinstance(line, dict):
+            continue
+        if line_id not in (None, "") and str(line.get("id")) != str(line_id):
+            continue
+        for word in line.get("words", []) or []:
+            if isinstance(word, dict) and str(word.get("id")) == str(word_id):
+                return line, word
+    return None, None
+
+
+def _invalidate_downstream_outputs(job_dir: Path) -> list[str]:
+    """Remove ass/mp4 + manifests so s06/s07 must regenerate (no orphan output)."""
+    removed: list[str] = []
+    for name in (
+        "output.mp4",
+        "output.mp4.manifest.json",
+        "output.ass",
+        "output.ass.manifest.json",
+        "preview_full.mp4",
+    ):
+        path = job_dir / name
+        if path.exists():
+            path.unlink()
+            removed.append(name)
+    return removed
+
+
+@app.post("/job/<job_id>/review/syllables/boundary")
+def review_wizard_edit_syllable_boundary(job_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return jsonify({"error": "Job not found"}), 404
+    if not job_dir.exists():
+        return jsonify({"error": "Job not found"}), 404
+    analysis_path = job_dir / "analysis.json"
+    if not analysis_path.exists():
+        return jsonify({"error": "analysis.json missing"}), 404
+
+    payload: Any = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form
+    word_id = payload.get("word_id")
+    line_id = payload.get("line_id")
+    if not word_id:
+        return jsonify({"error": "word_id is required"}), 400
+    raw_segments = payload.get("segments")
+    if isinstance(raw_segments, str):
+        try:
+            raw_segments = json.loads(raw_segments)
+        except json.JSONDecodeError:
+            return jsonify({"error": "segments must be a JSON list"}), 400
+    if not isinstance(raw_segments, list) or not raw_segments:
+        return jsonify({"error": "segments must be a non-empty list"}), 400
+
+    analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    _line, word = _find_analysis_word(analysis, word_id, line_id)
+    if word is None:
+        return jsonify({"error": f"word not found: {word_id}"}), 404
+
+    try:
+        word_start = float(word.get("start", word.get("start_s")))
+        word_end = float(word.get("end", word.get("end_s")))
+    except (TypeError, ValueError):
+        return jsonify({"error": "word has no valid span"}), 400
+
+    # Validate every segment BEFORE mutating anything (§8: reject 400, don't write).
+    segments: list[dict[str, Any]] = []
+    cursor = word_start
+    for index, seg in enumerate(raw_segments, start=1):
+        if not isinstance(seg, dict):
+            return jsonify({"error": "each segment must be an object"}), 400
+        text = str(seg.get("text", "")).strip()
+        if not text:
+            return jsonify({"error": "segment text is required"}), 400
+        try:
+            start = float(seg.get("start", seg.get("start_s")))
+            end = float(seg.get("end", seg.get("end_s")))
+        except (TypeError, ValueError):
+            return jsonify({"error": "segment start/end must be numbers"}), 400
+        if start < word_start - _SYLLABLE_BOUNDARY_EPS or end > word_end + _SYLLABLE_BOUNDARY_EPS:
+            return jsonify({"error": "segment boundary outside word span"}), 400
+        if end <= start or start < cursor - _SYLLABLE_BOUNDARY_EPS:
+            return jsonify({"error": "segments must be ordered and non-overlapping"}), 400
+        cursor = end
+        segments.append({
+            "id": str(seg.get("id") or f"{word_id}_M{index:03d}"),
+            "text": text,
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "role": str(seg.get("role", "syllable")),
+            "source": "manual",
+            "confidence": 1.0,
+        })
+
+    word["highlight_segments"] = segments
+    analysis_path.write_text(json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8")
+    invalidated = _invalidate_downstream_outputs(job_dir)
+
+    project = add_edit_operation(
+        _ensure_review_project(job_dir, job_id),
+        operation="edit_syllable_boundaries",
+        target_id=str(word_id),
+        created_by="local-user",
+        details={"line_id": line_id, "segments": segments, "invalidated": invalidated},
+    )
+    save_project(job_dir, project)
+
+    write_event(
+        job_dir,
+        "syllable_boundary_edited",
+        "review",
+        details={
+            "job_id": job_id,
+            "word_id": word_id,
+            "line_id": line_id,
+            "segment_count": len(segments),
+            "invalidated": invalidated,
+        },
+    )
+    return jsonify({
+        "word_id": word_id,
+        "highlight_segments": segments,
+        "invalidated": invalidated,
+    })
+
+
+def _seg_time(seg: dict[str, Any], *names: str, default: float = 0.0) -> float:
+    for name in names:
+        if name in seg and seg[name] is not None:
+            try:
+                return float(seg[name])
+            except (TypeError, ValueError):
+                continue
+    return default
+
+
+def _syllable_pending_queue(job_dir: Path, threshold: float) -> list[dict[str, Any]]:
+    """Words whose derived syllables carry a below-threshold confidence and have
+    not been manually locked (no ``highlight_segments`` override yet).
+
+    Sorted worst-first so the reviewer works the least-confident boundaries.
+    """
+    analysis = _read_metrics_json(job_dir / "analysis.json") or {}
+    items: list[dict[str, Any]] = []
+    for line in analysis.get("lines", []) or []:
+        if not isinstance(line, dict):
+            continue
+        line_id = str(line.get("id") or "")
+        for word in line.get("words", []) or []:
+            if not isinstance(word, dict):
+                continue
+            manual = bool(word.get("highlight_segments"))
+            raw = word.get("syllables") or []
+            segments: list[dict[str, Any]] = []
+            min_conf = 1.0
+            for seg in raw:
+                if not isinstance(seg, dict):
+                    continue
+                start = _seg_time(seg, "karaoke_start", "start", "start_s")
+                end = _seg_time(seg, "karaoke_end", "end", "end_s", default=start)
+                conf = float(seg.get("confidence", 1.0))
+                min_conf = min(min_conf, conf)
+                segments.append({
+                    "id": str(seg.get("id") or seg.get("syllable_id") or ""),
+                    "text": str(seg.get("text", "")),
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "confidence": round(conf, 4),
+                })
+            if manual or not segments or min_conf >= threshold:
+                continue
+            items.append({
+                "line_id": line_id,
+                "line_text": str(line.get("text", "")),
+                "word_id": str(word.get("id") or ""),
+                "word_text": str(word.get("word") or word.get("text") or ""),
+                "word_start": round(_seg_time(word, "start", "start_s"), 3),
+                "word_end": round(_seg_time(word, "end", "end_s"), 3),
+                "min_confidence": round(min_conf, 4),
+                "segments": segments,
+            })
+    items.sort(key=lambda item: item["min_confidence"])
+    return items
+
+
+@app.route("/job/<job_id>/review/syllables/pending")
+def review_wizard_syllable_pending(job_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return jsonify({"error": "Job not found"}), 404
+    if not job_dir.exists():
+        return jsonify({"error": "Job not found"}), 404
+    threshold = APP_CONFIG.syllable_uncertain_threshold
+    items = _syllable_pending_queue(job_dir, threshold)
+    return jsonify({
+        "job_id": job_id,
+        "threshold": threshold,
+        "count": len(items),
+        "pending": items,
+    })
+
+
+_AUDIO_STEMS = {"vocals": "vocals.wav", "instrumental": "instrumental.wav"}
+
+
+@app.route("/job/<job_id>/audio/<stem>")
+def job_audio(job_id: str, stem: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Not found", 404
+    fname = _AUDIO_STEMS.get(stem)
+    if fname is None:
+        return "Not found", 404
+    path = job_dir / fname
+    if not path.exists():
+        return "Not found", 404
+    return send_file(path, mimetype="audio/wav", conditional=True)
+
+
+def _wav_window_peaks(path: Path, start_s: float, end_s: float, buckets: int) -> dict[str, Any]:
+    """Min/max peaks for a WAV time window, computed server-side so the browser
+    never decodes the whole stem. Reads only the requested frame range."""
+    import wave
+    import numpy as np
+
+    with wave.open(str(path), "rb") as wav:
+        sr = wav.getframerate()
+        nframes = wav.getnframes()
+        channels = wav.getnchannels()
+        width = wav.getsampwidth()
+        s0 = max(0, int(start_s * sr))
+        s1 = min(nframes, int(end_s * sr))
+        if s1 <= s0:
+            return {"sample_rate": sr, "buckets": []}
+        wav.setpos(s0)
+        raw = wav.readframes(s1 - s0)
+
+    dtype = {1: np.int8, 2: np.int16, 4: np.int32}.get(width)
+    if dtype is None:
+        return {"sample_rate": sr, "buckets": []}
+    samples = np.frombuffer(raw, dtype=dtype)
+    if channels > 1:
+        samples = samples[::channels]  # first channel
+    if samples.size == 0:
+        return {"sample_rate": sr, "buckets": []}
+    norm = samples.astype(np.float32) / float(np.iinfo(dtype).max)
+    edges = np.linspace(0, norm.size, buckets + 1, dtype=int)
+    out = []
+    for k in range(buckets):
+        seg = norm[edges[k]:edges[k + 1]]
+        if seg.size:
+            out.append([round(float(seg.min()), 4), round(float(seg.max()), 4)])
+        else:
+            out.append([0.0, 0.0])
+    return {"sample_rate": sr, "buckets": out}
+
+
+@app.route("/job/<job_id>/audio/vocals/peaks")
+def job_audio_peaks(job_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return jsonify({"error": "Job not found"}), 404
+    path = job_dir / "vocals.wav"
+    if not path.exists():
+        return jsonify({"error": "no vocals"}), 404
+    try:
+        start_s = max(0.0, float(request.args.get("start", 0.0)))
+        end_s = max(start_s, float(request.args.get("end", start_s)))
+        buckets = min(2000, max(50, int(request.args.get("buckets", 800))))
+    except (TypeError, ValueError):
+        return jsonify({"error": "bad params"}), 400
+    try:
+        return jsonify(_wav_window_peaks(path, start_s, end_s, buckets))
+    except Exception as exc:  # malformed/float wav etc. — degrade gracefully
+        return jsonify({"error": str(exc), "buckets": []}), 200
+
+
+def _wav_window_onsets(path: Path, start_s: float, end_s: float, max_onsets: int = 48) -> dict[str, Any]:
+    """Onset times for a WAV window via a spectral-flux envelope, computed at full
+    sample resolution server-side (more precise than the client's bucket heuristic).
+
+    Reads only the requested frame range — never decodes the whole stem — then STFTs
+    the window, sums the positive spectral flux per frame, subtracts a local mean and
+    peak-picks with a >=50ms minimum spacing. Returns onset times in seconds."""
+    import wave
+    import numpy as np
+
+    with wave.open(str(path), "rb") as wav:
+        sr = wav.getframerate()
+        nframes = wav.getnframes()
+        channels = wav.getnchannels()
+        width = wav.getsampwidth()
+        s0 = max(0, int(start_s * sr))
+        s1 = min(nframes, int(end_s * sr))
+        if s1 <= s0:
+            return {"sample_rate": sr, "onsets": []}
+        wav.setpos(s0)
+        raw = wav.readframes(s1 - s0)
+
+    dtype = {1: np.int8, 2: np.int16, 4: np.int32}.get(width)
+    if dtype is None:
+        return {"sample_rate": sr, "onsets": []}
+    samples = np.frombuffer(raw, dtype=dtype)
+    if channels > 1:
+        samples = samples[::channels]  # first channel
+    if samples.size == 0:
+        return {"sample_rate": sr, "onsets": []}
+    x = samples.astype(np.float32) / float(np.iinfo(dtype).max)
+
+    # STFT spectral-flux onset envelope (Hann window ~46ms, 4x overlap).
+    win = 1 << int(max(6, min(11, round(float(np.log2(max(64.0, 0.046 * sr)))))))
+    hop = max(1, win // 4)
+    if x.size < win + hop:
+        return {"sample_rate": sr, "onsets": []}
+    window = np.hanning(win).astype(np.float32)
+    n = 1 + (x.size - win) // hop
+    flux = np.zeros(n, dtype=np.float32)
+    prev = None
+    for i in range(n):
+        mag = np.abs(np.fft.rfft(x[i * hop:i * hop + win] * window))
+        if prev is not None:
+            flux[i] = float(np.sum(np.maximum(0.0, mag - prev)))
+        prev = mag
+    peak = float(flux.max())
+    if n < 3 or peak <= 0:
+        return {"sample_rate": sr, "onsets": []}
+    flux /= peak
+
+    # subtract a local mean, then pick prominent local maxima with min spacing
+    wmean = max(3, int(0.08 * sr / hop))
+    kernel = np.ones(wmean, dtype=np.float32) / wmean
+    detect = flux - np.convolve(flux, kernel, mode="same")
+    min_gap = max(1, int(round(0.05 * sr / hop)))  # >= ~50ms between onsets
+    # ponytail: O(cand^2) spacing greedy — cand is tiny for a word-sized window
+    cand = [(float(flux[i]), i) for i in range(1, n - 1)
+            if detect[i] > 0.05 and flux[i] >= flux[i - 1] and flux[i] > flux[i + 1]]
+    cand.sort(reverse=True)
+    chosen: list[int] = []
+    for _, i in cand:
+        if len(chosen) >= max_onsets:
+            break
+        if all(abs(i - j) >= min_gap for j in chosen):
+            chosen.append(i)
+    chosen.sort()
+    onsets = [round(start_s + (i * hop + win / 2) / sr, 3) for i in chosen]
+    return {"sample_rate": sr, "onsets": onsets}
+
+
+@app.route("/job/<job_id>/audio/vocals/onsets")
+def job_audio_onsets(job_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return jsonify({"error": "Job not found"}), 404
+    path = job_dir / "vocals.wav"
+    if not path.exists():
+        return jsonify({"error": "no vocals"}), 404
+    try:
+        start_s = max(0.0, float(request.args.get("start", 0.0)))
+        end_s = max(start_s, float(request.args.get("end", start_s)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "bad params"}), 400
+    try:
+        return jsonify(_wav_window_onsets(path, start_s, end_s))
+    except Exception as exc:  # malformed/float wav etc. — degrade gracefully
+        return jsonify({"error": str(exc), "onsets": []}), 200
+
+
+@app.route("/job/<job_id>/review/syllables")
+def review_wizard_syllable_editor(job_id: str):
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError:
+        return "Job not found", 404
+    if not job_dir.exists():
+        return "Job not found", 404
+    meta = {}
+    meta_path = job_dir / "meta.json"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            meta = {}
+    has_vocals = (job_dir / "vocals.wav").exists()
+    return render_template(
+        "syllable_editor.html",
+        job_id=job_id,
+        song_name=meta.get("song_name", job_id),
+        has_vocals=has_vocals,
+        uncertain_threshold=APP_CONFIG.syllable_uncertain_threshold,
     )
 
 
@@ -1416,6 +1895,7 @@ def job_metrics_api(job_id: str):
     metrics = _compute_drift_metrics(job_dir)
     if metrics is None:
         return jsonify({"error": "no reference data"}), 404
+    metrics["pipeline_metrics"] = _compute_pipeline_metrics(job_dir)
     return jsonify(metrics)
 
 

@@ -449,6 +449,76 @@ class RouteContractTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["error"], "no reference data")
 
+    def test_metrics_returns_drift_and_pipeline_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            self._write_job(job_dir, job_id)
+            (job_dir / "reference_mapping.json").write_text(
+                json.dumps({"lines": [{"reference_start_sec": 1.0, "annotation": "[Verse]"}]}),
+                encoding="utf-8",
+            )
+            (job_dir / "transcript.json").write_text(
+                json.dumps({"segments": [{"start": 1.2, "text": "hello"}]}),
+                encoding="utf-8",
+            )
+            (job_dir / "alignment_windows.json").write_text(
+                json.dumps(
+                    {
+                        "windows": [
+                            {"block_id": "B001", "line_ids": ["L001"], "audio_start": 0.8, "audio_end": 1.8},
+                            {"block_id": "B002", "line_ids": ["L002"], "audio_start": 2.0, "audio_end": 3.0},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "ctc_window_safety_report.json").write_text(
+                json.dumps(
+                    {
+                        "summary": {
+                            "total_windows": 2,
+                            "safe_windows": 1,
+                            "unsafe_windows": 1,
+                            "long_gap_crossing_windows": 1,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "syllable_alignment.json").write_text(
+                json.dumps(
+                    {
+                        "syllables": [
+                            {"source": "phone_projection", "confidence": 0.9},
+                            {"source": "phone_projection", "confidence": 0.7},
+                            {"source": "duration_interpolation_fallback", "confidence": 0.4},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(server, "JOBS_DIR", jobs_dir), patch.object(
+                server, "_blocked_final_export_reason", return_value=None
+            ):
+                response = server.app.test_client().get(f"/job/{job_id}/metrics")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["matched"], 1)
+        self.assertIn("p95", payload)
+        pipeline = payload["pipeline_metrics"]
+        self.assertEqual(pipeline["window_safety_rate"], 0.5)
+        self.assertAlmostEqual(pipeline["syllable_projection_rate"], 2 / 3, places=4)
+        self.assertEqual(pipeline["syllable_confidence_p50"], 0.7)
+        self.assertEqual(pipeline["syllable_confidence_p05"], 0.43)
+        self.assertAlmostEqual(pipeline["fallback_usage"], 1 / 3, places=4)
+        self.assertEqual(pipeline["long_gap_crossings"], 1)
+        self.assertTrue(pipeline["final_export_allowed"])
+        self.assertIsNone(pipeline["final_export_block_reason"])
+
     def test_output_mp4_returns_403_when_output_artifacts_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             jobs_dir = Path(tmp)
@@ -488,6 +558,207 @@ class RouteContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/event-stream", response.content_type)
         self.assertIn(b"done", response.data)
+
+
+class SyllableBoundaryEditTests(unittest.TestCase):
+    @staticmethod
+    def _write_job(job_dir: Path, job_id: str) -> None:
+        job_dir.mkdir()
+        (job_dir / "meta.json").write_text(
+            json.dumps({"job_id": job_id, "song_name": "Edit", "preset": "section-coded"}),
+            encoding="utf-8",
+        )
+        (job_dir / "analysis.json").write_text(
+            json.dumps({
+                "lines": [{
+                    "id": "L001",
+                    "text": "aah",
+                    "words": [{
+                        "id": "L001_W001", "word": "aah", "start": 10.0, "end": 11.6,
+                        "syllables": [{"syllable_id": "L001_W001_S001", "text": "aah",
+                                       "start": 10.0, "end": 11.6, "confidence": 0.5}],
+                    }],
+                }]
+            }),
+            encoding="utf-8",
+        )
+        (job_dir / "output.ass").write_text("[Events]\nDialogue: x {\\kf80}aah\n", encoding="utf-8")
+        (job_dir / "output.mp4").write_bytes(b"fake mp4")
+
+    def test_valid_edit_rewrites_segments_records_op_and_invalidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            self._write_job(job_dir, job_id)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().post(
+                    f"/job/{job_id}/review/syllables/boundary",
+                    json={
+                        "line_id": "L001",
+                        "word_id": "L001_W001",
+                        "segments": [
+                            {"text": "aa", "start": 10.0, "end": 10.8},
+                            {"text": "ah", "start": 10.8, "end": 11.6},
+                        ],
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertEqual(len(payload["highlight_segments"]), 2)
+
+            analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
+            word = analysis["lines"][0]["words"][0]
+            self.assertEqual([s["text"] for s in word["highlight_segments"]], ["aa", "ah"])
+            self.assertTrue(all(s["source"] == "manual" for s in word["highlight_segments"]))
+
+            # Downstream outputs invalidated (no orphan render).
+            self.assertFalse((job_dir / "output.mp4").exists())
+            self.assertFalse((job_dir / "output.ass").exists())
+
+            project = server.load_project(job_dir)
+            self.assertTrue(
+                any(op.operation == "edit_syllable_boundaries" for op in project.edit_operations)
+            )
+            events = read_events(job_dir)
+            self.assertTrue(any(e["event"] == "syllable_boundary_edited" for e in events))
+
+    def test_boundary_outside_word_span_is_rejected_without_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            self._write_job(job_dir, job_id)
+
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().post(
+                    f"/job/{job_id}/review/syllables/boundary",
+                    json={
+                        "line_id": "L001",
+                        "word_id": "L001_W001",
+                        "segments": [{"text": "aa", "start": 10.0, "end": 12.0}],  # past word end
+                    },
+                )
+
+            self.assertEqual(response.status_code, 400)
+            analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
+            self.assertNotIn("highlight_segments", analysis["lines"][0]["words"][0])
+            # Nothing invalidated on rejection.
+            self.assertTrue((job_dir / "output.mp4").exists())
+            self.assertTrue((job_dir / "output.ass").exists())
+
+
+class SyllableReviewEditorTests(unittest.TestCase):
+    @staticmethod
+    def _write_job(job_dir: Path, job_id: str) -> None:
+        job_dir.mkdir()
+        (job_dir / "meta.json").write_text(
+            json.dumps({"job_id": job_id, "song_name": "Editor Song"}), encoding="utf-8"
+        )
+        (job_dir / "analysis.json").write_text(
+            json.dumps({
+                "lines": [{
+                    "id": "L001", "text": "the beast",
+                    "words": [
+                        {"id": "L001_W001", "word": "the", "start": 1.0, "end": 1.4,
+                         "syllables": [{"syllable_id": "s1", "text": "the", "karaoke_start": 1.0,
+                                        "karaoke_end": 1.4, "confidence": 0.9}]},
+                        {"id": "L001_W002", "word": "beast", "start": 1.5, "end": 2.3,
+                         "syllables": [
+                             {"syllable_id": "s2", "text": "be", "karaoke_start": 1.5,
+                              "karaoke_end": 1.9, "confidence": 0.45},
+                             {"syllable_id": "s3", "text": "ast", "karaoke_start": 1.9,
+                              "karaoke_end": 2.3, "confidence": 0.8}]},
+                    ],
+                }]
+            }),
+            encoding="utf-8",
+        )
+
+    def test_pending_queue_lists_low_confidence_words_worst_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            self._write_job(jobs_dir / job_id, job_id)
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(
+                    f"/job/{job_id}/review/syllables/pending"
+                )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        # only "beast" (min conf 0.45) is below threshold; "the" (0.9) is not.
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["pending"][0]["word_text"], "beast")
+        self.assertEqual(payload["pending"][0]["min_confidence"], 0.45)
+
+    def test_pending_queue_excludes_manually_locked_words(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            self._write_job(job_dir, job_id)
+            analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
+            analysis["lines"][0]["words"][1]["highlight_segments"] = [
+                {"id": "m1", "text": "beast", "start": 1.5, "end": 2.3, "source": "manual"}
+            ]
+            (job_dir / "analysis.json").write_text(json.dumps(analysis), encoding="utf-8")
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(
+                    f"/job/{job_id}/review/syllables/pending"
+                )
+        self.assertEqual(response.get_json()["count"], 0)
+
+    def test_editor_page_renders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            self._write_job(jobs_dir / job_id, job_id)
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                response = server.app.test_client().get(f"/job/{job_id}/review/syllables")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"SYLLABLE REVIEW", response.data)
+
+    def test_audio_and_peaks_routes(self):
+        import shutil
+        import wave
+
+        tmp = tempfile.mkdtemp()
+        try:
+            jobs_dir = Path(tmp)
+            job_id = "abc123def456"
+            job_dir = jobs_dir / job_id
+            self._write_job(job_dir, job_id)
+            with wave.open(str(job_dir / "vocals.wav"), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(16000)
+                w.writeframes(b"\x00\x10" * 16000 * 3)  # 3s
+            with patch.object(server, "JOBS_DIR", jobs_dir):
+                client = server.app.test_client()
+                audio = client.get(f"/job/{job_id}/audio/vocals")
+                peaks = client.get(f"/job/{job_id}/audio/vocals/peaks?start=0.5&end=2.5&buckets=100")
+                onsets = client.get(f"/job/{job_id}/audio/vocals/onsets?start=0.5&end=2.5")
+                missing = client.get(f"/job/{job_id}/audio/bogus")
+
+            self.assertEqual(audio.status_code, 200)
+            self.assertEqual(audio.mimetype, "audio/wav")
+            self.assertEqual(missing.status_code, 404)
+            self.assertEqual(peaks.status_code, 200)
+            self.assertEqual(len(peaks.get_json()["buckets"]), 100)
+            self.assertEqual(onsets.status_code, 200)
+            onset_times = onsets.get_json()["onsets"]
+            self.assertIsInstance(onset_times, list)
+            # onsets stay inside the requested window and are sorted
+            self.assertTrue(all(0.5 <= t <= 2.5 for t in onset_times))
+            self.assertEqual(onset_times, sorted(onset_times))
+            audio.close()  # release the send_file handle before cleanup (Windows)
+            missing.close()
+            peaks.close()
+            onsets.close()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

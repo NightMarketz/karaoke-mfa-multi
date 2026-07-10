@@ -104,23 +104,30 @@ async function loadPeaks() {
   const seq = ++_peaksSeq;
   if (!HAS_VOCALS || state.current < 0) { state.peaks = null; state.onsets = []; drawWave(); return; }
   const { t0, t1 } = state.view;
+  const q = `start=${t0.toFixed(3)}&end=${t1.toFixed(3)}`;
   try {
-    const r = await fetch(`/job/${JOB}/audio/vocals/peaks?start=${t0.toFixed(3)}&end=${t1.toFixed(3)}&buckets=900`);
-    const peaks = await r.json();
+    // Peaks + server-side onsets in parallel. Onsets are computed at full audio
+    // resolution server-side (spectral flux); fall back to the client heuristic
+    // if that route is unavailable or errors.
+    const [peaks, onsetResp] = await Promise.all([
+      fetch(`/job/${JOB}/audio/vocals/peaks?${q}&buckets=900`).then(r => r.json()),
+      fetch(`/job/${JOB}/audio/vocals/onsets?${q}`).then(r => r.ok ? r.json() : null).catch(() => null),
+    ]);
     if (seq !== _peaksSeq) return;          // a newer view won the race
     state.peaks = peaks;
-    computeOnsets();
+    if (onsetResp && Array.isArray(onsetResp.onsets)) state.onsets = onsetResp.onsets;
+    else computeOnsets();                   // fallback: derive from peaks buckets
   } catch (e) { if (seq === _peaksSeq) { state.peaks = null; state.onsets = []; } }
   drawWave();
 }
 let _peaksTimer = null;
 function loadPeaksSoon() { clearTimeout(_peaksTimer); _peaksTimer = setTimeout(loadPeaks, 90); }
 
-// Onset candidates = prominent peaks in the positive energy flux (rising edges).
-// The stem is smoothed to kill micro-wiggles, thresholded on flux mean+2σ, then
+// Fallback onset detector (used only when the server /onsets route is
+// unavailable): prominent peaks in the positive energy flux of the peaks
+// buckets. Smoothed to kill micro-wiggles, thresholded on flux mean+2σ, then
 // picked strongest-first with a ~45ms minimum spacing (min-syllable scale) so
 // short high-resolution windows don't produce a forest of noise ticks.
-// ponytail: energy-flux heuristic; swap for a server-side onset route (Fase 4) if accuracy falls short.
 function computeOnsets() {
   state.onsets = [];
   const p = state.peaks;
