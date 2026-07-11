@@ -56,7 +56,123 @@ logger = logging.getLogger(__name__)
 
 # Silence phoneme labels emitted by HubertFA
 _SILENCE_LABELS = {"SIL", "SP", "AP", "sil", "sp", "ap", "<SIL>", "<SP>"}
+_PHONE_TIERS = {"phones", "phonemes", "phone"}
+
+
+def _phone_intervals(intervals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only real phoneme intervals from a parsed TextGrid.
+
+    HubertFA emits a ``words`` tier and a ``phones`` tier; only the phones tier
+    is phonemic. Falls back to all non-silence intervals if no tier is named
+    like a phone tier (defensive against future tier renames).
+    """
+    phones = [v for v in intervals if v.get("tier") in _PHONE_TIERS]
+    source = phones if phones else intervals
+    return [v for v in source if v["text"] and v["text"] not in _SILENCE_LABELS]
 _STRESS_RE = re.compile(r"\d+$")
+
+# Default word-duration floor (ms). Overridable via [align] min_word_ms / env.
+DEFAULT_MIN_WORD_MS = 120
+
+
+def _apply_word_duration_floor(
+    spans: list[tuple[float, float]], min_word_dur: float
+) -> tuple[list[tuple[float, float]], int]:
+    """Grow degenerate word spans to ``min_word_dur`` without breaking line-sync.
+
+    CTC compresses short function words to ~0 and parks them as tiny islands with
+    silence on either side. Each sub-floor word is widened symmetrically around
+    its own midpoint to reach the floor, clamped to its neighbours' boundaries
+    (``[prev.end, next.start]``) so words never overlap. The first word's start
+    and the last word's end are never moved, so the line envelope (line-sync) is
+    preserved. If the free space between neighbours is itself below the floor the
+    word takes all of it (still an improvement). ``phonemes:[]`` words widen too
+    — a wider span lets s04 bucket the phonemes that actually belong to them.
+
+    ponytail: only expands into free gaps; it does not steal from an abutting
+    over-long neighbour. Add that if wedged sub-floor words (no gap either side)
+    ever show up — the measured corpus has none.
+
+    Returns the adjusted spans and the count of words that were below the floor.
+    """
+    if not spans or min_word_dur <= 0:
+        return spans, 0
+
+    result = list(spans)
+    n = len(result)
+    half = min_word_dur / 2.0
+    n_below = 0
+    for i, (start, end) in enumerate(result):
+        if (end - start) >= min_word_dur - 1e-9:
+            continue
+        n_below += 1
+        left_bound = result[i - 1][1] if i > 0 else start   # don't cross prev word / line start
+        right_bound = result[i + 1][0] if i + 1 < n else end  # don't cross next word / line end
+        if right_bound - left_bound <= end - start + 1e-9:
+            continue  # no free space around this word — leave it as-is
+        mid = (start + end) / 2.0
+        new_start, new_end = mid - half, mid + half
+        if new_start < left_bound:      # shove right to stay off the previous word
+            new_end += left_bound - new_start
+            new_start = left_bound
+        if new_end > right_bound:       # shove left to stay off the next word
+            new_start -= new_end - right_bound
+            new_end = right_bound
+        new_start = max(new_start, left_bound)
+        new_end = min(new_end, right_bound)
+        result[i] = (round(new_start, 4), round(new_end, 4))
+    return result, n_below
+
+
+def demo() -> None:
+    """Self-check: floor grows a degenerate word into its gap, envelope intact."""
+    # Tiny interior word (18ms) with silence on both sides — the real case.
+    spans = [(0.0, 0.4), (0.52, 0.54), (0.66, 1.0)]
+    out, n = _apply_word_duration_floor(spans, 0.12)
+    assert n == 1, n
+    assert out[0] == (0.0, 0.4) and out[2] == (0.66, 1.0), out          # neighbours untouched
+    assert out[1][1] - out[1][0] >= 0.12 - 1e-6, out                    # floor reached
+    assert out[1][0] >= 0.4 and out[1][1] <= 0.66, out                  # no overlap
+    # First/last words pin the line envelope; a healthy word is untouched.
+    healthy = [(0.0, 1.0), (5.0, 6.0)]
+    out2, n2 = _apply_word_duration_floor(healthy, 0.12)
+    assert out2 == healthy and n2 == 0, (out2, n2)
+    print("s04 word-duration floor demo OK")
+
+    # Sequence-mode assignment: two words, real g2p counts [1, 2]. A mis-sized CTC
+    # span (word A oversized) would time-bucket B's first phone into A; sequence
+    # mode slices by count instead, so each word gets exactly its own phones.
+    words = [{"word": "a", "start": 0.0, "end": 0.95}, {"word": "cat", "start": 0.95, "end": 1.2}]
+    ph_ivs = [
+        {"text": "AH", "xmin": 0.0, "xmax": 0.3},
+        {"text": "K",  "xmin": 0.85, "xmax": 1.0},   # midpoint 0.925 → falls in A's oversized span
+        {"text": "AE", "xmin": 1.0, "xmax": 1.2},
+    ]
+    seq = _ctc_forced_with_phonemes(words, ph_ivs, 0.0, phone_counts=[1, 2], assign="sequence")
+    assert [p["ph"] for p in seq[0]["phonemes"]] == ["AH"], seq[0]
+    assert [p["ph"] for p in seq[1]["phonemes"]] == ["K", "AE"], seq[1]
+    # Legacy timebucket would misassign "K" to word A (its midpoint is inside A).
+    tb = _ctc_forced_with_phonemes(words, ph_ivs, 0.0, phone_counts=[1, 2], assign="timebucket")
+    assert [p["ph"] for p in tb[0]["phonemes"]] == ["AH", "K"], tb[0]
+    # Guard: broken count invariant (sum=5 ≠ 3 phones) falls back to timebucket.
+    guarded = _ctc_forced_with_phonemes(words, ph_ivs, 0.0, phone_counts=[2, 3], assign="sequence")
+    assert [p["ph"] for p in guarded[0]["phonemes"]] == ["AH", "K"], guarded[0]
+    print("s04 sequence-assignment demo OK")
+
+    # Whisper mode (timing derived from phonemes): real counts [1,2] keep K with
+    # "cat"; the uniform ratio split would round word A up to 2 and steal K.
+    wmap = _map_phonemes_to_words(words, ph_ivs, 0.0, phone_counts=[1, 2])
+    assert [p["ph"] for p in wmap[0]["phonemes"]] == ["AH"], wmap[0]
+    assert [p["ph"] for p in wmap[1]["phonemes"]] == ["K", "AE"], wmap[1]
+    uni = _map_phonemes_to_words(words, ph_ivs, 0.0)  # no counts → uniform ratio
+    assert [p["ph"] for p in uni[0]["phonemes"]] == ["AH", "K"], uni[0]
+    print("s04 whisper-mode map demo OK")
+
+    # Icelandic lexicon: a listed word bypasses g2p (key ignores case/punct/accents kept).
+    lex = {_word_key("Dýrið"): ["D", "IY", "R", "IH", "DH"]}
+    assert _phonemise_text("Dýrið,", None, lex) == ["D", "IY", "R", "IH", "DH"]  # g2p unused
+    assert _word_key("Höfuðið!") == "höfuðið"
+    print("s04 icelandic-lexicon demo OK")
 
 
 @contextmanager
@@ -92,33 +208,82 @@ def _hfa_batch_dir(job_dir: Path):
 
 
 def _parse_textgrid(path: Path) -> list[dict[str, Any]]:
-    """Parse a Praat TextGrid file (inline). Handles long/short formats."""
+    """Parse a Praat TextGrid file (inline). Handles long/short formats.
+
+    HubertFA writes two tiers — ``words`` then ``phones`` — so each interval is
+    tagged with the tier it actually belongs to (tracked by file position),
+    otherwise phoneme and word intervals get mixed and duplicated.
+    """
     text = path.read_text(encoding="utf-8", errors="replace")
     intervals: list[dict[str, Any]] = []
-    current_tier: str = "phones"
     tier_name_re = re.compile(r'name\s*=\s*"([^"]+)"')
     interval_re  = re.compile(
         r'xmin\s*=\s*([\d.]+)\s*\n\s*xmax\s*=\s*([\d.]+)\s*\n\s*text\s*=\s*"([^"]*)"',
         re.MULTILINE,
     )
-    tier_match = tier_name_re.search(text)
-    if tier_match:
-        current_tier = tier_match.group(1)
-
+    # Merge tier-name markers and intervals into one position-ordered stream so
+    # each interval inherits the most recent tier name before it.
+    events: list[tuple[int, str, Any]] = []
+    for m in tier_name_re.finditer(text):
+        events.append((m.start(), "tier", m.group(1)))
     for m in interval_re.finditer(text):
-        intervals.append({
-            "tier": current_tier,
-            "xmin": float(m.group(1)),
-            "xmax": float(m.group(2)),
-            "text": m.group(3).strip(),
-        })
+        events.append((m.start(), "iv", (float(m.group(1)), float(m.group(2)), m.group(3).strip())))
+    events.sort(key=lambda e: e[0])
+
+    current_tier = "phones"
+    for _, kind, value in events:
+        if kind == "tier":
+            current_tier = value
+        else:
+            xmin, xmax, txt = value
+            intervals.append({"tier": current_tier, "xmin": xmin, "xmax": xmax, "text": txt})
     if not intervals:
         raise ValueError(f"No intervals parsed from TextGrid at {path}")
     return intervals
 
 
-def _phonemise_text(text: str, g2p) -> list[str]:
-    """Convert text to ARPAbet (stress stripped)."""
+# Icelandic-only letters — used to flag words that g2p_en would mis-phonemise.
+_IS_CHARS = set("þðæöáéíóúýÞÐÆÖÁÉÍÓÚÝ")
+
+
+def _word_key(text: str) -> str:
+    """Lexicon lookup key: letters only, lowercased (keeps þðæö and accents)."""
+    return "".join(ch for ch in text.lower() if ch.isalpha())
+
+
+def _load_is_lexicon(path: Path) -> dict[str, list[str]]:
+    """Load an Icelandic word→ARPAbet lexicon (``word\\tPH PH PH`` per line).
+
+    The HubertFA model has no native Icelandic phone set (only en/ja/zh), so
+    these are the nearest en/ ARPAbet phones — good enough to get the vowel /
+    syllable count right, which is what g2p_en gets wrong on Icelandic spelling.
+    Optional: returns {} if the file is absent.
+    """
+    lex: dict[str, list[str]] = {}
+    if not path.exists():
+        return lex
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        word, _, phones = line.partition("\t")
+        phones = phones or ""
+        key = _word_key(word)
+        if key and phones.split():
+            lex[key] = phones.upper().split()
+    return lex
+
+
+def _phonemise_text(text: str, g2p, is_lexicon: dict[str, list[str]] | None = None) -> list[str]:
+    """Convert text to ARPAbet (stress stripped).
+
+    A single word present in ``is_lexicon`` is taken from there verbatim (correct
+    Icelandic pronunciation); everything else goes through g2p_en.
+    """
+    if is_lexicon:
+        hit = is_lexicon.get(_word_key(text))
+        if hit is not None:
+            return list(hit)
     raw = g2p(text)
     phonemes = []
     for token in raw:
@@ -163,55 +328,106 @@ def _ctc_forced_fallback(words: list[dict]) -> list[dict]:
 
 
 def _ctc_forced_with_phonemes(
-    words: list[dict], ph_ivs: list[dict], offset: float
+    words: list[dict], ph_ivs: list[dict], offset: float,
+    min_word_dur: float = DEFAULT_MIN_WORD_MS / 1000.0,
+    phone_counts: list[int] | None = None,
+    assign: str = "sequence",
 ) -> list[dict]:
     """
-    Keep CTC word timestamps, attach HubertFA phonemes as metadata only.
+    Keep CTC word timestamps; attach each HubertFA phoneme to a word. Word
+    start/end always come from the CTC aligner (s03b) and are NOT overwritten
+    unless invalid — only the phoneme→word assignment differs by ``assign``:
 
-    For forced alignment mode: word start/end come from the CTC aligner
-    (s03b) and are NOT overwritten unless they are invalid (zero duration).
-    Phonemes from HubertFA are distributed by count ratio and attached as 
-    enrichment data.
+    * ``sequence`` (default): slice the ordered phone stream by the real g2p
+      phoneme count per word (``phone_counts``). Forced alignment aligns exactly
+      the phoneme sequence we fed it, in order, so the filtered ``phones`` tier
+      maps 1:1 to the concatenated per-word g2p phones. This is how MFA / SOFA
+      group phones into words (by lexicon count), not by time. Falls back to
+      ``timebucket`` for a segment iff the count invariant does not hold.
+    * ``timebucket``: assign each phoneme to the word whose [start, end] span its
+      midpoint falls into (nearest word if it lands in a gap). Legacy path;
+      drifts when CTC word spans are mis-sized in sustained singing.
+
+    A word that captures no phoneme stays plain ``ctc_forced`` with
+    ``phonemes: []`` (renders as a single highlight downstream).
     """
-    result, ph_idx, total_ph = [], 0, len(ph_ivs)
     min_dur = 0.050  # 50ms
 
-    for w_i, word in enumerate(words):
-        rem_w = len(words) - w_i
-        rem_ph = total_ph - ph_idx
-        n_ph = max(1, round(rem_ph / rem_w)) if w_i < len(words) - 1 else rem_ph
-        ivs = ph_ivs[ph_idx : ph_idx + n_ph]
-        ph_idx += n_ph
-
+    # Normalise word spans first (fix zero-duration and overlaps), keeping order.
+    spans: list[tuple[float, float]] = []
+    for word in words:
         w_start = word["start"]
-        w_end   = word["end"]
-
-        # Enforce minimum duration for words that arrived broken from s03b
+        w_end = word["end"]
         if w_end <= w_start:
             w_end = w_start + min_dur
-            logger.info("Fixed zero-duration word '%s' in forced mode: %.4f -> %.4f", 
+            logger.info("Fixed zero-duration word '%s' in forced mode: %.4f -> %.4f",
                         word["word"], w_start, w_end)
-
-        # Prevent overlap with PREVIOUS word in result list
-        if result:
-            prev_end = result[-1]["end"]
+        if spans:
+            prev_end = spans[-1][1]
             if w_start < prev_end:
-                # If they overlap, push start forward but maintain min duration
                 w_start = prev_end
                 if w_end < w_start + min_dur:
                     w_end = w_start + min_dur
+        spans.append((round(w_start, 4), round(w_end, 4)))
 
+    # Lift degenerate (near-zero) word spans to a plausible floor before phonemes
+    # are bucketed, so CTC-compressed function words get real timing and their
+    # phonemes land inside their own span. Line envelope stays fixed (line-sync).
+    spans, _ = _apply_word_duration_floor(spans, min_word_dur)
+
+    # Absolute-time phonemes, in TextGrid order.
+    phones = [
+        {"ph": v["text"], "start": round(v["xmin"] + offset, 4),
+         "end": round(v["xmax"] + offset, 4)}
+        for v in ph_ivs
+    ]
+
+    # Choose assignment. Sequence mode needs the count invariant to hold for this
+    # segment; otherwise it would shift every following word, so fall back to time.
+    use_sequence = (
+        assign == "sequence"
+        and phone_counts is not None
+        and len(phone_counts) == len(words)
+        and sum(phone_counts) == len(phones)
+    )
+    if assign == "sequence" and phone_counts is not None and not use_sequence:
+        logger.warning(
+            "phone-assign=sequence: count invariant broke (words=%d, counts=%d/sum=%d, "
+            "phones=%d) — using timebucket for this segment",
+            len(words), len(phone_counts), sum(phone_counts), len(phones),
+        )
+
+    buckets: list[list[dict]] = [[] for _ in words]
+    if use_sequence:
+        idx = 0
+        for i, n in enumerate(phone_counts):
+            buckets[i] = phones[idx : idx + n]
+            idx += n
+    elif spans:
+        for ph in phones:
+            mid = (ph["start"] + ph["end"]) / 2.0
+            idx = next(
+                (i for i, (ws, we) in enumerate(spans) if ws - 1e-6 <= mid <= we + 1e-6),
+                None,
+            )
+            if idx is None:  # fell in a gap — attach to the nearest word boundary
+                idx = min(
+                    range(len(spans)),
+                    key=lambda i: min(abs(mid - spans[i][0]), abs(mid - spans[i][1])),
+                )
+            buckets[idx].append(ph)
+
+    result = []
+    for i, word in enumerate(words):
+        w_start, w_end = spans[i]
+        ivs = buckets[i]
         base_source = word.get("source", "ctc_forced")
         entry = {
             "word":     word["word"],
-            "start":    round(w_start, 4),
-            "end":      round(w_end, 4),
+            "start":    w_start,
+            "end":      w_end,
             "source":   base_source if not ivs else f"{base_source}+hubertfa",
-            "phonemes": [
-                {"ph": v["text"], "start": round(v["xmin"] + offset, 4),
-                 "end": round(v["xmax"] + offset, 4)}
-                for v in ivs
-            ],
+            "phonemes": ivs,
         }
         if word.get("low_confidence"):
             entry["low_confidence"] = True
@@ -273,13 +489,36 @@ def _linear_interpolate_words(words: list[dict], seg_start: float, seg_end: floa
 
 
 
-def _map_phonemes_to_words(words: list[dict], ph_ivs: list[dict], offset: float) -> list[dict]:
-    """Distribute phonemes across words by count ratio."""
+def _map_phonemes_to_words(
+    words: list[dict], ph_ivs: list[dict], offset: float,
+    phone_counts: list[int] | None = None,
+) -> list[dict]:
+    """Assign phonemes to words and derive word timing from them (whisper mode).
+
+    Slices the ordered phone stream by the real g2p phoneme count per word
+    (``phone_counts``) — the same lexicon-count grouping as forced mode — when the
+    count invariant holds. Falls back to a uniform count-ratio split when counts
+    are absent or don't match the aligned phone stream.
+    """
     result, ph_idx, total_ph = [], 0, len(ph_ivs)
+    use_sequence = (
+        phone_counts is not None
+        and len(phone_counts) == len(words)
+        and sum(phone_counts) == total_ph
+    )
+    if phone_counts is not None and not use_sequence:
+        logger.warning(
+            "map_phonemes: count invariant broke (words=%d, counts=%d/sum=%d, "
+            "phones=%d) — using uniform ratio split",
+            len(words), len(phone_counts), sum(phone_counts), total_ph,
+        )
     for w_i, word in enumerate(words):
-        rem_w = len(words) - w_i
-        rem_ph = total_ph - ph_idx
-        n_ph = max(1, round(rem_ph / rem_w)) if w_i < len(words) - 1 else rem_ph
+        if use_sequence:
+            n_ph = phone_counts[w_i]
+        else:
+            rem_w = len(words) - w_i
+            rem_ph = total_ph - ph_idx
+            n_ph = max(1, round(rem_ph / rem_w)) if w_i < len(words) - 1 else rem_ph
         ivs = ph_ivs[ph_idx : ph_idx + n_ph]
         ph_idx += n_ph
         if not ivs:
@@ -319,7 +558,7 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
     status_path = job_dir / "status.json"
     data = json.loads(status_path.read_text()) if status_path.exists() else {}
     data.update({"stage": stage, "progress": progress, "error": error, "updated_at": time.time()})
-    status_path.write_text(json.dumps(data, indent=2))
+    status_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def _stage04_event(
@@ -399,6 +638,14 @@ def main() -> int:
         help="Allow HubertFA ONNX inference when only CPUExecutionProvider is available.",
     )
     parser.add_argument("--log-level", default=app_config.log_level, choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument(
+        "--phone-assign",
+        default="sequence",
+        choices=["sequence", "timebucket"],
+        help="Forced-mode phoneme→word assignment: 'sequence' slices the phone "
+             "stream by real g2p count per word (default); 'timebucket' is the "
+             "legacy midpoint-in-CTC-span assignment.",
+    )
     args = parser.parse_args()
 
     job_dir = args.job_dir.resolve()
@@ -469,6 +716,13 @@ def main() -> int:
             error=str(exc),
         )
 
+    # Optional Icelandic pronunciation lexicon (word→ARPAbet), next to the model.
+    # Words listed here bypass g2p_en, which mangles Icelandic spelling.
+    is_lexicon = _load_is_lexicon(model_dir / "is_pron_dict.txt")
+    if is_lexicon:
+        logger.info("Loaded Icelandic lexicon: %d words (%s)", len(is_lexicon),
+                    (model_dir / "is_pron_dict.txt").name)
+
     transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     segments = transcript.get("segments", [])
     if not segments:
@@ -500,6 +754,16 @@ def main() -> int:
     _update_status(job_dir, "aligning", 0)
     all_aligned_words = []
 
+    # Word-duration floor: lift CTC-compressed function words to a plausible
+    # duration during phoneme attachment (forced mode). See _apply_word_duration_floor.
+    min_word_dur = app_config.align_min_word_ms / 1000.0
+    words_below_floor_before = sum(
+        1
+        for seg in segments
+        for w in seg.get("words", [])
+        if float(w.get("end", 0.0)) - float(w.get("start", 0.0)) < min_word_dur - 1e-9
+    )
+
     # Determine the correct fallback function based on alignment mode
     _fallback = _ctc_forced_fallback if preserves_provider_timing else _whisper_fallback
 
@@ -512,7 +776,24 @@ def main() -> int:
             stem = f"seg_{i:04d}"
             try:
                 _slice_wav(vocals_path, tmp_dir / f"{stem}.wav", seg["start"], seg["end"])
-                phs = [p.lower() for p in _phonemise_text(seg["text"], g2p)]
+                # Phonemise per word so the .lab we align and the per-word counts
+                # come from the SAME g2p pass — this makes the count invariant that
+                # sequence-mode phoneme→word assignment relies on exact. Falls back
+                # to whole-segment text when a segment carries no word list.
+                seg_words = seg.get("words", [])
+                if seg_words:
+                    per_word = [_phonemise_text(w["word"], g2p, is_lexicon) for w in seg_words]
+                    phs_seq = [p for wp in per_word for p in wp]
+                    seg["_ph_counts"] = [len(wp) for wp in per_word]
+                    # Flag Icelandic-spelled words missing from the lexicon so it
+                    # can grow — these still fall back to g2p_en (mangled).
+                    for w in seg_words:
+                        if any(ch in _IS_CHARS for ch in w["word"]) and _word_key(w["word"]) not in is_lexicon:
+                            logger.warning("Icelandic word not in lexicon (g2p_en fallback): %r", w["word"])
+                else:
+                    phs_seq = _phonemise_text(seg["text"], g2p, is_lexicon)
+                    seg["_ph_counts"] = None
+                phs = [p.lower() for p in phs_seq]
                 (tmp_dir / f"{stem}.lab").write_text(" ".join(phs), encoding="utf-8")
                 prepared_count += 1
             except Exception as e:
@@ -639,13 +920,21 @@ def main() -> int:
                 
                 if tg_path.exists():
                     try:
-                        ivs = [v for v in _parse_textgrid(tg_path) if v["text"] not in _SILENCE_LABELS and v["text"]]
+                        ivs = _phone_intervals(_parse_textgrid(tg_path))
                         if preserves_provider_timing:
                             # Provider timing mode: keep word timestamps, attach phonemes as metadata
-                            words = _ctc_forced_with_phonemes(seg.get("words", []), ivs, seg["start"])
+                            words = _ctc_forced_with_phonemes(
+                                seg.get("words", []), ivs, seg["start"],
+                                min_word_dur=min_word_dur,
+                                phone_counts=seg.get("_ph_counts"),
+                                assign=args.phone_assign,
+                            )
                         else:
                             # Whisper mode: derive timestamps from HubertFA phonemes
-                            words = _map_phonemes_to_words(seg.get("words", []), ivs, seg["start"])
+                            words = _map_phonemes_to_words(
+                                seg.get("words", []), ivs, seg["start"],
+                                phone_counts=seg.get("_ph_counts"),
+                            )
                         
                         # Apply linear interpolation for missing/inverted words
                         words = _linear_interpolate_words(words, seg["start"], seg["end"])
@@ -682,13 +971,30 @@ def main() -> int:
     aligned = {"alignment_mode": alignment_mode, "words": all_aligned_words}
     output_path = job_dir / "aligned.json"
     source_counts = _source_distribution(all_aligned_words)
+
+    # Record the word-duration-floor decision and its measured effect.
+    durations_ms = sorted(
+        round((float(w.get("end", 0.0)) - float(w.get("start", 0.0))) * 1000.0, 1)
+        for w in all_aligned_words
+    )
+    median_word_ms = durations_ms[len(durations_ms) // 2] if durations_ms else 0.0
+    words_below_floor_after = sum(1 for d in durations_ms if d < min_word_dur * 1000.0 - 1e-6)
+    _stage04_event(
+        job_dir,
+        "stage04.word_floor_applied",
+        min_word_ms=app_config.align_min_word_ms,
+        words_below_floor_before=words_below_floor_before,
+        words_below_floor_after=words_below_floor_after,
+        median_word_ms=median_word_ms,
+        word_count=len(all_aligned_words),
+    )
     _stage04_event(
         job_dir,
         "stage04.source_distribution",
         word_count=len(all_aligned_words),
         source_distribution=source_counts,
     )
-    output_path.write_text(json.dumps(aligned, indent=2, ensure_ascii=False))
+    output_path.write_text(json.dumps(aligned, indent=2, ensure_ascii=False), encoding="utf-8")
     record_artifact(job_dir, "aligning", output_path)
     _stage04_event(
         job_dir,

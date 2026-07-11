@@ -1,0 +1,37 @@
+# Icelandic pronunciation lexicon for s04 (word<TAB>ARPAbet).
+# The HubertFA model has no native Icelandic phones (only en/ja/zh), so these
+# are the NEAREST en/ ARPAbet phones — chosen to get the vowel/syllable count
+# right, which g2p_en gets wrong on Icelandic spelling. Extend as needed;
+# unlisted Icelandic words fall back to g2p_en (logged as a warning).
+að	AA DH
+áfram	AW F R AA M
+blóðinu	B L OW DH IH N UH
+bíður	B IY DH UH R
+dýrið	D IY R IH DH
+eins	EY N S
+er	EH R
+ég	Y EH G
+finn	F IH N
+forfeður	F AO R F EH DH UH R
+haltu	HH AA L T UH
+hamar	HH AA M AA R
+hjartað	HH Y AA R T AA DH
+höfuðið	HH ER V UH DH IH DH
+húðinni	HH UW DH IH N IH
+í	IY
+kalla	K AA L AA
+minni	M IH N IH
+mitt	M IH T
+mínar	M IY N AA R
+mínir	M IY N IH R
+mínu	M IY N UH
+naga	N AA G AA
+nýju	N IY Y UH
+og	AO G
+slær	S L AY R
+springa	S P R IH NG G AA
+tennurnar	T EH N UH R N AA R
+undir	UH N D IH R
+vaknar	V AA K N AA R
+veiðinni	V EY DH IH N IH
+það	TH AA DH
