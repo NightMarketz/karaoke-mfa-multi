@@ -93,7 +93,7 @@ def _seg(words):
 # -----------------------------------------------------------------
 
 def test_resolve_exact_all_55_entries():
-    heading("_resolve_section — every SECTION_TO_STYLE entry (55 total)")
+    heading(f"_resolve_section — every SECTION_TO_STYLE entry ({len(SECTION_TO_STYLE)} total)")
     for label, expected in SECTION_TO_STYLE.items():
         canonical, style = _resolve_section(label)
         check(style == expected, f"[{label}] -> {expected}", f"got '{style}'")
