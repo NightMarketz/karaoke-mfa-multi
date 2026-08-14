@@ -1453,6 +1453,7 @@ STYLE_DEFAULTS: dict[str, dict[str, str]] = {
     "bridge": {"color": "cool", "effect": "highlight"},
     "drop": {"color": "warm", "effect": "highlight"},
     "outro": {"color": "warm", "effect": "fade_in"},
+    "rap": {"color": "default", "effect": "highlight"},
     "ad_lib": {"color": "soft", "effect": "none"},
 }
 
@@ -1591,7 +1592,7 @@ SECTION_TO_STYLE = {
     "verse 3": "verse",
     "estrofe": "verse",
     "estrofa": "verse",
-    "rap": "verse",
+    "rap": "rap",
     "rap verse": "verse",
     "spoken": "verse",
     "spoken word": "verse",
@@ -1658,7 +1659,7 @@ LYRICS_SECTION_TO_STYLE: dict[str, str] = {
     "verse 3": "verse",
     "estrofe": "verse",
     "estrofa": "verse",
-    "rap": "verse",
+    "rap": "rap",
     "rap verse": "verse",
     "spoken": "verse",
     "spoken word": "verse",

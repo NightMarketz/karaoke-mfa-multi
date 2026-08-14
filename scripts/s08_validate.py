@@ -37,6 +37,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts.karaoke_styles.library import supported_style_keys
 from scripts.common.observability import build_observability_summary, write_event
 from scripts.common.provenance import ProvenanceError, file_sha256, load_manifest, validate_file_hash
 from scripts.common.validation import find_timestamp_errors, find_word_coverage_errors
@@ -335,7 +336,7 @@ def validate_analysis(job_dir: Path, transcript: dict | None, aligned: dict | No
 
     # Schema check
     required = {"text", "start", "end", "style", "words"}
-    valid_styles = {"verse", "prechorus", "chorus", "bridge", "drop", "intro", "outro", "ad_lib"}
+    valid_styles = supported_style_keys()
     bad_styles = []
 
     for i, line in enumerate(lines):

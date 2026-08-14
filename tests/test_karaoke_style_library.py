@@ -187,7 +187,8 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
 
     def test_supported_style_keys_include_current_analysis_keys(self):
         self.assertEqual(
-            {"intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "ad_lib"},
+            {"intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro",
+             "rap", "ad_lib"},
             supported_style_keys(),
         )
 

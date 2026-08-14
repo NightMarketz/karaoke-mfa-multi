@@ -23,7 +23,7 @@ Output schema (analysis.json):
                 "text":   "never gonna give you up",
                 "start":  1.24,
                 "end":    4.80,
-                "style":  "verse",        // verse|chorus|bridge|intro|outro|ad_lib
+                "style":  "verse",        // verse|chorus|bridge|intro|outro|rap|ad_lib
                 "color":  "default",      // default|warm|cool|intense|soft
                 "effect": "highlight",    // highlight|fade_in|bounce|none
                 "words":  [
@@ -63,6 +63,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts.karaoke_styles.library import supported_style_keys
 from scripts.common.config import load_app_config
 from scripts.common.observability import write_event
 from scripts.common.validation import find_timestamp_errors
@@ -310,7 +311,7 @@ IMPORTANT: Map section labels to styles exactly:
    - Each line should be 3-8 words (natural phrase breaks, not arbitrary cuts).
    - Aim for lines that feel like natural lyric lines a singer would breathe between.
 2. For each line, assign:
-   - "style": one of ["verse", "chorus", "bridge", "intro", "outro", "ad_lib"]
+   - "style": one of ["verse", "chorus", "bridge", "intro", "outro", "rap", "ad_lib"]
    - "color": one of ["default", "warm", "cool", "intense", "soft"]
    - "effect": one of ["highlight", "fade_in", "bounce", "none"]
 3. Choruses are usually the repeated hook section. Bridges are contrasting sections.
@@ -497,7 +498,7 @@ def _validate_analysis(data: dict) -> list[str]:
     if "lines" not in data or not data["lines"]:
         return ["'lines' is missing or empty"]
 
-    valid_styles = {"verse", "prechorus", "chorus", "bridge", "drop", "intro", "outro", "ad_lib"}
+    valid_styles = supported_style_keys()
     bad_styles = []
 
     for index, line in enumerate(data["lines"]):
