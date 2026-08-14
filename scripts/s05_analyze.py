@@ -202,6 +202,7 @@ SECTION_TO_STYLE: dict[str, str] = {
     "outro hook":    "outro",
     "outro":         "outro",
     "guitar solo":   "bridge",
+    "rap":           "rap",
 }
 
 STYLE_DEFAULTS: dict[str, dict[str, str]] = {
