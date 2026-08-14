@@ -56,7 +56,7 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
                 "label": "Section Coded",
                 "version": 1,
                 "description": "Color-coded styles for song sections.",
-                "styles": ["intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "ad_lib"],
+                "styles": ["intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "rap", "ad_lib"],
                 "effects": list(SUPPORTED_EFFECTS),
                 "effect_profile": "clean_sweep",
             },
