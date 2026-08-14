@@ -43,6 +43,7 @@ from s03b_lyrics_align import (
     _build_full_text, _split_words_by_lines, _snap_to_onsets,
     SECTION_TO_STYLE, _SECTION_PREFIX_FALLBACK,
 )
+from scripts.karaoke_styles.library import supported_style_keys
 
 _G = "\033[32m"; _R = "\033[31m"; _X = "\033[0m"
 _passed = _failed = 0
@@ -778,7 +779,7 @@ def test_snap_negligible_delta_skipped():
 
 def test_property_resolve_always_valid_style():
     heading("PROPERTY: _resolve_section always returns a valid ASS style")
-    valid_styles = {"verse","chorus","bridge","intro","outro"}
+    valid_styles = supported_style_keys()
     test_labels = list(SECTION_TO_STYLE.keys()) + [
         "unknown xyz","chorus 99","verse 100","drop 5","refra xyz",
         "pont test","build test","pre test","intro xyz","outro xyz",

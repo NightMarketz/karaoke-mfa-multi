@@ -213,6 +213,7 @@ STYLE_DEFAULTS: dict[str, dict[str, str]] = {
     "bridge":  {"color": "cool",    "effect": "highlight"},
     "drop":    {"color": "warm",    "effect": "highlight"},
     "outro":   {"color": "warm",    "effect": "fade_in"},
+    "rap":     {"color": "default", "effect": "highlight"},
     "ad_lib":  {"color": "soft",    "effect": "none"},
 }
 

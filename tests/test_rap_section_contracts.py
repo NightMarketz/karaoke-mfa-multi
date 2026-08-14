@@ -99,5 +99,23 @@ class RapVisualIdentityTests(unittest.TestCase):
         self.assertEqual(1, len(colors), f"single-style-kf must stay uniform: {colors}")
 
 
+class RapSegmentGrouperTests(unittest.TestCase):
+    def test_rap_segment_produces_a_rap_styled_line(self):
+        # Regression for the SECTION_TO_STYLE.get(section, "verse") silent
+        # fallback in scripts/s05_analyze.py: a missing "rap" entry there
+        # made every rap line render as verse, caught only by eyeballing
+        # the generated ASS. This pins the forced-alignment grouper's
+        # output directly.
+        from scripts.s05_analyze import _segment_aware_grouper
+
+        words = [{"word": "yo", "start": 0.0, "end": 0.5}]
+        segments = [{"section": "rap", "words": words, "text": "yo"}]
+
+        lines = _segment_aware_grouper(segments, words)
+
+        self.assertEqual(1, len(lines))
+        self.assertEqual("rap", lines[0]["style"])
+
+
 if __name__ == "__main__":
     unittest.main()
