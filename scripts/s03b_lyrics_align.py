@@ -130,7 +130,7 @@ SECTION_TO_STYLE: dict[str, str] = {
     "verse 3":          "verse",
     "estrofe":          "verse",   # Portuguese
     "estrofa":          "verse",   # Spanish
-    "rap":              "verse",   # bare [Rap], common in Suno / pt-BR lyrics
+    "rap":              "rap",     # bare [Rap], common in Suno / pt-BR lyrics
     "rap verse":        "verse",
     "spoken":           "verse",
     "spoken word":      "verse",
