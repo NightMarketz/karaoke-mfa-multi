@@ -74,5 +74,30 @@ class RapStyleKeyTests(unittest.TestCase):
                           f"{module.__name__} must call supported_style_keys()")
 
 
+class RapVisualIdentityTests(unittest.TestCase):
+    def test_section_coded_defines_a_distinct_rap_style(self):
+        styles = PRESET_LIBRARY["section-coded"].styles
+        self.assertIn("rap", styles)
+        rap, verse = styles["rap"], styles["verse"]
+        self.assertEqual("Rap", rap.name)
+        self.assertNotEqual(
+            (verse.fontsize, verse.primary_color),
+            (rap.fontsize, rap.primary_color),
+            "a rap style identical to verse is not worth the key",
+        )
+
+    def test_rap_is_smaller_than_verse(self):
+        # Rap lines carry more syllables per second, so they need more room.
+        styles = PRESET_LIBRARY["section-coded"].styles
+        self.assertLess(styles["rap"].fontsize, styles["verse"].fontsize)
+
+    def test_single_style_preset_stays_uniform(self):
+        styles = PRESET_LIBRARY["single-style-kf"].styles
+        sizes = {s.fontsize for s in styles.values()}
+        colors = {s.primary_color for s in styles.values()}
+        self.assertEqual(1, len(sizes), f"single-style-kf must stay uniform: {sizes}")
+        self.assertEqual(1, len(colors), f"single-style-kf must stay uniform: {colors}")
+
+
 if __name__ == "__main__":
     unittest.main()
