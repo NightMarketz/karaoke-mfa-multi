@@ -716,12 +716,15 @@ def main() -> int:
             error=str(exc),
         )
 
-    # Optional Icelandic pronunciation lexicon (word→ARPAbet), next to the model.
-    # Words listed here bypass g2p_en, which mangles Icelandic spelling.
-    is_lexicon = _load_is_lexicon(model_dir / "is_pron_dict.txt")
-    if is_lexicon:
-        logger.info("Loaded Icelandic lexicon: %d words (%s)", len(is_lexicon),
-                    (model_dir / "is_pron_dict.txt").name)
+    # Optional pronunciation lexicons (word→ARPAbet), next to the model: any
+    # <lang>_pron_dict.txt. Words listed there bypass g2p_en, which mangles
+    # non-English spelling (is_ = Icelandic, pt_ = Brazilian Portuguese).
+    is_lexicon: dict[str, list[str]] = {}
+    for lex_path in sorted(model_dir.glob("*_pron_dict.txt")):
+        loaded = _load_is_lexicon(lex_path)
+        is_lexicon.update(loaded)
+        if loaded:
+            logger.info("Loaded lexicon: %d words (%s)", len(loaded), lex_path.name)
 
     transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     segments = transcript.get("segments", [])
