@@ -130,6 +130,7 @@ SECTION_TO_STYLE: dict[str, str] = {
     "verse 3":          "verse",
     "estrofe":          "verse",   # Portuguese
     "estrofa":          "verse",   # Spanish
+    "rap":              "rap",     # bare [Rap], common in Suno / pt-BR lyrics
     "rap verse":        "verse",
     "spoken":           "verse",
     "spoken word":      "verse",
@@ -149,14 +150,18 @@ SECTION_TO_STYLE: dict[str, str] = {
     "final chorus":     "chorus",
     "climax":           "chorus",
     # ── Pre-Chorus ──────────────────────────────────────────────────────
-    "pre-chorus":       "verse",
-    "pre-chorus 2":     "verse",
-    "pre chorus":       "verse",
-    "pre-hook":         "verse",
-    "lift":             "verse",   # some EDM / pop labels
-    "build":            "verse",
-    "build-up":         "verse",
-    "buildup":          "verse",
+    # Every preset defines a PreChorus style; mapping these to "verse"
+    # threw that distinction away. The style library already said
+    # "prechorus" — this map was the outlier, and s05 was quietly
+    # correcting it until s03b started carrying the style itself.
+    "pre-chorus":       "prechorus",
+    "pre-chorus 2":     "prechorus",
+    "pre chorus":       "prechorus",
+    "pre-hook":         "prechorus",
+    "lift":             "prechorus",   # some EDM / pop labels
+    "build":            "prechorus",
+    "build-up":         "prechorus",
+    "buildup":          "prechorus",
     # ── Bridge / Breakdown ──────────────────────────────────────────────
     "bridge":           "bridge",
     "ponte":            "bridge",  # Portuguese/Spanish
@@ -185,13 +190,13 @@ _SECTION_PREFIX_FALLBACK: dict[str, str] = {
     "bridge":   "bridge",
     "pont":     "bridge",   # ponte
     "break":    "bridge",
-    "pre":      "verse",    # pre-chorus / pre-hook
+    "pre":      "prechorus",  # pre-chorus / pre-hook
     "intro":    "intro",
     "outro":    "outro",
     "solo":     "bridge",
     "interl":   "bridge",
     "instru":   "bridge",
-    "build":    "verse",
+    "build":    "prechorus",
     "spoken":   "verse",
     "coda":     "outro",
 }
@@ -306,6 +311,7 @@ def _parse_lyrics(lyrics_path: Path) -> list[dict[str, str]]:
     word_re         = re.compile(r"[a-zA-Z''\u00C0-\u024F]+")
 
     current_section  = "verse"
+    current_style    = "verse"
     unknown_markers: list[str] = []
     lines: list[dict[str, str]] = []
 
@@ -339,6 +345,10 @@ def _parse_lyrics(lyrics_path: Path) -> list[dict[str, str]]:
                 logger.debug("Section: [%s] → %s (%s)", raw_label, canonical, style)
 
             current_section = canonical
+            # Keep the style s03b just resolved; s05 must not re-derive
+            # it from its own smaller map, which disagrees on 31 of
+            # these 56 labels.
+            current_style   = style
             continue
 
         # Strip inline stage directions from text lines
@@ -350,6 +360,7 @@ def _parse_lyrics(lyrics_path: Path) -> list[dict[str, str]]:
         lines.append({
             "text":             clean,
             "section":          current_section,
+            "style":            current_style,
             "unknown_markers":  unknown_markers.copy() if unknown_markers else [],
         })
 
@@ -508,6 +519,7 @@ def _split_words_by_lines(
         segments.append({
             "text":    lyric_line["text"],
             "section": lyric_line["section"],
+            "style":   lyric_line.get("style", "verse"),
             "start":   round(seg_start, 4),
             "end":     round(seg_end,   4),
             "words": [

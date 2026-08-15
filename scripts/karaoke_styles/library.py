@@ -371,6 +371,21 @@ SECTION_CODED_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(230, 230, 235),
+        secondary_color=_c(120, 200, 255),
+        outline_color=_c(10, 10, 20),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.4,
+        shadow=0.8,
+        alignment=2,
+        margin_v=42,
+    ),
     "ad_lib": DEFAULT_STYLES["ad_lib"],
 }
 
@@ -408,7 +423,7 @@ SINGLE_STYLE_KF_STYLES: dict[str, KaraokeStyle] = {
         border_style=_SINGLE_STYLE_BASE.border_style,
         flash_on_highlight=_SINGLE_STYLE_BASE.flash_on_highlight,
     )
-    for key in ("intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "ad_lib")
+    for key in ("intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "rap", "ad_lib")
 }
 
 AEGISUB_CLASSIC_BLUE_STYLES: dict[str, KaraokeStyle] = {
@@ -1453,6 +1468,7 @@ STYLE_DEFAULTS: dict[str, dict[str, str]] = {
     "bridge": {"color": "cool", "effect": "highlight"},
     "drop": {"color": "warm", "effect": "highlight"},
     "outro": {"color": "warm", "effect": "fade_in"},
+    "rap": {"color": "default", "effect": "highlight"},
     "ad_lib": {"color": "soft", "effect": "none"},
 }
 
@@ -1591,6 +1607,7 @@ SECTION_TO_STYLE = {
     "verse 3": "verse",
     "estrofe": "verse",
     "estrofa": "verse",
+    "rap": "rap",
     "rap verse": "verse",
     "spoken": "verse",
     "spoken word": "verse",
@@ -1657,6 +1674,7 @@ LYRICS_SECTION_TO_STYLE: dict[str, str] = {
     "verse 3": "verse",
     "estrofe": "verse",
     "estrofa": "verse",
+    "rap": "rap",
     "rap verse": "verse",
     "spoken": "verse",
     "spoken word": "verse",

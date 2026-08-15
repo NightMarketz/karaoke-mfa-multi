@@ -43,6 +43,7 @@ from s03b_lyrics_align import (
     _build_full_text, _split_words_by_lines, _snap_to_onsets,
     SECTION_TO_STYLE, _SECTION_PREFIX_FALLBACK,
 )
+from scripts.karaoke_styles.library import supported_style_keys
 
 _G = "\033[32m"; _R = "\033[31m"; _X = "\033[0m"
 _passed = _failed = 0
@@ -93,7 +94,7 @@ def _seg(words):
 # -----------------------------------------------------------------
 
 def test_resolve_exact_all_55_entries():
-    heading("_resolve_section — every SECTION_TO_STYLE entry (55 total)")
+    heading(f"_resolve_section — every SECTION_TO_STYLE entry ({len(SECTION_TO_STYLE)} total)")
     for label, expected in SECTION_TO_STYLE.items():
         canonical, style = _resolve_section(label)
         check(style == expected, f"[{label}] -> {expected}", f"got '{style}'")
@@ -105,7 +106,10 @@ def test_resolve_numeric_strip():
     cases = [
         ("chorus 2","chorus"),("chorus 3","chorus"),("chorus 4","chorus"),("chorus 10","chorus"),
         ("verse 2","verse"),("verse 3","verse"),("verse 4","verse"),
-        ("pre-chorus 2","verse"),("pre-chorus 3","verse"),("pre-chorus 4","verse"),
+        # These pinned s03b's internal map value, not what a listener
+        # saw: s05 was already rendering a pre-chorus with the PreChorus
+        # style. s03b now says so itself, so the two agree.
+        ("pre-chorus 2","prechorus"),("pre-chorus 3","prechorus"),("pre-chorus 4","prechorus"),
         ("hook 2","chorus"),("hook 3","chorus"),("drop 3","chorus"),("drop 4","chorus"),
         ("bridge 2","bridge"),("verse (2)","verse"),("verse (3)","verse"),
         ("chorus (2)","chorus"),("outro (2)","outro"),
@@ -282,7 +286,7 @@ def test_parse_numbered_markers():
         styles = [_resolve_section(l['section'])[1] for l in lines]
         check(styles[0] == 'chorus', f"Chorus 3 -> chorus (got {styles[0]})")
         check(styles[1] == 'verse',  f"Verse 2 -> verse (got {styles[1]})")
-        check(styles[2] == 'verse',  f"Pre-Chorus 2 -> verse (got {styles[2]})")
+        check(styles[2] == 'prechorus', f"Pre-Chorus 2 -> prechorus (got {styles[2]})")
     finally: _rm(lf)
 
 
@@ -778,7 +782,7 @@ def test_snap_negligible_delta_skipped():
 
 def test_property_resolve_always_valid_style():
     heading("PROPERTY: _resolve_section always returns a valid ASS style")
-    valid_styles = {"verse","chorus","bridge","intro","outro"}
+    valid_styles = supported_style_keys()
     test_labels = list(SECTION_TO_STYLE.keys()) + [
         "unknown xyz","chorus 99","verse 100","drop 5","refra xyz",
         "pont test","build test","pre test","intro xyz","outro xyz",

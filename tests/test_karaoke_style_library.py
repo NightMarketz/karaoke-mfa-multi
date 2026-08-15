@@ -56,7 +56,7 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
                 "label": "Section Coded",
                 "version": 1,
                 "description": "Color-coded styles for song sections.",
-                "styles": ["intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "ad_lib"],
+                "styles": ["intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "rap", "ad_lib"],
                 "effects": list(SUPPORTED_EFFECTS),
                 "effect_profile": "clean_sweep",
             },
@@ -187,7 +187,8 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
 
     def test_supported_style_keys_include_current_analysis_keys(self):
         self.assertEqual(
-            {"intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "ad_lib"},
+            {"intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro",
+             "rap", "ad_lib"},
             supported_style_keys(),
         )
 
