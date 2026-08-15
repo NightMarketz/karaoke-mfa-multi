@@ -106,7 +106,10 @@ def test_resolve_numeric_strip():
     cases = [
         ("chorus 2","chorus"),("chorus 3","chorus"),("chorus 4","chorus"),("chorus 10","chorus"),
         ("verse 2","verse"),("verse 3","verse"),("verse 4","verse"),
-        ("pre-chorus 2","verse"),("pre-chorus 3","verse"),("pre-chorus 4","verse"),
+        # These pinned s03b's internal map value, not what a listener
+        # saw: s05 was already rendering a pre-chorus with the PreChorus
+        # style. s03b now says so itself, so the two agree.
+        ("pre-chorus 2","prechorus"),("pre-chorus 3","prechorus"),("pre-chorus 4","prechorus"),
         ("hook 2","chorus"),("hook 3","chorus"),("drop 3","chorus"),("drop 4","chorus"),
         ("bridge 2","bridge"),("verse (2)","verse"),("verse (3)","verse"),
         ("chorus (2)","chorus"),("outro (2)","outro"),
@@ -283,7 +286,7 @@ def test_parse_numbered_markers():
         styles = [_resolve_section(l['section'])[1] for l in lines]
         check(styles[0] == 'chorus', f"Chorus 3 -> chorus (got {styles[0]})")
         check(styles[1] == 'verse',  f"Verse 2 -> verse (got {styles[1]})")
-        check(styles[2] == 'verse',  f"Pre-Chorus 2 -> verse (got {styles[2]})")
+        check(styles[2] == 'prechorus', f"Pre-Chorus 2 -> prechorus (got {styles[2]})")
     finally: _rm(lf)
 
 

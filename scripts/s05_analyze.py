@@ -241,7 +241,11 @@ def _segment_aware_grouper(
             continue
 
         section  = seg.get("section", "verse").lower()
-        style    = SECTION_TO_STYLE.get(section, "verse")
+        # s03b already resolved the style against its 56-entry map;
+        # prefer it. The map below is the fallback for transcripts
+        # written before s03b carried the style, and it disagrees on
+        # 31 of those labels.
+        style    = seg.get("style") or SECTION_TO_STYLE.get(section, "verse")
         defaults = STYLE_DEFAULTS.get(style, STYLE_DEFAULTS["verse"])
 
         lines.append({
