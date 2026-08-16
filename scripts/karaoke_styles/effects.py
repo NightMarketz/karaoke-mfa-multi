@@ -33,50 +33,24 @@ def _instant(d: int, t: str) -> str:
     return f"{{\\k{d}}}{t}"
 
 
-def _fade_in(d: int, t: str) -> str:
-    return f"{{\\fad(500,0)\\be1\\kf{d}}}{t}"
-
-
 def _flash(d: int, t: str) -> str:
     # Glitch pop: thick border snaps down to normal on the vocal attack.
+    # Not selectable per line — a style opts in via flash_on_highlight.
     return f"{{\\bord8\\t(0,200,\\bord2)\\be1\\kf{d}}}{t}"
-
-
-def _scale_pop(d: int, t: str) -> str:
-    # Real bounce: quick scale up then settle. The old "bounce" used untimed
-    # \t tags that just eased to 100% over the whole syllable (no pop) — these
-    # \t windows are in ms and fire on the attack, so it actually bounces.
-    return f"{{\\be1\\t(0,120,\\fscx118\\fscy118)\\t(120,280,\\fscx100\\fscy100)\\kf{d}}}{t}"
-
-
-def _outline_pop(d: int, t: str) -> str:
-    # Outline grows in at the attack for a crisp edge.
-    return f"{{\\bord0\\t(0,120,\\bord3.2)\\be1\\kf{d}}}{t}"
-
-
-def _glow_pulse(d: int, t: str) -> str:
-    # Soft glow: blur blooms then relaxes as the syllable lights up.
-    return f"{{\\be1\\t(0,140,\\blur5)\\t(140,420,\\blur1)\\kf{d}}}{t}"
 
 
 EFFECTS: dict[str, SyllableEffect] = {
     "highlight": _sweep,
-    "sweep": _sweep,
     "none": _instant,
-    "instant": _instant,
-    "fade_in": _fade_in,
     "flash": _flash,
-    "bounce": _scale_pop,
-    "scale_pop": _scale_pop,
-    "outline_pop": _outline_pop,
-    "glow_pulse": _glow_pulse,
-    "soft_glow": _glow_pulse,
 }
 
-# ponytail: clip_reveal (typewriter) and float need per-syllable x/y layout
-# metrics that libass only knows at render time. They want a measurement pass
-# before we can emit \clip / \move — deferred until an effect actually needs
-# positioning, not stubbed now.
+# Effects that used to live here and are gone: fade_in prefixed a per-syllable
+# \fad, which libass drops because the event already carries one and the first
+# \fad wins — 158 of 652 shipped Dialogue lines asked for it and rendered
+# identically to the sweep. scale_pop, outline_pop and glow_pulse were only
+# reachable through effect_profile_id, which nothing read. Unknown names still
+# fall back to the sweep, so old analysis.json files keep rendering.
 
 
 def syllable_ass(
@@ -93,7 +67,7 @@ def syllable_ass(
     asks for it (cyberpunk preset, \bord8 glitch pulse).
     """
     name = effect or DEFAULT_EFFECT
-    if name in ("highlight", "sweep") and flash_default:
+    if name == "highlight" and flash_default:
         name = "flash"
     render = EFFECTS.get(name, EFFECTS[DEFAULT_EFFECT])
     return render(max(1, int(duration_cs)), text)
@@ -115,4 +89,7 @@ if __name__ == "__main__":
     assert syllable_ass("nope", 10, "x") == _sweep(10, "x")
     assert syllable_ass("highlight", 10, "x", flash_default=True) == _flash(10, "x")
     assert syllable_ass("none", 0, "x") == "{\\k1}x"  # duration floored to 1cs
+    # Retired names must keep rendering, not vanish, on old analysis.json.
+    for _retired in ("fade_in", "bounce", "scale_pop", "outline_pop", "glow_pulse", "soft_glow"):
+        assert syllable_ass(_retired, 10, "x") == _sweep(10, "x"), _retired
     print(f"ok: {len(EFFECTS)} effects ->", available_effects())

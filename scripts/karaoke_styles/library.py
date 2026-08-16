@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from typing import Mapping
 
 DEFAULT_STYLE_KEY = "verse"
-SUPPORTED_EFFECTS = ("highlight", "fade_in", "bounce", "flash", "none")
+# What a line may ask for. "flash" is not here: it is a style property
+# (flash_on_highlight), not something a line picks.
+SUPPORTED_EFFECTS = ("highlight", "none")
 
 
 @dataclass(frozen=True)
@@ -47,39 +49,11 @@ class StylePreset:
     description: str
     styles: Mapping[str, KaraokeStyle]
     effects: tuple[str, ...] = SUPPORTED_EFFECTS
-    effect_profile_id: str = "clean_sweep"
-
-
-@dataclass(frozen=True)
-class AnimationProfile:
-    id: str
-    label: str
-    safety: str
-    karaoke_tag: str
-    line_effects: tuple[str, ...]
-    word_effects: tuple[str, ...]
-    layer_strategy: str
-    max_extra_layers: int
-    motion_intensity: str
-    description: str
 
 
 def _c(r: int, g: int, b: int, a: int = 0) -> str:
     """Convert RGBA to ASS &HAABBGGRR format."""
     return f"&H{a:02X}{b:02X}{g:02X}{r:02X}"
-
-
-ANIMATION_PROFILES: dict[str, AnimationProfile] = {
-    "clean_sweep": AnimationProfile("clean_sweep", "Clean Sweep", "safe", "kf", ("fade",), ("sweep",), "single", 0, "none", "Current readable left-to-right karaoke sweep."),
-    "instant": AnimationProfile("instant", "Instant Fill", "safe", "k", ("fade",), ("instant",), "single", 0, "none", "Classic instant karaoke color switch."),
-    "outline_pop": AnimationProfile("outline_pop", "Outline Pop", "safe", "ko", ("fade",), ("outline_pop",), "single", 0, "low", "Outline appears at the vocal attack for a crisp pop."),
-    "soft_glow": AnimationProfile("soft_glow", "Soft Glow", "safe", "kf", ("fade",), ("glow_pulse",), "single", 0, "low", "Readable sweep with a restrained outline glow pulse."),
-    "bounce_word": AnimationProfile("bounce_word", "Bounce Word", "safe", "kf", ("fade",), ("scale_pop",), "single", 0, "medium", "Small scale bounce on each highlighted word."),
-    "chorus_bloom": AnimationProfile("chorus_bloom", "Chorus Bloom", "layered", "kf", ("fade",), ("glow_pulse", "echo_shadow"), "extra_layer", 1, "medium", "Future chorus-focused bloom using one extra glow layer."),
-    "syllable_float": AnimationProfile("syllable_float", "Syllable Float", "layered", "kf", ("fade",), ("float",), "per_syllable", 1, "medium", "Future per-syllable vertical motion."),
-    "typewriter_clip": AnimationProfile("typewriter_clip", "Typewriter Clip", "layered", "kf", ("fade",), ("clip_reveal",), "clip", 1, "low", "Future rectangular clip reveal."),
-    "aegisub_templater": AnimationProfile("aegisub_templater", "Aegisub Templater", "experimental", "kf", ("template",), ("inline_fx",), "templater", 99, "high", "Future Automation/Lua templater export profile."),
-}
 
 
 DEFAULT_STYLES: dict[str, KaraokeStyle] = {
@@ -1507,7 +1481,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Original neon karaoke subtitles.",
         styles=NEON_STYLES,
-        effect_profile_id="soft_glow",
     ),
     "cyberpunk": StylePreset(
         id="cyberpunk",
@@ -1515,7 +1488,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Premium synthwave karaoke subtitles.",
         styles=CYBERPUNK_STYLES,
-        effect_profile_id="outline_pop",
     ),
     "section-coded": StylePreset(
         id="section-coded",
@@ -1530,7 +1502,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="One consistent visual style for every lyric section.",
         styles=SINGLE_STYLE_KF_STYLES,
-        effect_profile_id="clean_sweep",
     ),
     "aegisub-classic-blue": StylePreset(
         id="aegisub-classic-blue",
@@ -1538,7 +1509,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Classic fansub blue/cyan karaoke styling.",
         styles=AEGISUB_CLASSIC_BLUE_STYLES,
-        effect_profile_id="clean_sweep",
     ),
     "aegisub-gold-chorus": StylePreset(
         id="aegisub-gold-chorus",
@@ -1546,7 +1516,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Warm white verses with gold hook emphasis.",
         styles=AEGISUB_GOLD_CHORUS_STYLES,
-        effect_profile_id="soft_glow",
     ),
     "aegisub-anime-pop": StylePreset(
         id="aegisub-anime-pop",
@@ -1554,7 +1523,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Bright pink, cyan, and yellow anime karaoke styling.",
         styles=AEGISUB_ANIME_POP_STYLES,
-        effect_profile_id="bounce_word",
     ),
     "aegisub-soft-pastel": StylePreset(
         id="aegisub-soft-pastel",
@@ -1562,7 +1530,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Low-contrast mint, lavender, and rose subtitle styling.",
         styles=AEGISUB_SOFT_PASTEL_STYLES,
-        effect_profile_id="clean_sweep",
     ),
     "aegisub-night-glow": StylePreset(
         id="aegisub-night-glow",
@@ -1570,7 +1537,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Cool white, blue, and purple glow-friendly styling.",
         styles=AEGISUB_NIGHT_GLOW_STYLES,
-        effect_profile_id="soft_glow",
     ),
     "aegisub-impact-red": StylePreset(
         id="aegisub-impact-red",
@@ -1578,7 +1544,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="High-impact white and red karaoke styling.",
         styles=AEGISUB_IMPACT_RED_STYLES,
-        effect_profile_id="outline_pop",
     ),
     "aegisub-dual-vocal": StylePreset(
         id="aegisub-dual-vocal",
@@ -1586,7 +1551,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Lead vocal cyan with distinct ad-lib and bridge colors.",
         styles=AEGISUB_DUAL_VOCAL_STYLES,
-        effect_profile_id="clean_sweep",
     ),
     "aegisub-clean-editorial": StylePreset(
         id="aegisub-clean-editorial",
@@ -1594,7 +1558,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Restrained editorial white, silver, and subtle gold styling.",
         styles=AEGISUB_CLEAN_EDITORIAL_STYLES,
-        effect_profile_id="clean_sweep",
     ),
     "aegisub-cyber-minimal": StylePreset(
         id="aegisub-cyber-minimal",
@@ -1602,7 +1565,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Minimal cyan and magenta styling with dark outlines.",
         styles=AEGISUB_CYBER_MINIMAL_STYLES,
-        effect_profile_id="soft_glow",
     ),
     "aegisub-stage-lights": StylePreset(
         id="aegisub-stage-lights",
@@ -1610,7 +1572,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="White, blue, magenta, and gold stage-light palette.",
         styles=AEGISUB_STAGE_LIGHTS_STYLES,
-        effect_profile_id="bounce_word",
     ),
 }
 
@@ -1785,33 +1746,6 @@ def get_preset(preset_id: str) -> StylePreset:
         raise KeyError(f"Unknown karaoke style preset: {preset_id}") from exc
 
 
-def list_animation_profile_ids() -> list[str]:
-    return list(ANIMATION_PROFILES.keys())
-
-
-def get_animation_profile(profile_id: str) -> AnimationProfile:
-    try:
-        return ANIMATION_PROFILES[profile_id]
-    except KeyError as exc:
-        raise KeyError(f"Unknown karaoke animation profile: {profile_id}") from exc
-
-
-def list_animation_profile_metadata() -> list[dict[str, object]]:
-    return [
-        {
-            "id": profile.id,
-            "label": profile.label,
-            "safety": profile.safety,
-            "karaoke_tag": profile.karaoke_tag,
-            "line_effects": list(profile.line_effects),
-            "word_effects": list(profile.word_effects),
-            "layer_strategy": profile.layer_strategy,
-            "max_extra_layers": profile.max_extra_layers,
-            "motion_intensity": profile.motion_intensity,
-            "description": profile.description,
-        }
-        for profile in ANIMATION_PROFILES.values()
-    ]
 
 
 def list_preset_metadata() -> list[dict[str, object]]:
@@ -1823,7 +1757,6 @@ def list_preset_metadata() -> list[dict[str, object]]:
             "description": preset.description,
             "styles": list(preset.styles.keys()),
             "effects": list(preset.effects),
-            "effect_profile": preset.effect_profile_id,
         }
         for preset in PRESET_LIBRARY.values()
     ]
@@ -1890,8 +1823,6 @@ def validate_preset(preset: StylePreset) -> list[str]:
     for effect in preset.effects:
         if not is_supported_effect(effect):
             errors.append(f"Preset {preset.id} has unsupported effect: {effect}")
-    if preset.effect_profile_id not in ANIMATION_PROFILES:
-        errors.append(f"Preset {preset.id} has unknown animation profile: {preset.effect_profile_id}")
     return errors
 
 

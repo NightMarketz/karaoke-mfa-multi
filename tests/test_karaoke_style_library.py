@@ -6,10 +6,7 @@ from scripts.karaoke_styles.library import (
     LYRICS_SECTION_TO_STYLE,
     SUPPORTED_EFFECTS,
     StylePreset,
-    get_animation_profile,
     get_preset,
-    list_animation_profile_ids,
-    list_animation_profile_metadata,
     list_preset_metadata,
     list_preset_ids,
     resolve_lyrics_section,
@@ -58,72 +55,10 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
                 "description": "Color-coded styles for song sections.",
                 "styles": ["intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "rap", "ad_lib"],
                 "effects": list(SUPPORTED_EFFECTS),
-                "effect_profile": "clean_sweep",
             },
             metadata,
         )
 
-    def test_animation_profile_ids_include_safe_and_future_profiles(self):
-        self.assertEqual(
-            [
-                "clean_sweep",
-                "instant",
-                "outline_pop",
-                "soft_glow",
-                "bounce_word",
-                "chorus_bloom",
-                "syllable_float",
-                "typewriter_clip",
-                "aegisub_templater",
-            ],
-            list_animation_profile_ids(),
-        )
-
-    def test_safe_animation_profile_metadata_is_ui_ready(self):
-        metadata = list_animation_profile_metadata()
-
-        self.assertIn(
-            {
-                "id": "soft_glow",
-                "label": "Soft Glow",
-                "safety": "safe",
-                "karaoke_tag": "kf",
-                "line_effects": ["fade"],
-                "word_effects": ["glow_pulse"],
-                "layer_strategy": "single",
-                "max_extra_layers": 0,
-                "motion_intensity": "low",
-                "description": "Readable sweep with a restrained outline glow pulse.",
-            },
-            metadata,
-        )
-
-    def test_preset_metadata_exposes_effect_profile(self):
-        metadata_by_id = {item["id"]: item for item in list_preset_metadata()}
-
-        self.assertEqual("clean_sweep", metadata_by_id["default"]["effect_profile"])
-        self.assertEqual("soft_glow", metadata_by_id["neon"]["effect_profile"])
-        self.assertEqual("outline_pop", metadata_by_id["cyberpunk"]["effect_profile"])
-
-    def test_unknown_animation_profile_raises_clear_error(self):
-        with self.assertRaisesRegex(KeyError, "Unknown karaoke animation profile: missing"):
-            get_animation_profile("missing")
-
-    def test_preset_validation_rejects_unknown_animation_profile(self):
-        base = get_preset("default")
-        preset = StylePreset(
-            id="bad-profile",
-            label="Bad Profile",
-            version=1,
-            description="Invalid profile test.",
-            styles=base.styles,
-            effect_profile_id="missing",
-        )
-
-        self.assertIn(
-            "Preset bad-profile has unknown animation profile: missing",
-            validate_preset(preset),
-        )
 
     def test_all_presets_validate(self):
         self.assertEqual([], validate_all_presets())
@@ -138,25 +73,6 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
             self.assertEqual(1, preset.version)
             self.assertTrue(preset.label.startswith("Aegisub "), preset.label)
 
-    def test_new_aegisub_preset_metadata_exposes_profiles(self):
-        metadata_by_id = {item["id"]: item for item in list_preset_metadata()}
-
-        expected_profiles = {
-            "aegisub-classic-blue": "clean_sweep",
-            "aegisub-gold-chorus": "soft_glow",
-            "aegisub-anime-pop": "bounce_word",
-            "aegisub-soft-pastel": "clean_sweep",
-            "aegisub-night-glow": "soft_glow",
-            "aegisub-impact-red": "outline_pop",
-            "aegisub-dual-vocal": "clean_sweep",
-            "aegisub-clean-editorial": "clean_sweep",
-            "aegisub-cyber-minimal": "soft_glow",
-            "aegisub-stage-lights": "bounce_word",
-        }
-
-        for preset_id, profile in expected_profiles.items():
-            self.assertEqual(profile, metadata_by_id[preset_id]["effect_profile"])
-            self.assertGreaterEqual(len(metadata_by_id[preset_id]["styles"]), 6)
 
     def test_unknown_preset_raises_clear_error(self):
         with self.assertRaisesRegex(KeyError, "Unknown karaoke style preset: missing"):
@@ -193,8 +109,12 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
         )
 
     def test_effect_support_matches_stage06_builder(self):
-        for effect in ("highlight", "fade_in", "bounce", "flash", "none"):
-            self.assertIn(effect, SUPPORTED_EFFECTS)
+        # What a line may ask for, and what effects.py can actually render.
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        self.assertEqual(("highlight", "none"), SUPPORTED_EFFECTS)
+        for effect in SUPPORTED_EFFECTS:
+            self.assertIn(effect, EFFECTS)
 
 
 class StyleLibraryEdgeCaseTests(unittest.TestCase):

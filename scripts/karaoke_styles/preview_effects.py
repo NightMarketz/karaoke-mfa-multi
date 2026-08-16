@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from scripts.karaoke_styles.effects import syllable_ass  # noqa: E402
+from scripts.karaoke_styles.effects import EFFECTS, syllable_ass  # noqa: E402
 
 # Fake syllables just to show the left-to-right fill and the per-syllable motion.
 DEMO_WORDS = ["Bri", "lha", " es", "tre", "la", " a", "cor", "da"]
@@ -25,8 +25,8 @@ SYL_CS = 20          # centiseconds of \kf fill per syllable (~0.20s)
 HOLD_CS = 70         # hold after the sweep completes so the line is readable
 GAP_CS = 25          # blank gap between effects
 
-# The effects worth showing off (skips aliases). Order = play order.
-SHOWCASE = ["highlight", "instant", "fade_in", "flash", "scale_pop", "outline_pop", "glow_pulse"]
+# Everything effects.py can render. Order = play order.
+SHOWCASE = sorted(EFFECTS)
 
 WIDTH, HEIGHT = 1280, 720
 
