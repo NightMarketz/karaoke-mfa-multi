@@ -81,7 +81,7 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
         "error": error,
         "updated_at": time.time(),
     })
-    status_path.write_text(json.dumps(existing, indent=2))
+    status_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
 def _write_event(
@@ -476,7 +476,7 @@ def main() -> int:
 
     # ── Write output ───────────────────────────────────────────────────────
     output_path = job_dir / "transcript.json"
-    output_path.write_text(json.dumps(transcript, indent=2, ensure_ascii=False))
+    output_path.write_text(json.dumps(transcript, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info("Written: %s (%.1f KB)", output_path.name, output_path.stat().st_size / 1e3)
     _write_event(
         job_dir,

@@ -220,6 +220,7 @@
           <div class="audio-timeline-header">
             <span class="mono accent">AUDIO TIMELINE</span>
             <span class="mono dim">ACTIVE WINDOW {{ audio_timeline.active_window.label }} / {{ "%.1f"|format(audio_timeline.duration_s) }}s</span>
+            <a class="mono accent" style="margin-left:auto" href="/job/{{ job_id }}/review/syllables">SYLLABLE EDITOR →</a>
           </div>
           <div class="audio-selection-readout" data-audio-selection-readout aria-live="polite">
             <span class="mono accent">{{ active_point.level | upper if active_point else "POINT" }}</span>

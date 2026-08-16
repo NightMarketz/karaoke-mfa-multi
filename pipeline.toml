@@ -104,9 +104,20 @@ hubertfa_dir = "vendor/HubertFA"
 checkpoint   = "models/hubertfa/model.onnx"
 language     = "en"
 hubertfa_timeout_s = 600
+# HubertFA produces the per-phoneme timing that s05 turns into syllables.
+# It is skipped when ONNX only exposes CPUExecutionProvider (no GPU/DirectML),
+# which yields phonemes:[] and word-level highlight only. Set true to run it on
+# CPU anyway (slower, ~40s per song). Prefer installing onnxruntime-directml on
+# the AMD box so an accelerated provider is available and this can stay false.
+allow_cpu_hubertfa = true
 # CTC forced-alignment can produce small overlaps (~20–50 ms) at phrase
 # boundaries. Tolerating up to 50 ms avoids hard-failing valid jobs.
 overlap_tolerance_s = 0.05
+# Minimum word duration (ms). CTC compresses short function words to ~0, which
+# yields degenerate syllables and pollutes the syllable review queue. s04 lifts
+# any sub-floor word to this duration, borrowing time from longer words in the
+# same contiguous run so the line envelope (line-sync) is preserved.
+min_word_ms = 120
 
 [analyze]
 ollama_url   = "http://localhost:11434"
@@ -116,11 +127,49 @@ timeout_s    = 600
 # ollama_model and num_ctx come from [hardware.*] — not duplicated here.
 max_tokens   = 4096
 
+[render]
+# Which renderer produces the final video:
+#   "ass" — s06_generate_ass + s07_output (ffmpeg/libass). Default, fast, robust.
+#   "gpu" — s06b_render_gpu (Remotion + three.js): per-glyph shader dissolve,
+#           ember frontier, audio-reactive bloom, spark bursts. Much higher motion
+#           ceiling; slower (a Chromium+ffmpeg headless render, minutes per song).
+engine = "ass"
+
+[render_gpu]
+# GPU renderer must run from a SHORT, non-OneDrive path (MAX_PATH + OneDrive
+# dehydration break native .exe spawns). The app is staged here and rendered.
+work_dir = "C:/rk"
+# Optional: point at an existing chrome-headless-shell.exe if Remotion's own
+# download lands ENOENT (e.g. antivirus). Leave blank to use Remotion's.
+browser_executable = ""
+timeout_s = 3600
+# Parallel frame renderers. THE wall-clock lever (rendering, not encoding, is the
+# bottleneck). 0 = Remotion auto (~cores/2). Raise toward physical cores; each tab
+# costs RAM/VRAM, so back off if the box swaps. Z13: try 4–6.
+concurrency = 0
+# Remotion h264 CRF (lower=better, ~18 default). Leave unset for Remotion's default.
+# crf = 18
+# Final re-encode with the system ffmpeg hardware encoder, matching s07. This is a
+# consistency/size pass, NOT a speedup (it adds one encode). AMF ignores CRF → CQP.
+amf_encode = false
+amf_vcodec = "h264_amf"   # or "libx264" (CRF) / "hevc_amf"
+amf_quality = 23          # CQP 0-51, lower=better
+# Mix the vocal stem back into the soundtrack (guide vocal) to verify sync. The
+# normal karaoke output uses the instrumental only (false).
+include_vocals = false
+vocal_gain = 1.0          # gain on the mixed-in vocal stem
+
 [generate]
 style_preset = "single-style-kf"
 resolution   = "1920x1080"
 fade_in_ms   = 300
 fade_out_ms  = 500
+
+[syllables]
+# Per-syllable karaoke highlight timing derived from s04 phonemes (s05).
+split_enabled       = true   # false → one highlight per word (no syllable split)
+uncertain_threshold = 0.6    # syllable confidence below this opens a syllable_uncertain issue
+min_segment_ms      = 80      # floor per syllable segment (coherent with MIN_WORD_MS)
 
 [output]
 audio_codec    = "aac"

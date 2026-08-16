@@ -21,6 +21,16 @@ class PipelineRunnerTests(unittest.TestCase):
             self.assertEqual(names[0], "aligning_lyrics")
             self.assertIn("validating", names)
 
+    def test_build_stage_plan_skips_pitch_when_reference_timestamps_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "lyrics.txt").write_text("[Verse]\nhello", encoding="utf-8")
+            (job_dir / "reference_timestamps.json").write_text('{"lines": []}', encoding="utf-8")
+
+            stages = build_stage_plan(job_dir, "cyberpunk", "python")
+
+            self.assertIn("--no-pitch", stages[0].command)
+
     def test_runner_marks_failed_when_stage_returns_nonzero(self):
         with tempfile.TemporaryDirectory() as tmp:
             job_dir = Path(tmp)
@@ -132,6 +142,8 @@ class PipelineRunnerTests(unittest.TestCase):
                 job_dir,
                 [
                     "analysis.json",
+                    "syllable_map.json",
+                    "syllable_alignment.json",
                     "output.ass",
                     "output.ass.manifest.json",
                     "output.mp4",
@@ -143,7 +155,7 @@ class PipelineRunnerTests(unittest.TestCase):
             command = (
                 "from pathlib import Path; "
                 "job=Path(r'%s'); "
-                "missing=['analysis.json','output.ass','output.ass.manifest.json','output.mp4','output.mp4.manifest.json','preview_full.mp4','preview_full.manifest.json']; "
+                "missing=['analysis.json','syllable_map.json','syllable_alignment.json','output.ass','output.ass.manifest.json','output.mp4','output.mp4.manifest.json','preview_full.mp4','preview_full.manifest.json']; "
                 "assert all(not (job/name).exists() for name in missing)"
             ) % str(job_dir)
             stages = [Stage("analyzing", ["python", "-c", command], 50)]
@@ -158,6 +170,8 @@ class PipelineRunnerTests(unittest.TestCase):
                 "analyzing",
                 [
                     "analysis.json",
+                    "syllable_map.json",
+                    "syllable_alignment.json",
                     "output.ass",
                     "output.ass.manifest.json",
                     "output.mp4",

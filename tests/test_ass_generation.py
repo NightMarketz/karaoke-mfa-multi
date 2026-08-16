@@ -195,6 +195,62 @@ class AssGenerationTests(unittest.TestCase):
             self.assertNotIn("Base,,", dialogue_lines[0])
             self.assertIn("\\kf", dialogue_lines[0])
 
+    def test_stage06_renders_timed_syllables_from_analysis_words(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            self._write_analysis(
+                job_dir,
+                [
+                    {
+                        "text": "mama",
+                        "start": 10.0,
+                        "end": 10.8,
+                        "style": "verse",
+                        "effect": "highlight",
+                        "words": [
+                            {
+                                "word": "mama",
+                                "start": 10.0,
+                                "end": 10.8,
+                                "syllables": [
+                                    {"text": "ma", "start": 10.05, "end": 10.30},
+                                    {"text": "ma", "start": 10.35, "end": 10.80},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            )
+
+            exit_code = self._run_stage06(job_dir, "--preset", "section-coded")
+
+            self.assertEqual(exit_code, 0)
+            ass_content = (job_dir / "output.ass").read_text(encoding="utf-8-sig")
+            self.assertIn("\\kf25}ma", ass_content)
+            self.assertIn("\\kf45}ma", ass_content)
+
+    def test_syllable_kf_quantization_applies_residual_to_last_visible_segment(self):
+        text = _build_karaoke_text(
+            [
+                {
+                    "word": "abc",
+                    "start": 10.0,
+                    "end": 11.0,
+                    "syllables": [
+                        {"text": "a", "start": 10.000, "end": 10.214},
+                        {"text": "b", "start": 10.214, "end": 10.551},
+                        {"text": "c", "start": 10.551, "end": 11.000},
+                    ],
+                }
+            ],
+            line_start_ms=10000,
+            effect="highlight",
+        )
+
+        self.assertIn("\\kf21}a", text)
+        self.assertIn("\\kf34}b", text)
+        self.assertIn("\\kf45}c", text)
+
     def test_stage06_writes_ass_manifest_with_generation_provenance(self):
         with tempfile.TemporaryDirectory() as tmp:
             job_dir = Path(tmp)

@@ -11,6 +11,9 @@ flask-cors>=4.0.0
 
 # HubertFA ONNX inference
 onnxruntime-gpu>=1.17.0
+# HubertFA's vendored tools import matplotlib at load (plot helpers), so it is
+# required even though we never render plots — without it s04 aborts HubertFA.
+matplotlib>=3.7.0
 numpy>=1.24.0
 textgrid>=1.6.1
 g2p_en>=2.1.0

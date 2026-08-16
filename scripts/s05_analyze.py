@@ -63,6 +63,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
+from scripts import syllables
 from scripts.karaoke_styles.library import supported_style_keys
 from scripts.common.config import load_app_config
 from scripts.common.observability import write_event
@@ -218,6 +219,160 @@ STYLE_DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 
+SYLLABLE_TIMING_MODE = "projected_from_stage04_phonemes"
+SYLLABLE_ALIGNMENT_SOURCE = "stage05_word_phoneme_projection"
+SYLLABLE_PHONETIC_BACKEND = "stage04_existing_phonemes"
+SYLLABLE_SOURCE_PHONE_PROJECTION = syllables.PHONE_PROJECTION_SOURCE
+# Below this, a clamped syllable span is degenerate rather than short.
+MIN_SYLLABLE_SPAN_S = 0.001
+
+
+def _floored_span(vowel_start: float, phonetic_end: float, word_end: float, floor_s: float) -> float:
+    """Extend a syllable's karaoke span up to the min floor without passing word_end (§8)."""
+    if phonetic_end - vowel_start >= floor_s:
+        return phonetic_end
+    return round(min(vowel_start + floor_s, word_end), 4)
+
+
+def _project_word_syllables(
+    word: dict[str, Any],
+    *,
+    line_id: str,
+    word_id: str,
+    min_segment_ms: int = syllables.DEFAULT_MIN_SEGMENT_MS,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    text = str(word.get("word") or word.get("text") or "")
+    phones = syllables.timed_phones(word)
+    if not phones:
+        return ([{"syllable_id": f"{word_id}_S001", "text": text, "phones": []}], [])
+
+    floor_s = max(0.0, min_segment_ms / 1000.0)
+    try:
+        word_start = float(word.get("start", word.get("start_s", phones[0]["start"])))
+        word_end = float(word.get("end", word.get("end_s", phones[-1]["end"])))
+    except (TypeError, ValueError):
+        word_start, word_end = phones[0]["start"], phones[-1]["end"]
+    groups = syllables.phone_syllable_groups(phones)
+    if not syllables.syllabification_is_plausible(text, len(groups), word_end - word_start, min_segment_ms):
+        # Fast/compressed word (rap): phoneme bleed makes the split unreliable.
+        # Emit no timed syllables so the word renders as a single highlight.
+        return ([{"syllable_id": f"{word_id}_S001", "text": text, "phones": []}], [])
+    texts = syllables.text_for_syllable_count(text, len(groups))
+
+    # Word span comes from the provider (CTC), phone times from HubertFA: the two
+    # disagree, so every projected span is clamped into the word (§8). A span that
+    # collapses under the clamp means the phones landed outside the word entirely —
+    # emit no timed syllables and let the word render as one highlight.
+    spans = []
+    for group in groups:
+        vowel_start = next((phone["start"] for phone in group if syllables.is_vowel_phone(phone)), group[0]["start"])
+        karaoke_end = _floored_span(vowel_start, group[-1]["end"], word_end, floor_s)
+        span_start = min(max(vowel_start, word_start), word_end)
+        spans.append((span_start, min(max(karaoke_end, span_start), word_end)))
+    if any(end - start < MIN_SYLLABLE_SPAN_S for start, end in spans):
+        return ([{"syllable_id": f"{word_id}_S001", "text": text, "phones": []}], [])
+
+    map_syllables = []
+    aligned_syllables = []
+    for index, group in enumerate(groups, start=1):
+        syllable_id = f"{word_id}_S{index:03d}"
+        vowel_start, karaoke_end = spans[index - 1]
+        phonetic_start = group[0]["start"]
+        phonetic_end = group[-1]["end"]
+        phone_labels = [phone["phone"] for phone in group]
+        confidence, score_breakdown = syllables.syllable_confidence(group, word)
+        map_syllables.append(
+            {
+                "syllable_id": syllable_id,
+                "text": texts[index - 1],
+                "phones": phone_labels,
+            }
+        )
+        aligned_syllables.append(
+            {
+                "syllable_id": syllable_id,
+                "line_id": line_id,
+                "word_id": word_id,
+                "text": texts[index - 1],
+                "start": vowel_start,
+                "end": karaoke_end,
+                "phonetic_start": phonetic_start,
+                "phonetic_end": phonetic_end,
+                "vowel_start": vowel_start,
+                "karaoke_start": vowel_start,
+                "karaoke_end": karaoke_end,
+                "phones": group,
+                "karaoke_start_policy": "vowel_nucleus",
+                "source": SYLLABLE_SOURCE_PHONE_PROJECTION,
+                "confidence": confidence,
+                "score_breakdown": score_breakdown,
+                "flags": [],
+            }
+        )
+    return map_syllables, aligned_syllables
+
+
+def _enrich_lines_with_syllables(
+    lines: list[dict],
+    aligned_words: list[dict],
+    min_segment_ms: int = syllables.DEFAULT_MIN_SEGMENT_MS,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    flat_index = 0
+    map_lines = []
+    aligned_syllables = []
+
+    for line_index, line in enumerate(lines, start=1):
+        line_id = str(line.get("id") or f"L{line_index:03d}")
+        line["id"] = line_id
+        map_words = []
+        for word_index, line_word in enumerate(line.get("words", []), start=1):
+            word_id = str(line_word.get("id") or f"{line_id}_W{word_index:03d}")
+            line_word["id"] = word_id
+            source_word = aligned_words[flat_index] if flat_index < len(aligned_words) else line_word
+            flat_index += 1
+            map_syllables, word_syllables = _project_word_syllables(
+                source_word, line_id=line_id, word_id=word_id, min_segment_ms=min_segment_ms
+            )
+            if word_syllables:
+                line_word["syllables"] = word_syllables
+            map_words.append(
+                {
+                    "word_id": word_id,
+                    "text": str(line_word.get("word") or line_word.get("text") or ""),
+                    "syllables": map_syllables,
+                }
+            )
+            aligned_syllables.extend(word_syllables)
+        map_lines.append(
+            {
+                "line_id": line_id,
+                "line_text": str(line.get("text") or ""),
+                "words": map_words,
+            }
+        )
+
+    syllable_map = {
+        "version": "1.0",
+        "source": SYLLABLE_ALIGNMENT_SOURCE,
+        "syllable_timing_mode": SYLLABLE_TIMING_MODE,
+        "lines": map_lines,
+    }
+    if not aligned_syllables:
+        return syllable_map, None
+    return syllable_map, {
+        "version": "1.0",
+        "source": SYLLABLE_ALIGNMENT_SOURCE,
+        "syllable_timing_mode": SYLLABLE_TIMING_MODE,
+        "phonetic_backend": SYLLABLE_PHONETIC_BACKEND,
+        "g2p_backend": None,
+        "native_phone_aligner": False,
+        "safe_for_final_export": True,
+        "fallback_syllable_count": 0,
+        "syllable_count": len(aligned_syllables),
+        "syllables": aligned_syllables,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Deterministic segment-aware grouper (forced alignment path)
 # ---------------------------------------------------------------------------
@@ -241,10 +396,9 @@ def _segment_aware_grouper(
             continue
 
         section  = seg.get("section", "verse").lower()
-        # s03b already resolved the style against its 56-entry map;
-        # prefer it. The map below is the fallback for transcripts
-        # written before s03b carried the style, and it disagrees on
-        # 31 of those labels.
+        # s03b already resolved the style against its 56-entry map; prefer it.
+        # The map below is the fallback for transcripts written before s03b
+        # started carrying the style, and it disagrees on 31 of those labels.
         style    = seg.get("style") or SECTION_TO_STYLE.get(section, "verse")
         defaults = STYLE_DEFAULTS.get(style, STYLE_DEFAULTS["verse"])
 
@@ -549,7 +703,7 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
         "stage": stage, "progress": progress,
         "error": error, "updated_at": time.time(),
     })
-    status_path.write_text(json.dumps(existing, indent=2))
+    status_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
 def _stage05_event(
@@ -882,6 +1036,40 @@ def main() -> int:
             lines = _rule_based_grouper(words)
 
     # ── Build and validate output ─────────────────────────────────────────
+    if app_config.syllable_split_enabled:
+        syllable_map, syllable_alignment = _enrich_lines_with_syllables(
+            lines, words, min_segment_ms=app_config.syllable_min_segment_ms
+        )
+        built = syllable_alignment["syllables"] if syllable_alignment else []
+        low_conf = [
+            s for s in built
+            if float(s.get("confidence", 1.0)) < app_config.syllable_uncertain_threshold
+        ]
+        _stage05_event(
+            job_dir,
+            "syllable_segments_built",
+            segment_count=len(built),
+            low_confidence_count=len(low_conf),
+            uncertain_threshold=app_config.syllable_uncertain_threshold,
+            min_segment_ms=app_config.syllable_min_segment_ms,
+        )
+        if low_conf:
+            _stage05_event(
+                job_dir,
+                "syllable_uncertain_flagged",
+                level="warning",
+                count=len(low_conf),
+                syllable_ids=[s.get("syllable_id") for s in low_conf],
+                uncertain_threshold=app_config.syllable_uncertain_threshold,
+            )
+    else:
+        syllable_map, syllable_alignment = {
+            "version": "1.0",
+            "source": SYLLABLE_ALIGNMENT_SOURCE,
+            "syllable_timing_mode": "disabled",
+            "lines": [],
+        }, None
+        _stage05_event(job_dir, "syllable_segments_built", segment_count=0, disabled=True)
     analysis = {"lines": lines}
     errors   = _validate_analysis(analysis)
     if errors:
@@ -924,7 +1112,15 @@ def main() -> int:
     _update_status(job_dir, "analyzing", 90)
 
     output_path = job_dir / "analysis.json"
-    output_path.write_text(json.dumps(analysis, indent=2, ensure_ascii=False))
+    output_path.write_text(json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8")
+    syllable_map_path = job_dir / "syllable_map.json"
+    syllable_map_path.write_text(json.dumps(syllable_map, indent=2, ensure_ascii=False), encoding="utf-8")
+    if syllable_alignment is not None:
+        syllable_alignment_path = job_dir / "syllable_alignment.json"
+        syllable_alignment_path.write_text(
+            json.dumps(syllable_alignment, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
     logger.info(
         "Written: %s (%d lines, %.1f KB)",
         output_path.name, len(lines), output_path.stat().st_size / 1e3,
@@ -935,6 +1131,18 @@ def main() -> int:
         path=str(output_path),
         line_count=len(lines),
         size_bytes=output_path.stat().st_size,
+    )
+    _stage05_event(
+        job_dir,
+        "stage05.syllable_map_written",
+        path=str(syllable_map_path),
+        line_count=len(syllable_map["lines"]),
+        syllable_count=sum(
+            len(word["syllables"])
+            for line in syllable_map["lines"]
+            for word in line["words"]
+        ),
+        has_timed_alignment=syllable_alignment is not None,
     )
 
     _update_status(job_dir, "analyzing", 100)

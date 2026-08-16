@@ -78,7 +78,7 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
         "error": error,
         "updated_at": time.time(),
     })
-    status_path.write_text(json.dumps(existing, indent=2))
+    status_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
 def _stage02_event(

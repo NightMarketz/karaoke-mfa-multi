@@ -86,6 +86,47 @@ def _explicit_segments(word: dict[str, Any], word_start_s: float, word_end_s: fl
     return segments
 
 
+def _syllable_segments(word: dict[str, Any], word_start_s: float, word_end_s: float) -> list[dict[str, Any]]:
+    raw_syllables = [item for item in word.get("syllables", []) or [] if isinstance(item, dict)]
+    if not raw_syllables:
+        return []
+
+    segments = []
+    for index, syllable in enumerate(raw_syllables, start=1):
+        text = str(_field(syllable, "text", "syllable", default="")).strip()
+        if not text:
+            continue
+        start_value = _field(
+            syllable,
+            "karaoke_start",
+            "start",
+            "start_s",
+            "vowel_start",
+            "phonetic_start",
+        )
+        end_value = _field(syllable, "karaoke_end", "end", "end_s", "phonetic_end")
+        if start_value is None or end_value is None:
+            return []
+        start_s = _time(start_value, word_start_s)
+        end_s = _time(end_value, word_end_s)
+        end_s = _melisma_end(syllable, end_s)
+        if end_s <= start_s:
+            end_s = start_s + MIN_FRAGMENT_S
+        segments.append(
+            {
+                "id": str(_field(syllable, "id", "syllable_id", default=_segment_id(word, index))),
+                "text": text,
+                "start": _round_time(start_s),
+                "end": _round_time(end_s),
+                "start_s": _round_time(start_s),
+                "end_s": _round_time(end_s),
+                "role": "syllable",
+                "source": "syllable",
+            }
+        )
+    return segments
+
+
 def _vowel_span(text: str) -> tuple[int, int] | None:
     first = None
     last = None
@@ -99,6 +140,20 @@ def _vowel_span(text: str) -> tuple[int, int] | None:
     if first is None or last is None:
         return None
     return first, last + 1
+
+
+def _vowel_run_count(text: str) -> int:
+    """Number of vowel runs (≈ orthographic syllables) in ``text``."""
+    runs = 0
+    in_run = False
+    for char in text:
+        if char in VOWELS:
+            if not in_run:
+                runs += 1
+                in_run = True
+        else:
+            in_run = False
+    return runs
 
 
 def _fragment_text(text: str) -> tuple[str, str, str] | None:
@@ -129,9 +184,23 @@ def build_word_highlight_segments(word: dict[str, Any]) -> list[dict[str, Any]]:
     if explicit:
         return explicit
 
+    syllables = _syllable_segments(word, start_s, end_s)
+    if syllables:
+        return syllables
+
     duration_s = end_s - start_s
     fragments = _fragment_text(text)
-    if duration_s < SUSTAIN_SPLIT_THRESHOLD_S or fragments is None:
+    # The attack/vowel/release sustain split models ONE held vowel (a sustained
+    # note like "br-eaa-k"). Applied to a multi-syllable word it dumps every
+    # later syllable into the "release" ("Forfeður" -> F/o/rfeður), which lights
+    # up at the wrong moment and reads as random. Only split words with a single
+    # vowel run; a multi-syllable word with no measured syllable timing renders
+    # whole-word (honest word-level highlight, not a faked sub-word split).
+    if (
+        duration_s < SUSTAIN_SPLIT_THRESHOLD_S
+        or fragments is None
+        or _vowel_run_count(text) > 1
+    ):
         return [_plain_segment(word, text, start_s, end_s, "normal", "derived")]
 
     attack_text, vowel_text, release_text = fragments

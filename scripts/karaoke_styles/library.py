@@ -13,9 +13,11 @@ SUPPORTED_EFFECTS = ("highlight", "fade_in", "bounce", "flash", "none")
 @dataclass(frozen=True)
 class KaraokeStyle:
     r"""
-    One ASS style definition.
-    primary_color   = not-yet-sung text color   (\1c)  &HBBGGRR& format
-    secondary_color = progressive fill color    (\2c)  filled by \kf
+    One ASS style definition. Field names are designer-facing intent;
+    s06's _generate_ass swaps primary/secondary onto the ASS Style line
+    because libass sweeps \kf from SecondaryColour to PrimaryColour.
+    primary_color   = not-yet-sung text color   (written to \2c)  &HBBGGRR&
+    secondary_color = progressive fill color    (written to \1c)  filled by \kf
     outline_color   = border                    (\3c)
     back_color      = shadow/background         (\4c)
     """

@@ -13,10 +13,53 @@ import_or_skip("pysubs2")
 
 from scripts.s06_generate_ass import (
     _ass_metrics,
+    _build_karaoke_text,
     _c,
     _parse_color,
     _validate_ass,
 )
+
+
+class SyllableKaraokeTextTests(unittest.TestCase):
+    def test_long_word_with_syllables_emits_multiple_kf(self):
+        # A sustained word carrying two timed syllables must render 2+ \kf.
+        word = {
+            "word": "aah",
+            "id": "L001_W001",
+            "start": 10.0,
+            "end": 11.6,
+            "syllables": [
+                {"text": "aa", "karaoke_start": 10.0, "karaoke_end": 10.8, "confidence": 0.9},
+                {"text": "ah", "karaoke_start": 10.8, "karaoke_end": 11.6, "confidence": 0.9},
+            ],
+        }
+        text = _build_karaoke_text([word], line_start_ms=10000, effect="highlight")
+        self.assertGreaterEqual(text.count("\\kf"), 2)
+
+    def test_short_word_without_phonemes_stays_single_kf(self):
+        # No regression: a short word with no syllable data gets exactly one \kf.
+        word = {"word": "go", "id": "L001_W001", "start": 1.0, "end": 1.3}
+        text = _build_karaoke_text([word], line_start_ms=1000, effect="highlight")
+        self.assertEqual(text.count("\\kf"), 1)
+
+    def test_explicit_highlight_segments_override_syllables(self):
+        # Manual boundary edit (highlight_segments) wins over derived syllables.
+        word = {
+            "word": "aah",
+            "id": "L001_W001",
+            "start": 10.0,
+            "end": 11.6,
+            "syllables": [
+                {"text": "aah", "karaoke_start": 10.0, "karaoke_end": 11.6, "confidence": 0.9},
+            ],
+            "highlight_segments": [
+                {"id": "m1", "text": "aa", "start": 10.0, "end": 10.5, "role": "syllable"},
+                {"id": "m2", "text": "ah", "start": 10.5, "end": 11.0, "role": "syllable"},
+                {"id": "m3", "text": "h", "start": 11.0, "end": 11.6, "role": "syllable"},
+            ],
+        }
+        text = _build_karaoke_text([word], line_start_ms=10000, effect="highlight")
+        self.assertGreaterEqual(text.count("\\kf"), 3)
 
 
 class ParseColorTests(unittest.TestCase):

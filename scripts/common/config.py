@@ -42,6 +42,8 @@ DEFAULT_ALIGN_HUBERTFA_DIR = Path("vendor/HubertFA")
 DEFAULT_ALIGN_CHECKPOINT = Path("models/hubertfa/model.onnx")
 DEFAULT_ALIGN_LANGUAGE = "en"
 DEFAULT_ALIGN_HUBERTFA_TIMEOUT_S = 180
+DEFAULT_ALIGN_ALLOW_CPU_HUBERTFA = False
+DEFAULT_ALIGN_MIN_WORD_MS = 120
 DEFAULT_DEMUCS_MODEL = "htdemucs"
 DEFAULT_DEMUCS_PYTHON = ""
 DEFAULT_DEMUCS_TIMEOUT_S = 1800
@@ -50,6 +52,9 @@ DEFAULT_ANALYZE_LANGUAGE = "en"
 DEFAULT_OLLAMA_TEMPERATURE = 0.3
 DEFAULT_OLLAMA_TIMEOUT_S = 600
 DEFAULT_MAX_CONCURRENT_JOBS = 1
+DEFAULT_SYLLABLE_SPLIT_ENABLED = True
+DEFAULT_SYLLABLE_UNCERTAIN_THRESHOLD = 0.6
+DEFAULT_SYLLABLE_MIN_SEGMENT_MS = 80
 DEFAULT_VALIDATE_OVERLAP_TOLERANCE_S = 0.05
 DEFAULT_HARDWARE_PROFILE = "auto"
 DEFAULT_HARDWARE_Z13 = {
@@ -114,6 +119,8 @@ class AppConfig:
     align_checkpoint: Path
     align_language: str
     align_hubertfa_timeout_s: int
+    align_allow_cpu_hubertfa: bool
+    align_min_word_ms: int
     demucs_model: str
     demucs_python: str
     demucs_timeout_s: int
@@ -122,6 +129,9 @@ class AppConfig:
     ollama_temperature: float
     ollama_timeout_s: int
     max_concurrent_jobs: int
+    syllable_split_enabled: bool
+    syllable_uncertain_threshold: float
+    syllable_min_segment_ms: int
     validate_overlap_tolerance_s: float
     s01_ffprobe_timeout_s: int
     s01_ffmpeg_timeout_s: int
@@ -199,6 +209,15 @@ def _float_env_or_value(name: str, value: Any, default: float) -> float:
         return default
 
 
+def _bool_env_or_value(name: str, value: Any, default: bool) -> bool:
+    env_value = os.environ.get(name)
+    if env_value not in {None, ""}:
+        return _bool_value(env_value, default)
+    if value is not None:
+        return _bool_value(value, default)
+    return default
+
+
 def _bool_value(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -261,6 +280,7 @@ def load_app_config(path: Path | str = DEFAULT_PIPELINE_CONFIG) -> AppConfig:
     align = _section(data, "align")
     demix = _section(data, "demix")
     analyze = _section(data, "analyze")
+    syllables_cfg = _section(data, "syllables")
     input_cfg = _section(data, "input")
 
     max_upload_mb = _int_env_or_value(
@@ -387,6 +407,16 @@ def load_app_config(path: Path | str = DEFAULT_PIPELINE_CONFIG) -> AppConfig:
             align.get("hubertfa_timeout_s"),
             DEFAULT_ALIGN_HUBERTFA_TIMEOUT_S,
         ),
+        align_allow_cpu_hubertfa=_bool_env_or_value(
+            "KARAOKE_ALIGN_ALLOW_CPU_HUBERTFA",
+            align.get("allow_cpu_hubertfa"),
+            DEFAULT_ALIGN_ALLOW_CPU_HUBERTFA,
+        ),
+        align_min_word_ms=_int_env_or_value(
+            "KARAOKE_ALIGN_MIN_WORD_MS",
+            align.get("min_word_ms"),
+            DEFAULT_ALIGN_MIN_WORD_MS,
+        ),
         demucs_model=str(_env_or_value("KARAOKE_DEMUCS_MODEL", demix.get("model"), DEFAULT_DEMUCS_MODEL)),
         demucs_python=str(
             _env_or_value(
@@ -422,6 +452,21 @@ def load_app_config(path: Path | str = DEFAULT_PIPELINE_CONFIG) -> AppConfig:
             "KARAOKE_MAX_CONCURRENT_JOBS",
             server.get("max_concurrent_jobs"),
             DEFAULT_MAX_CONCURRENT_JOBS,
+        ),
+        syllable_split_enabled=_bool_env_or_value(
+            "KARAOKE_SYLLABLE_SPLIT_ENABLED",
+            syllables_cfg.get("split_enabled"),
+            DEFAULT_SYLLABLE_SPLIT_ENABLED,
+        ),
+        syllable_uncertain_threshold=_float_env_or_value(
+            "KARAOKE_SYLLABLE_UNCERTAIN_THRESHOLD",
+            syllables_cfg.get("uncertain_threshold"),
+            DEFAULT_SYLLABLE_UNCERTAIN_THRESHOLD,
+        ),
+        syllable_min_segment_ms=_int_env_or_value(
+            "KARAOKE_SYLLABLE_MIN_SEGMENT_MS",
+            syllables_cfg.get("min_segment_ms"),
+            DEFAULT_SYLLABLE_MIN_SEGMENT_MS,
         ),
         validate_overlap_tolerance_s=_float_env_or_value(
             "KARAOKE_VALIDATE_OVERLAP_TOLERANCE_S",

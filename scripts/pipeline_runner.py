@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -24,6 +25,35 @@ from scripts.common.status import write_status
 SCRIPTS_DIR = Path("scripts")
 
 
+def _render_engine(path: str = "pipeline.toml") -> str:
+    """Which renderer the pipeline tail uses: "ass" (default) or "gpu"."""
+    p = Path(path)
+    if not p.exists():
+        return "ass"
+    try:
+        with p.open("rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return "ass"
+    engine = str((data.get("render", {}) or {}).get("engine", "ass")).strip().lower()
+    return "gpu" if engine == "gpu" else "ass"
+
+
+def _gpu_timeout_s(path: str = "pipeline.toml") -> int:
+    p = Path(path)
+    if not p.exists():
+        return 3600
+    try:
+        with p.open("rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return 3600
+    try:
+        return int((data.get("render_gpu", {}) or {}).get("timeout_s", 3600))
+    except (TypeError, ValueError):
+        return 3600
+
+
 @dataclass(frozen=True)
 class Stage:
     name: str
@@ -40,9 +70,11 @@ def build_stage_plan(
     preset: str,
     python_exe: str | None = None,
     scripts_dir: Path = SCRIPTS_DIR,
+    renderer: str | None = None,
 ) -> list[Stage]:
     py = python_exe or sys.executable
     lyrics_path = job_dir / "lyrics.txt"
+    engine = (renderer or _render_engine()).strip().lower()
 
     # Load per-stage timeouts from config so the watchdog never fires before
     # the script's own internal timeout (e.g. demucs = 1800s > default 900s).
@@ -56,17 +88,20 @@ def build_stage_plan(
     validate_timeout = cfg.validate_timeout_s + _BUFFER_S
 
     if lyrics_path.exists():
+        lyric_align_command = [
+            py,
+            str(scripts_dir / "s03b_lyrics_align.py"),
+            "--job-dir",
+            str(job_dir),
+            "--lyrics",
+            str(lyrics_path),
+        ]
+        if (job_dir / "reference_timestamps.json").exists():
+            lyric_align_command.append("--no-pitch")
         stages = [
             Stage(
                 "aligning_lyrics",
-                [
-                    py,
-                    str(scripts_dir / "s03b_lyrics_align.py"),
-                    "--job-dir",
-                    str(job_dir),
-                    "--lyrics",
-                    str(lyrics_path),
-                ],
+                lyric_align_command,
                 5,
                 timeout=align_timeout,
             )
@@ -85,7 +120,8 @@ def build_stage_plan(
         [
             Stage(
                 "aligning",
-                [py, str(scripts_dir / "s04_align.py"), "--job-dir", str(job_dir)],
+                [py, str(scripts_dir / "s04_align.py"), "--job-dir", str(job_dir)]
+                + (["--allow-cpu-hubertfa"] if cfg.align_allow_cpu_hubertfa else []),
                 25,
                 timeout=align_timeout,
             ),
@@ -95,6 +131,23 @@ def build_stage_plan(
                 50,
                 timeout=analyze_timeout,
             ),
+        ]
+    )
+
+    if engine == "gpu":
+        # GPU render path — one stage replaces s06+s07+s08 (no ASS/libass).
+        stages.append(
+            Stage(
+                "rendering_gpu",
+                [py, str(scripts_dir / "s06b_render_gpu.py"), "--job-dir", str(job_dir)],
+                70,
+                timeout=_gpu_timeout_s() + _BUFFER_S,
+            )
+        )
+        return stages
+
+    stages.extend(
+        [
             Stage(
                 "generating",
                 [
@@ -327,12 +380,20 @@ def _sanitize_command(command: list[str]) -> list[str]:
 _INVALIDATION_TARGETS = {
     "analyzing": (
         "analysis.json",
+        "syllable_map.json",
+        "syllable_alignment.json",
         "output.ass",
         "output.ass.manifest.json",
         "output.mp4",
         "output.mp4.manifest.json",
+        "output_gpu.mp4",
+        "output_gpu.mp4.manifest.json",
         "preview_full.mp4",
         "preview_full.manifest.json",
+    ),
+    "rendering_gpu": (
+        "output_gpu.mp4",
+        "output_gpu.mp4.manifest.json",
     ),
     "generating": (
         "output.ass",

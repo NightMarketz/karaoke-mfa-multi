@@ -4,9 +4,11 @@ s06_generate_ass.py — Generate ASS karaoke subtitles via pysubs2.
 Produces Aegisub-quality karaoke using a single visible dialogue layer:
     Layer 0 — line with \kf tags and progressive fill
 
-The \kf tag fills left-to-right using the style's secondary color (\2c).
-Primary color (\1c) = not-yet-sung text. Secondary color (\2c) = sung fill.
-This is how professional Aegisub karaoke templates work.
+The \kf tag fills left-to-right. In libass the sweep goes from SecondaryColour
+to PrimaryColour, so PrimaryColour (\1c) = already-sung fill and SecondaryColour
+(\2c) = not-yet-sung text. KaraokeStyle keeps designer-intuitive field names
+(primary_color = waiting, secondary_color = sung fill); _generate_ass swaps
+them onto the ASS Style line so the sweep lands the intended color.
 
 Style map (from analysis.json → ASS style):
     verse   → medium size, white/cyan
@@ -75,9 +77,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class KaraokeStyle:
     r"""
-    One ASS style definition.
-    primary_color   = not-yet-sung text color   (\1c)  &HBBGGRR& format
-    secondary_color = progressive fill color    (\2c)  filled by \kf
+    One ASS style definition. Field names are designer-facing intent;
+    _generate_ass swaps primary/secondary onto the ASS Style line because
+    libass sweeps \kf from SecondaryColour to PrimaryColour.
+    primary_color   = not-yet-sung text color   (written to \2c)  &HBBGGRR&
+    secondary_color = progressive fill color    (written to \1c)  filled by \kf
     outline_color   = border                    (\3c)
     back_color      = shadow/background         (\4c)
     """
@@ -408,6 +412,7 @@ SECTION_CODED_STYLES: dict[str, KaraokeStyle] = {
 }
 
 from scripts.karaoke_styles.library import PRESETS
+from scripts.karaoke_styles.effects import syllable_ass
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +436,31 @@ def _escape_ass_text(text: str) -> str:
         .replace("\n", " ")
         .strip()
     )
+
+
+def _quantize_kf_durations_to_centiseconds(
+    durations_ms: list[int],
+    *,
+    target_ms: int,
+    gap_cs: int = 0,
+) -> list[int]:
+    if not durations_ms:
+        return []
+    target_cs = max(len(durations_ms), int(round(target_ms / 10.0)) - gap_cs)
+    durations = [max(1, int(round(duration_ms / 10.0))) for duration_ms in durations_ms]
+    residual = target_cs - sum(durations)
+    durations[-1] += residual
+    if durations[-1] < 1:
+        deficit = 1 - durations[-1]
+        durations[-1] = 1
+        for index in range(len(durations) - 2, -1, -1):
+            if deficit <= 0:
+                break
+            available = max(0, durations[index] - 1)
+            take = min(available, deficit)
+            durations[index] -= take
+            deficit -= take
+    return durations
 
 
 def _build_karaoke_text(
@@ -472,16 +502,14 @@ def _build_karaoke_text(
         duration_cs: int,
         visible_segment: str,
     ) -> None:
-        if effect == "fade_in":
-            target.append(f"{{\\fad(500,0)\\be1\\kf{duration_cs}}}{visible_segment}")
-        elif effect == "bounce":
-            target.append(f"{{\\be1\\t(\\fscx115\\fscy115)\\t(\\fscx100\\fscy100)\\kf{duration_cs}}}{visible_segment}")
-        elif effect == "flash" or (effect == "highlight" and use_flash_default):
-            target.append(f"{{\\bord8\\t(0,200,\\bord2)\\be1\\kf{duration_cs}}}{visible_segment}")
-        elif effect == "none":
-            target.append(f"{{\\k{duration_cs}}}{visible_segment}")
-        else:
-            target.append(f"{{\\be1\\kf{duration_cs}}}{visible_segment}")
+        target.append(
+            syllable_ass(
+                effect,
+                duration_cs,
+                visible_segment,
+                flash_default=use_flash_default,
+            )
+        )
 
     timing = classify_line_timing({"style": line_style or "", "words": words})
     gap_policies = timing["inter_word_gaps"]
@@ -501,6 +529,7 @@ def _build_karaoke_text(
         word_parts = []
         segment_prev_end_ms = start_ms
         visible_segments = [segment for segment in segments if str(segment.get("text", ""))]
+        segment_runs = []
         for segment_index, segment in enumerate(visible_segments):
             visible_segment = _escape_ass_text(str(segment["text"]))
             if not visible_segment:
@@ -512,14 +541,27 @@ def _build_karaoke_text(
             if segment_end_ms - segment_start_ms < MIN_WORD_MS:
                 segment_end_ms = segment_start_ms + MIN_WORD_MS
             segment_gap_cs = max(0, (segment_start_ms - segment_prev_end_ms) // 10)
-            if segment_gap_cs > 0:
-                word_parts.append(f"{{\\k{segment_gap_cs}}}")
-            append_segment(
-                word_parts,
-                duration_cs=max(1, (segment_end_ms - segment_start_ms) // 10),
-                visible_segment=visible_segment,
+            segment_runs.append(
+                {
+                    "gap_cs": segment_gap_cs,
+                    "duration_ms": max(1, segment_end_ms - segment_start_ms),
+                    "visible_segment": visible_segment,
+                }
             )
             segment_prev_end_ms = segment_end_ms
+        duration_cs_values = _quantize_kf_durations_to_centiseconds(
+            [run["duration_ms"] for run in segment_runs],
+            target_ms=max(1, visual_end_ms - start_ms),
+            gap_cs=sum(run["gap_cs"] for run in segment_runs),
+        )
+        for run, duration_cs in zip(segment_runs, duration_cs_values):
+            if run["gap_cs"] > 0:
+                word_parts.append(f"{{\\k{run['gap_cs']}}}")
+            append_segment(
+                word_parts,
+                duration_cs=duration_cs,
+                visible_segment=run["visible_segment"],
+            )
 
         if word_parts:
             visual_parts.append("".join(word_parts))
@@ -637,10 +679,15 @@ YCbCr Matrix: TV.601
                    "Alignment, MarginL, MarginR, MarginV, Encoding"]
 
     for style_key, s in styles.items():
+        # libass \kf sweeps SecondaryColour -> PrimaryColour, so the ASS
+        # PrimaryColour field must carry our "sung fill" (secondary_color) and
+        # SecondaryColour our "not-yet-sung" (primary_color). Presets keep the
+        # designer-intuitive field names; the mapping is swapped here, at the
+        # single write point.
         style_lines.append(
             f"Style: {s.name},"
             f"{s.fontname},{s.fontsize},"
-            f"{s.primary_color},{s.secondary_color},{s.outline_color},{s.back_color},"
+            f"{s.secondary_color},{s.primary_color},{s.outline_color},{s.back_color},"
             f"{_bool_to_ass(s.bold)},{_bool_to_ass(s.italic)},0,0,"
             f"100,100,0,0,{s.border_style},{s.outline},{s.shadow},"
             f"{s.alignment},20,20,{s.margin_v},1"
@@ -833,7 +880,7 @@ def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") ->
         "stage": stage, "progress": progress,
         "error": error, "updated_at": time.time(),
     })
-    status_path.write_text(json.dumps(existing, indent=2))
+    status_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
 def _load_run_id(job_dir: Path) -> str:

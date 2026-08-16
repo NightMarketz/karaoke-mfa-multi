@@ -106,9 +106,9 @@ def test_resolve_numeric_strip():
     cases = [
         ("chorus 2","chorus"),("chorus 3","chorus"),("chorus 4","chorus"),("chorus 10","chorus"),
         ("verse 2","verse"),("verse 3","verse"),("verse 4","verse"),
-        # These pinned s03b's internal map value, not what a listener
-        # saw: s05 was already rendering a pre-chorus with the PreChorus
-        # style. s03b now says so itself, so the two agree.
+        # These pinned s03b's internal map value, not what a listener saw: s05
+        # was already rendering a pre-chorus with the PreChorus style. s03b now
+        # says so itself, so the two agree.
         ("pre-chorus 2","prechorus"),("pre-chorus 3","prechorus"),("pre-chorus 4","prechorus"),
         ("hook 2","chorus"),("hook 3","chorus"),("drop 3","chorus"),("drop 4","chorus"),
         ("bridge 2","bridge"),("verse (2)","verse"),("verse (3)","verse"),
@@ -413,14 +413,16 @@ def test_parse_known_after_unknown_restores_style():
 # _parse_lyrics — inline stripping
 # -----------------------------------------------------------------
 
-def test_parse_inline_parens_stripped():
-    heading("_parse_lyrics — inline (directions) stripped")
-    lf = _lf("[Chorus]\n(Please stop) Cause Im here (backing vocal)\nOh Fuck (screaming)\n")
+def test_parse_inline_parens_preserved():
+    heading("_parse_lyrics — inline parenthetical lyrics preserved")
+    lf = _lf("[Chorus]\nCause Im here (break in, break in)\nOh Fuck (screaming)\n")
     try:
         lines = _parse_lyrics(lf)
-        for line in lines:
-            check('(' not in line['text'] and ')' not in line['text'],
-                  f"No parens in '{line['text']}'")
+        texts = [line['text'] for line in lines]
+        check('Cause Im here (break in, break in)' in texts,
+              "Parenthetical lyric preserved")
+        check('Oh Fuck (screaming)' in texts,
+              "Inline parenthetical preserved by default")
     finally: _rm(lf)
 
 
@@ -584,7 +586,7 @@ I must carry on
 
 
 def test_parse_suno_adlib_patterns():
-    heading("_parse_lyrics — Suno adlib/backing stripped")
+    heading("_parse_lyrics — Suno adlib/backing handling")
     lf = _lf("""[Chorus]
 (adbl
 Cause Im still here
@@ -595,9 +597,9 @@ Carry on
 """)
     try:
         lines = _parse_lyrics(lf)
-        for line in lines:
-            check('(' not in line['text'] and ')' not in line['text'],
-                  f"Adlib stripped: '{line['text']}'")
+        texts = [line['text'] for line in lines]
+        check('(adbl' not in texts, "Unclosed parenthetical line skipped")
+        check('(Please stop move)' in texts, "Closed parenthetical lyric preserved")
     finally: _rm(lf)
 
 
@@ -903,7 +905,7 @@ def main() -> int:
     test_parse_known_after_unknown_restores_style()
 
     # _parse_lyrics — stripping
-    test_parse_inline_parens_stripped()
+    test_parse_inline_parens_preserved()
     test_parse_inline_brackets_stripped()
     test_parse_apostrophes_preserved()
     test_parse_purely_inline_line_skipped()

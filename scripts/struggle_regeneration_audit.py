@@ -20,6 +20,8 @@ JOBS_ROOT = PROJECT_ROOT / "jobs"
 DEFAULT_REPORT = PROJECT_ROOT / ".Codex" / "tasks" / "struggle-regeneration-report.md"
 DERIVED_ARTIFACTS = (
     "analysis.json",
+    "syllable_map.json",
+    "syllable_alignment.json",
     "output.ass",
     "output.ass.manifest.json",
     "output.mp4",

@@ -45,6 +45,33 @@ class CodeQualityContracts(unittest.TestCase):
 
         self.assertNotIn("_run_stage", functions)
 
+    def test_json_write_text_calls_pin_utf8_encoding(self):
+        paths = [PROJECT_ROOT / "server.py", *sorted((PROJECT_ROOT / "scripts").glob("*.py"))]
+        missing = []
+
+        for path in paths:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if not (isinstance(node.func, ast.Attribute) and node.func.attr == "write_text"):
+                    continue
+                if not node.args:
+                    continue
+                payload = node.args[0]
+                if not (
+                    isinstance(payload, ast.Call)
+                    and isinstance(payload.func, ast.Attribute)
+                    and isinstance(payload.func.value, ast.Name)
+                    and payload.func.value.id == "json"
+                    and payload.func.attr == "dumps"
+                ):
+                    continue
+                if not any(keyword.arg == "encoding" for keyword in node.keywords):
+                    missing.append(f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}")
+
+        self.assertEqual(missing, [])
+
 
 if __name__ == "__main__":
     unittest.main()
