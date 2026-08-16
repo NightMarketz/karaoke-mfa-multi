@@ -571,6 +571,27 @@ class SyllableWordBoundsTests(unittest.TestCase):
 
         self.assertEqual(aligned, [])
 
+    def test_min_floor_does_not_stretch_a_syllable_over_the_next_one(self):
+        # 'coragem' in job publi-bet: the 'co' phone lasts 7ms, the floor stretches
+        # it to 80ms, and the 'ra' vowel starts 26ms in — the fill ran backwards.
+        word = {
+            "word": "cora",
+            "start": 0.0,
+            "end": 1.5,
+            "source": "ctc_forced+hubertfa",
+            "phonemes": [
+                {"ph": "K", "start": 0.00, "end": 0.05},
+                {"ph": "OW", "start": 0.05, "end": 0.06},
+                {"ph": "R", "start": 0.06, "end": 0.08},
+                {"ph": "AA", "start": 0.08, "end": 0.30},
+            ],
+        }
+
+        _, aligned = self._project(word)
+
+        self.assertEqual(2, len(aligned))
+        self.assertLessEqual(aligned[0]["end"], aligned[1]["start"])
+
     def test_word_whose_vowel_falls_past_word_end_renders_as_single_highlight(self):
         word = {
             "word": "vai",

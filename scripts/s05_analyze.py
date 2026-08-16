@@ -263,10 +263,17 @@ def _project_word_syllables(
     # disagree, so every projected span is clamped into the word (§8). A span that
     # collapses under the clamp means the phones landed outside the word entirely —
     # emit no timed syllables and let the word render as one highlight.
+    vowel_starts = [
+        next((phone["start"] for phone in group if syllables.is_vowel_phone(phone)), group[0]["start"])
+        for group in groups
+    ]
     spans = []
-    for group in groups:
-        vowel_start = next((phone["start"] for phone in group if syllables.is_vowel_phone(phone)), group[0]["start"])
+    for index, group in enumerate(groups):
+        vowel_start = vowel_starts[index]
         karaoke_end = _floored_span(vowel_start, group[-1]["end"], word_end, floor_s)
+        # The floor must not run over where the next syllable starts singing.
+        if index + 1 < len(groups):
+            karaoke_end = min(karaoke_end, vowel_starts[index + 1])
         span_start = min(max(vowel_start, word_start), word_end)
         spans.append((span_start, min(max(karaoke_end, span_start), word_end)))
     if any(end - start < MIN_SYLLABLE_SPAN_S for start, end in spans):
