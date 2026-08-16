@@ -156,6 +156,36 @@ class AssGenerationTests(unittest.TestCase):
         self.assertIn("\\k122}", text)
         self.assertEqual(0, text.count(" "), text)  # nothing to separate
 
+    def _verse_style_line(self, resolution: str) -> list[str]:
+        from scripts.s06_generate_ass import _generate_ass
+
+        content = _generate_ass(
+            lines=[self._sample_line()],
+            styles=PRESETS["section-coded"],
+            resolution=resolution,
+            fade_in_ms=300,
+            fade_out_ms=500,
+        )
+        line = next(l for l in content.splitlines() if l.startswith("Style: Verse,"))
+        return line.split(",")
+
+    def test_style_pixels_scale_with_the_render_height(self):
+        # Presets are drawn against 720p. At 1080p an unscaled 52px verse was
+        # 4.8% of frame height instead of 7.2%, and the side margin was a flat
+        # 20px on a 1920px frame.
+        from scripts.karaoke_styles.library import PRESETS as LIB
+
+        verse = LIB["section-coded"]["verse"]
+        at720 = self._verse_style_line("1280x720")
+        at1080 = self._verse_style_line("1920x1080")
+
+        # fields: Name,Fontname,Fontsize,...,MarginL,MarginR,MarginV,Encoding
+        self.assertEqual(str(verse.fontsize), at720[2])
+        self.assertEqual(str(round(verse.fontsize * 1.5)), at1080[2])
+        self.assertEqual(str(round(verse.margin_v * 1.5)), at1080[-2])
+        self.assertEqual(["64", "64"], at720[-4:-2])
+        self.assertEqual(["96", "96"], at1080[-4:-2])
+
     def test_section_coded_preset_exists(self):
         self.assertIn("section-coded", PRESETS)
         self.assertIn("drop", PRESETS["section-coded"])

@@ -74,6 +74,13 @@ logger = logging.getLogger(__name__)
 from scripts.karaoke_styles.library import PRESETS, KaraokeStyle
 from scripts.karaoke_styles.effects import syllable_ass
 
+# Preset pixel values (fontsize, outline, shadow, margin_v) are authored
+# against this canvas height and scaled to whatever the render asks for.
+DESIGN_HEIGHT = 720
+# Side margin as a share of frame width, so a long line wraps before the edge
+# instead of at the flat 20px the style line used to carry.
+SIDE_MARGIN_RATIO = 0.05
+
 
 # ---------------------------------------------------------------------------
 # ASS file builder (manual — pysubs2 for reading, direct write for control)
@@ -276,15 +283,19 @@ def _generate_ass(
     r"""
     Build complete ASS file content as a string.
 
-    Uses dual-layer technique:
-        Layer 0 — base layer: full line text, no \kf tags, always visible
-        Layer 1 — kf layer:   \kf tagged text, progressive fill on top
+    One visible layer per line: the \kf run keeps the not-yet-sung text on
+    screen and fills it left to right.
 
-    This produces the classic "light up as you sing" effect without
-    the text disappearing between syllables.
+    Every pixel value in a preset is authored against a 720p canvas, so they
+    are scaled by height/720 on the way out. Without it a 1080p render put the
+    verse at 4.8% of frame height instead of the 7.2% the presets were drawn
+    for, and the side margins were a flat 20px — a line could run to 1880 of
+    1920px before wrapping.
     """
     _cfg = app_config if app_config is not None else load_app_config()
     width, height = resolution.split("x")
+    scale = int(height) / DESIGN_HEIGHT
+    margin_lr = round(int(width) * SIDE_MARGIN_RATIO)
 
     # ── Script Info ────────────────────────────────────────────────────────
     script_info = f"""[Script Info]
@@ -313,11 +324,12 @@ YCbCr Matrix: TV.601
         # single write point.
         style_lines.append(
             f"Style: {s.name},"
-            f"{s.fontname},{s.fontsize},"
+            f"{s.fontname},{round(s.fontsize * scale)},"
             f"{s.secondary_color},{s.primary_color},{s.outline_color},{s.back_color},"
             f"{_bool_to_ass(s.bold)},{_bool_to_ass(s.italic)},0,0,"
-            f"100,100,0,0,{s.border_style},{s.outline},{s.shadow},"
-            f"{s.alignment},20,20,{s.margin_v},1"
+            f"100,100,0,0,{s.border_style},"
+            f"{round(s.outline * scale, 1)},{round(s.shadow * scale, 1)},"
+            f"{s.alignment},{margin_lr},{margin_lr},{round(s.margin_v * scale)},1"
         )
 
     styles_section = "\n".join(style_lines)
