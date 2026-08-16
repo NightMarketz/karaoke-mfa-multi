@@ -1476,16 +1476,21 @@ AEGISUB_STAGE_LIGHTS_STYLES: dict[str, KaraokeStyle] = {
         margin_v=42,
     ),
 }
-STYLE_DEFAULTS: dict[str, dict[str, str]] = {
-    "intro": {"color": "soft", "effect": "fade_in"},
-    "verse": {"color": "default", "effect": "highlight"},
-    "prechorus": {"color": "warm", "effect": "highlight"},
-    "chorus": {"color": "intense", "effect": "highlight"},
-    "bridge": {"color": "cool", "effect": "highlight"},
-    "drop": {"color": "warm", "effect": "highlight"},
-    "outro": {"color": "warm", "effect": "fade_in"},
-    "rap": {"color": "default", "effect": "highlight"},
-    "ad_lib": {"color": "soft", "effect": "none"},
+# The syllable effect each style key sings with. Two values on purpose: the
+# sweep for lyrics, an instant fill for ad-libs. The old table also carried a
+# "color" name per style that no renderer ever read, and a "fade_in" that
+# libass discarded (a line-scoped \fad already comes from the event itself,
+# and the first one wins).
+STYLE_EFFECTS: dict[str, str] = {
+    "intro": "highlight",
+    "verse": "highlight",
+    "prechorus": "highlight",
+    "chorus": "highlight",
+    "bridge": "highlight",
+    "drop": "highlight",
+    "outro": "highlight",
+    "rap": "highlight",
+    "ad_lib": "none",
 }
 
 PRESET_LIBRARY: dict[str, StylePreset] = {
@@ -1825,7 +1830,7 @@ def list_preset_metadata() -> list[dict[str, object]]:
 
 
 def supported_style_keys() -> set[str]:
-    return set(STYLE_DEFAULTS.keys())
+    return set(STYLE_EFFECTS.keys())
 
 
 def is_supported_style(style: object) -> bool:

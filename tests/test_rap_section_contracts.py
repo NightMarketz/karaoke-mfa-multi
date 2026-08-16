@@ -6,7 +6,7 @@ from pathlib import Path
 from scripts.s03b_lyrics_align import SECTION_TO_STYLE, _parse_lyrics
 from scripts.karaoke_styles.library import (
     PRESET_LIBRARY,
-    STYLE_DEFAULTS,
+    STYLE_EFFECTS,
     supported_style_keys,
 )
 
@@ -40,7 +40,7 @@ class RapSectionTests(unittest.TestCase):
 class RapStyleKeyTests(unittest.TestCase):
     def test_rap_is_a_supported_style_key(self):
         self.assertIn("rap", supported_style_keys())
-        self.assertIn("rap", STYLE_DEFAULTS)
+        self.assertIn("rap", STYLE_EFFECTS)
 
     def test_rap_section_maps_to_the_rap_style(self):
         self.assertEqual("rap", SECTION_TO_STYLE["rap"])

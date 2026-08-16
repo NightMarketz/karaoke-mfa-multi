@@ -7,13 +7,13 @@ Two modes of operation:
      When transcript.json comes from s03b_lyrics_align.py, every segment
      already maps 1:1 to a lyric line and carries a section label.
      Stage 05 builds analysis.json deterministically — no LLM needed.
-     Style is derived from the section label, color/effect from a lookup
-     table. This guarantees N segments → N display lines with zero
-     hallucination risk.
+     Style is derived from the section label, the syllable effect from
+     STYLE_EFFECTS. This guarantees N segments → N display lines with
+     zero hallucination risk.
 
   2. WHISPER PATH (alignment_mode != "forced"):
      Falls back to the LLM (Ollama) to group words into display lines,
-     assign style/color/effect. Retries on malformed JSON, then falls
+     assign style/effect. Retries on malformed JSON, then falls
      back to a rule-based grouper if the LLM fails completely.
 
 Output schema (analysis.json):
@@ -24,8 +24,7 @@ Output schema (analysis.json):
                 "start":  1.24,
                 "end":    4.80,
                 "style":  "verse",        // verse|chorus|bridge|intro|outro|rap|ad_lib
-                "color":  "default",      // default|warm|cool|intense|soft
-                "effect": "highlight",    // highlight|fade_in|bounce|none
+                "effect": "highlight",    // highlight|none
                 "words":  [
                     {"word": "never", "start": 1.24, "end": 1.58},
                     ...
@@ -64,7 +63,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
 from scripts import syllables
-from scripts.karaoke_styles.library import supported_style_keys
+from scripts.karaoke_styles.library import STYLE_EFFECTS, supported_style_keys
 from scripts.common.config import load_app_config
 from scripts.common.observability import write_event
 from scripts.common.validation import find_timestamp_errors
@@ -205,19 +204,6 @@ SECTION_TO_STYLE: dict[str, str] = {
     "guitar solo":   "bridge",
     "rap":           "rap",
 }
-
-STYLE_DEFAULTS: dict[str, dict[str, str]] = {
-    "intro":   {"color": "soft",    "effect": "fade_in"},
-    "verse":   {"color": "default", "effect": "highlight"},
-    "prechorus": {"color": "warm",  "effect": "highlight"},
-    "chorus":  {"color": "intense", "effect": "highlight"},
-    "bridge":  {"color": "cool",    "effect": "highlight"},
-    "drop":    {"color": "warm",    "effect": "highlight"},
-    "outro":   {"color": "warm",    "effect": "fade_in"},
-    "rap":     {"color": "default", "effect": "highlight"},
-    "ad_lib":  {"color": "soft",    "effect": "none"},
-}
-
 
 SYLLABLE_TIMING_MODE = "projected_from_stage04_phonemes"
 SYLLABLE_ALIGNMENT_SOURCE = "stage05_word_phoneme_projection"
@@ -407,15 +393,13 @@ def _segment_aware_grouper(
         # The map below is the fallback for transcripts written before s03b
         # started carrying the style, and it disagrees on 31 of those labels.
         style    = seg.get("style") or SECTION_TO_STYLE.get(section, "verse")
-        defaults = STYLE_DEFAULTS.get(style, STYLE_DEFAULTS["verse"])
 
         lines.append({
             "text":   seg.get("text", " ".join(w["word"] for w in seg_words)),
             "start":  seg_words[0]["start"],
             "end":    seg_words[-1]["end"],
             "style":  style,
-            "color":  defaults["color"],
-            "effect": defaults["effect"],
+            "effect": STYLE_EFFECTS.get(style, "highlight"),
             "words":  [
                 {"word": w["word"], "start": w["start"], "end": w["end"]}
                 for w in seg_words
@@ -429,7 +413,6 @@ def _segment_aware_grouper(
             "start":  leftover[0]["start"],
             "end":    leftover[-1]["end"],
             "style":  "ad_lib",
-            "color":  "soft",
             "effect": "none",
             "words":  [
                 {"word": w["word"], "start": w["start"], "end": w["end"]}
@@ -479,8 +462,7 @@ IMPORTANT: Map section labels to styles exactly:
    - Aim for lines that feel like natural lyric lines a singer would breathe between.
 2. For each line, assign:
    - "style": one of ["verse", "chorus", "bridge", "intro", "outro", "rap", "ad_lib"]
-   - "color": one of ["default", "warm", "cool", "intense", "soft"]
-   - "effect": one of ["highlight", "fade_in", "bounce", "none"]
+   - "effect": one of ["highlight", "none"]
 3. Choruses are usually the repeated hook section. Bridges are contrasting sections.
 
 CRITICAL RULES:
@@ -494,7 +476,6 @@ Output format (JSON only):
   "lines": [
     {{
       "style": "verse",
-      "color": "default",
       "effect": "highlight",
       "word_indices": [0, 1, 2, 3, 4]
     }}
@@ -608,7 +589,6 @@ def _parse_gemma_response(raw: str, words: list[dict]) -> list[dict] | None:
             "start":  line_words[0]["start"],
             "end":    line_words[-1]["end"],
             "style":  line_data.get("style",  "verse"),
-            "color":  line_data.get("color",  "default"),
             "effect": line_data.get("effect", "highlight"),
             "words":  [
                 {"word": w["word"], "start": w["start"], "end": w["end"]}
@@ -646,7 +626,6 @@ def _rule_based_grouper(words: list[dict]) -> list[dict]:
             "start":  chunk[0]["start"],
             "end":    chunk[-1]["end"],
             "style":  "verse",
-            "color":  "default",
             "effect": "highlight",
             "words":  [
                 {"word": w["word"], "start": w["start"], "end": w["end"]}

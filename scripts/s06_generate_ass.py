@@ -10,18 +10,16 @@ to PrimaryColour, so PrimaryColour (\1c) = already-sung fill and SecondaryColour
 (primary_color = waiting, secondary_color = sung fill); _generate_ass swaps
 them onto the ASS Style line so the sweep lands the intended color.
 
-Style map (from analysis.json → ASS style):
-    verse   → medium size, white/cyan
-    chorus  → large, bold, white/yellow — visually dominant
-    bridge  → italic, white/magenta
-    intro   → small, gray/white — understated
-    outro   → small, gray/white — understated
-    ad_lib  → small, italic, white/green — differentiated
+Every style definition lives in scripts/karaoke_styles/library.py; this stage
+only maps analysis.json's per-line style key onto the preset and writes the
+file. line["style"] that the preset does not define falls back to "verse".
 
-Each line gets:
-    - \an8 positioning (top center) or \an2 (bottom center, configurable)
-    - \fad(300, 500) fade in/out
-    - \pos override if --position=custom
+Placement comes from the style itself — Alignment (2 = bottom centre in every
+shipped preset) plus MarginV. No \an or \pos override is emitted, so a player
+honouring the style's own margins renders what the preset asked for.
+
+Each line gets one \fad(fade_in, fade_out) and the \kf run built from its
+words.
 
 Usage:
     python scripts/s06_generate_ass.py --job-dir jobs/my-job
@@ -43,7 +41,6 @@ import json
 import logging
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -71,347 +68,10 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Style definitions
+# Style library (single source of truth — scripts/karaoke_styles/)
 # ---------------------------------------------------------------------------
 
-@dataclass
-class KaraokeStyle:
-    r"""
-    One ASS style definition. Field names are designer-facing intent;
-    _generate_ass swaps primary/secondary onto the ASS Style line because
-    libass sweeps \kf from SecondaryColour to PrimaryColour.
-    primary_color   = not-yet-sung text color   (written to \2c)  &HBBGGRR&
-    secondary_color = progressive fill color    (written to \1c)  filled by \kf
-    outline_color   = border                    (\3c)
-    back_color      = shadow/background         (\4c)
-    """
-    name:            str
-    fontname:        str
-    fontsize:        int
-    bold:            bool
-    italic:          bool
-    primary_color:   str   # &HBBGGRR&
-    secondary_color: str
-    outline_color:   str
-    back_color:      str
-    outline:         float
-    shadow:          float
-    alignment:       int   # 2=bottom-center, 8=top-center
-    margin_v:        int   # vertical margin in pixels
-    border_style:    int = 1  # 1=Outline+Shadow, 3=Opaque Box
-    flash_on_highlight: bool = False  # True = \bord8 glitch pulse fires on each word
-
-
-# ASS color format: &HAABBGGRR (alpha + BGR, not RGB)
-# AA=00 means fully opaque
-
-def _c(r: int, g: int, b: int, a: int = 0) -> str:
-    """Convert RGBA to ASS &HAABBGGRR format."""
-    return f"&H{a:02X}{b:02X}{g:02X}{r:02X}"
-
-
-# ── Preset: default (clean professional) ──────────────────────────────────
-
-DEFAULT_STYLES: dict[str, KaraokeStyle] = {
-    "verse": KaraokeStyle(
-        name            = "Verse",
-        fontname        = "Segoe UI Bold",
-        fontsize        = 52,
-        bold            = True,
-        italic          = False,
-        primary_color   = _c(220, 220, 220),   # light gray — waiting
-        secondary_color = _c(0,   220, 255),   # cyan  — sung fill
-        outline_color   = _c(0,   0,   0),     # black border
-        back_color      = _c(0,   0,   0, 80), # semi-transparent shadow
-        outline         = 2.5,
-        shadow          = 1.5,
-        alignment       = 2,
-        margin_v        = 40,
-    ),
-    "chorus": KaraokeStyle(
-        name            = "Chorus",
-        fontname        = "Segoe UI Bold",
-        fontsize        = 64,
-        bold            = True,
-        italic          = False,
-        primary_color   = _c(255, 255, 255),   # white — waiting
-        secondary_color = _c(0,   200, 255),   # bright cyan — sung
-        outline_color   = _c(0,   60,  120),   # deep blue border
-        back_color      = _c(0,   0,   0, 60),
-        outline         = 3.0,
-        shadow          = 2.0,
-        alignment       = 2,
-        margin_v        = 40,
-    ),
-    "bridge": KaraokeStyle(
-        name            = "Bridge",
-        fontname        = "Segoe UI Bold",
-        fontsize        = 50,
-        bold            = True,
-        italic          = True,
-        primary_color   = _c(210, 210, 255),   # lavender — waiting
-        secondary_color = _c(200, 100, 255),   # purple — sung
-        outline_color   = _c(0,   0,   0),
-        back_color      = _c(0,   0,   0, 80),
-        outline         = 2.5,
-        shadow          = 1.5,
-        alignment       = 2,
-        margin_v        = 40,
-    ),
-    "intro": KaraokeStyle(
-        name            = "Intro",
-        fontname        = "Segoe UI Bold",
-        fontsize        = 40,
-        bold            = False,
-        italic          = False,
-        primary_color   = _c(180, 180, 180),   # gray — understated
-        secondary_color = _c(200, 200, 200),   # light gray
-        outline_color   = _c(0,   0,   0),
-        back_color      = _c(0,   0,   0, 100),
-        outline         = 2.0,
-        shadow          = 1.0,
-        alignment       = 2,
-        margin_v        = 40,
-    ),
-    "outro": KaraokeStyle(
-        name            = "Outro",
-        fontname        = "Segoe UI Bold",
-        fontsize        = 40,
-        bold            = False,
-        italic          = False,
-        primary_color   = _c(180, 180, 180),
-        secondary_color = _c(200, 200, 200),
-        outline_color   = _c(0,   0,   0),
-        back_color      = _c(0,   0,   0, 100),
-        outline         = 2.0,
-        shadow          = 1.0,
-        alignment       = 2,
-        margin_v        = 40,
-    ),
-    "ad_lib": KaraokeStyle(
-        name            = "AdLib",
-        fontname        = "Segoe UI Bold",
-        fontsize        = 38,
-        bold            = True,
-        italic          = True,
-        primary_color   = _c(200, 255, 200),   # light green
-        secondary_color = _c(50,  255, 100),   # bright green — sung
-        outline_color   = _c(0,   60,  0),
-        back_color      = _c(0,   0,   0, 100),
-        outline         = 2.0,
-        shadow          = 1.0,
-        alignment       = 2,
-        margin_v        = 40,
-    ),
-}
-
-# ── Preset: neon (Original Neon) ───────────────────────────────────────────
-
-NEON_STYLES: dict[str, KaraokeStyle] = {
-    k: KaraokeStyle(
-        name            = v.name,
-        fontname        = "Segoe UI Bold",
-        fontsize        = v.fontsize + 4,
-        bold            = True,
-        italic          = v.italic,
-        primary_color   = _c(40, 40, 40),      # near-black — waiting
-        secondary_color = _c(0, 255, 180),     # neon teal — sung
-        outline_color   = _c(0, 200, 120),
-        back_color      = _c(0, 0, 0, 60),
-        outline         = 3.0,
-        shadow          = 0.0,
-        alignment       = v.alignment,
-        margin_v        = v.margin_v,
-    )
-    for k, v in DEFAULT_STYLES.items()
-}
-
-# Chorus gets special neon treatment
-NEON_STYLES["chorus"] = KaraokeStyle(
-    name            = "Chorus",
-    fontname        = "Segoe UI Bold",
-    fontsize        = 68,
-    bold            = True,
-    italic          = False,
-    primary_color   = _c(60, 60, 60),
-    secondary_color = _c(255, 220, 0),     # neon yellow
-    outline_color   = _c(180, 140, 0),
-    back_color      = _c(0, 0, 0, 60),
-    outline         = 3.5,
-    shadow          = 0.0,
-    alignment       = 2,
-    margin_v        = 40,
-)
-
-# ── Preset: cyberpunk (Premium Synthwave) ───────────────────────────────────
-
-CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
-    "verse": KaraokeStyle(
-        name               = "Verse",
-        fontname           = "Segoe UI Bold",
-        fontsize           = 52,
-        bold               = True,
-        italic             = False,
-        primary_color      = _c(123, 47, 190),   # Deep Purple (#7B2FBE) — waiting
-        secondary_color    = _c(0, 245, 255),     # Electric Cyan (#00F5FF) — sung
-        outline_color      = _c(0, 0, 0),
-        back_color         = _c(0, 0, 0, 150),
-        outline            = 2.5,
-        shadow             = 1.5,
-        alignment          = 2,
-        margin_v           = 50,
-        border_style       = 3,                   # Opaque Box for HUD/Bar look
-        flash_on_highlight = True,                # \bord8 glitch pulse per word
-    ),
-    "chorus": KaraokeStyle(
-        name               = "Chorus",
-        fontname           = "Segoe UI Bold",
-        fontsize           = 64,
-        bold               = True,
-        italic             = False,
-        primary_color      = _c(255, 255, 255),   # White — waiting
-        secondary_color    = _c(0, 245, 255),     # Electric Cyan — sung
-        outline_color      = _c(123, 47, 190),    # Purple border
-        back_color         = _c(0, 0, 0, 150),
-        outline            = 3.0,
-        shadow             = 2.0,
-        alignment          = 2,
-        margin_v           = 50,
-        border_style       = 3,                   # Opaque Box
-        flash_on_highlight = True,                # \bord8 glitch pulse per word
-    ),
-    "bridge": KaraokeStyle(
-        name               = "Bridge",
-        fontname           = "Segoe UI Bold",
-        fontsize           = 52,
-        bold               = True,
-        italic             = True,
-        primary_color      = _c(180, 0, 180),
-        secondary_color    = _c(255, 255, 255),   # \kf fill goes white — natural flash
-        outline_color      = _c(0, 0, 0),
-        back_color         = _c(0, 0, 0, 150),
-        outline            = 2.0,
-        shadow             = 1.0,
-        alignment          = 2,
-        margin_v           = 50,
-        border_style       = 3,                   # Opaque Box
-        flash_on_highlight = False,               # italic+bord8 fica pesado; \kf fill é suficiente
-    ),
-    "intro":  DEFAULT_STYLES["intro"],
-    "outro":  DEFAULT_STYLES["outro"],
-    "ad_lib": DEFAULT_STYLES["ad_lib"],
-}
-
-SECTION_CODED_STYLES: dict[str, KaraokeStyle] = {
-    "intro": KaraokeStyle(
-        name="Intro",
-        fontname="Segoe UI Bold",
-        fontsize=44,
-        bold=False,
-        italic=False,
-        primary_color=_c(190, 220, 220),
-        secondary_color=_c(90, 210, 220),
-        outline_color=_c(0, 40, 48),
-        back_color=_c(0, 0, 0, 90),
-        outline=2.0,
-        shadow=1.0,
-        alignment=2,
-        margin_v=42,
-    ),
-    "verse": KaraokeStyle(
-        name="Verse",
-        fontname="Segoe UI Bold",
-        fontsize=52,
-        bold=True,
-        italic=False,
-        primary_color=_c(245, 245, 245),
-        secondary_color=_c(255, 255, 255),
-        outline_color=_c(20, 20, 20),
-        back_color=_c(0, 0, 0, 80),
-        outline=2.4,
-        shadow=1.2,
-        alignment=2,
-        margin_v=42,
-    ),
-    "prechorus": KaraokeStyle(
-        name="PreChorus",
-        fontname="Segoe UI Bold",
-        fontsize=54,
-        bold=True,
-        italic=False,
-        primary_color=_c(255, 245, 190),
-        secondary_color=_c(255, 220, 40),
-        outline_color=_c(70, 54, 0),
-        back_color=_c(0, 0, 0, 80),
-        outline=2.5,
-        shadow=1.2,
-        alignment=2,
-        margin_v=42,
-    ),
-    "chorus": KaraokeStyle(
-        name="Chorus",
-        fontname="Segoe UI Bold",
-        fontsize=64,
-        bold=True,
-        italic=False,
-        primary_color=_c(255, 235, 248),
-        secondary_color=_c(255, 70, 190),
-        outline_color=_c(90, 0, 52),
-        back_color=_c(0, 0, 0, 70),
-        outline=3.0,
-        shadow=1.6,
-        alignment=2,
-        margin_v=42,
-    ),
-    "bridge": KaraokeStyle(
-        name="Bridge",
-        fontname="Segoe UI Bold",
-        fontsize=52,
-        bold=True,
-        italic=True,
-        primary_color=_c(220, 255, 225),
-        secondary_color=_c(80, 220, 120),
-        outline_color=_c(0, 55, 20),
-        back_color=_c(0, 0, 0, 80),
-        outline=2.5,
-        shadow=1.2,
-        alignment=2,
-        margin_v=42,
-    ),
-    "drop": KaraokeStyle(
-        name="Drop",
-        fontname="Segoe UI Bold",
-        fontsize=60,
-        bold=True,
-        italic=False,
-        primary_color=_c(255, 235, 210),
-        secondary_color=_c(255, 130, 40),
-        outline_color=_c(80, 34, 0),
-        back_color=_c(0, 0, 0, 80),
-        outline=3.0,
-        shadow=1.4,
-        alignment=2,
-        margin_v=42,
-    ),
-    "outro": KaraokeStyle(
-        name="Outro",
-        fontname="Segoe UI Bold",
-        fontsize=44,
-        bold=False,
-        italic=False,
-        primary_color=_c(190, 205, 235),
-        secondary_color=_c(110, 150, 220),
-        outline_color=_c(0, 25, 70),
-        back_color=_c(0, 0, 0, 90),
-        outline=2.0,
-        shadow=1.0,
-        alignment=2,
-        margin_v=42,
-    ),
-    "ad_lib": DEFAULT_STYLES["ad_lib"],
-}
-
-from scripts.karaoke_styles.library import PRESETS
+from scripts.karaoke_styles.library import PRESETS, KaraokeStyle
 from scripts.karaoke_styles.effects import syllable_ass
 
 
@@ -579,66 +239,26 @@ def _build_karaoke_text(
 
     return " ".join(visual_parts).strip()
 
-    parts = []
-    prev_end_ms = line_start_ms
 
-    for word in words:
-        segments = build_word_highlight_segments(word)
-        if not segments:
-            continue
+def _raw_display_window(line: dict, cfg) -> tuple[int, int]:
+    """Pre-roll/post-roll window for one line, before overlap clamping."""
+    start_ms = int(line["start"] * 1000)
+    end_ms = int(line["end"] * 1000)
+    return max(0, start_ms - cfg.generate_ass_preroll_ms), end_ms + cfg.generate_ass_postroll_ms
 
-        start_ms = int(min(float(segment["start"]) for segment in segments) * 1000)
-        end_ms = int(max(float(segment["end"]) for segment in segments) * 1000)
 
-        # Apply minimum duration floor
-        if end_ms - start_ms < MIN_WORD_MS:
-            end_ms = start_ms + MIN_WORD_MS
-
-        # Gap before this word — consume with \k0 (no visual change)
-        gap_cs = max(0, (start_ms - prev_end_ms) // 10)
-        if gap_cs > 0:
-            parts.append(f"{{\\k{gap_cs}}}")
-
-        word_parts = []
-        segment_prev_end_ms = start_ms
-        for segment in segments:
-            visible_segment = _escape_ass_text(str(segment["text"]))
-            if not visible_segment:
-                continue
-            segment_start_ms = int(float(segment["start"]) * 1000)
-            segment_end_ms = int(float(segment["end"]) * 1000)
-            if segment_end_ms - segment_start_ms < MIN_WORD_MS:
-                segment_end_ms = segment_start_ms + MIN_WORD_MS
-            segment_gap_cs = max(0, (segment_start_ms - segment_prev_end_ms) // 10)
-            if segment_gap_cs > 0:
-                word_parts.append(f"{{\\k{segment_gap_cs}}}")
-
-            duration_cs = max(1, (segment_end_ms - segment_start_ms) // 10)
-
-            if effect == "fade_in":
-                word_parts.append(f"{{\\fad(500,0)\\be1\\kf{duration_cs}}}{visible_segment}")
-            elif effect == "bounce":
-                word_parts.append(f"{{\\be1\\t(\\fscx115\\fscy115)\\t(\\fscx100\\fscy100)\\kf{duration_cs}}}{visible_segment}")
-            elif effect == "flash" or (effect == "highlight" and use_flash_default):
-                # Glitch/Digital flash: large border shrinks fast to normal
-                word_parts.append(f"{{\\bord8\\t(0,200,\\bord2)\\be1\\kf{duration_cs}}}{visible_segment}")
-            elif effect == "none":
-                word_parts.append(f"{{\\k{duration_cs}}}{visible_segment}")
-            else:
-                # Default: clean \kf fill, no flash
-                # (flash branch above already handles effect=="flash" and use_flash_default)
-                word_parts.append(f"{{\\be1\\kf{duration_cs}}}{visible_segment}")
-            segment_prev_end_ms = segment_end_ms
-
-        if word_parts:
-            parts.append("".join(word_parts))
-
-        prev_end_ms = end_ms
-
-    return " ".join(
-        p if p.startswith("{") else p
-        for p in parts
-    ).strip()
+def _display_windows(lines: list[dict], cfg) -> list[tuple[int, int]]:
+    """Display window per line, each end clamped so it cannot reach the next
+    line's start. One implementation, so the manifest metric below cannot
+    drift from what actually gets written."""
+    windows = [_raw_display_window(line, cfg) for line in lines]
+    for i in range(len(windows) - 1):
+        start_curr, end_curr = windows[i]
+        start_next, _ = windows[i + 1]
+        limit = start_next - cfg.generate_ass_gap_ms
+        if end_curr > limit:
+            windows[i] = (start_curr, max(start_curr + 100, limit))
+    return windows
 
 
 def _bool_to_ass(b: bool) -> str:
@@ -706,24 +326,7 @@ YCbCr Matrix: TV.601
     event_lines = ["[Events]",
                    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
 
-    # Pre-compute display windows to enable overlap prevention.
-    # Each line's display_end is capped at the next line's display_start
-    # minus a 50ms gap to prevent visual collisions.
-    display_windows: list[tuple[int, int]] = []
-    for i, line in enumerate(lines):
-        start_ms = int(line["start"] * 1000)
-        end_ms   = int(line["end"]   * 1000)
-        dstart   = max(0, start_ms - _cfg.generate_ass_preroll_ms)
-        dend     = end_ms + _cfg.generate_ass_postroll_ms
-        display_windows.append((dstart, dend))
-
-    # Clamp each display_end so it does not overlap the next display_start
-    for i in range(len(display_windows) - 1):
-        dstart_curr, dend_curr = display_windows[i]
-        dstart_next, _         = display_windows[i + 1]
-        GAP_MS = _cfg.generate_ass_gap_ms
-        if dend_curr > dstart_next - GAP_MS:
-            display_windows[i] = (dstart_curr, max(dstart_curr + 100, dstart_next - GAP_MS))
+    display_windows = _display_windows(lines, _cfg)
 
     for i, line in enumerate(lines):
         style_key = line.get("style", "verse")
@@ -755,17 +358,6 @@ YCbCr Matrix: TV.601
     events_section = "\n".join(event_lines)
 
     return f"{script_info}\n{styles_section}\n\n{events_section}\n"
-
-
-def _parse_color(ass_color: str) -> tuple[int, int, int]:
-    """Extract R, G, B from &HAABBGGRR string."""
-    c = ass_color.lstrip("&H")
-    # Format: AABBGGRR
-    b = int(c[2:4], 16)
-    g = int(c[4:6], 16)
-    r = int(c[6:8], 16)
-    return r, g, b
-
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -855,22 +447,13 @@ def _audio_timing_diagnostics(audio_timings: list[dict[str, Any]]) -> list[dict[
     return diagnostics
 
 
-def _display_window_clamp_count(lines: list[dict]) -> int:
-    display_windows: list[tuple[int, int]] = []
-    for line in lines:
-        start_ms = int(line["start"] * 1000)
-        end_ms = int(line["end"] * 1000)
-        display_windows.append((max(0, start_ms - 200), end_ms + 300))
-
-    clamp_count = 0
-    for i in range(len(display_windows) - 1):
-        dstart_curr, dend_curr = display_windows[i]
-        dstart_next, _ = display_windows[i + 1]
-        if dend_curr > dstart_next - 50:
-            clamped_end = max(dstart_curr + 100, dstart_next - 50)
-            if clamped_end != dend_curr:
-                clamp_count += 1
-    return clamp_count
+def _display_window_clamp_count(lines: list[dict], cfg) -> int:
+    """How many lines had their display end pulled in by the next line."""
+    return sum(
+        1
+        for line, clamped in zip(lines, _display_windows(lines, cfg))
+        if _raw_display_window(line, cfg)[1] != clamped[1]
+    )
 
 
 def _update_status(job_dir: Path, stage: str, progress: int, error: str = "") -> None:
@@ -1159,7 +742,7 @@ def main() -> int:
     _stage06_event(
         job_dir,
         "stage06.timestamp_validation",
-        display_window_clamp_count=_display_window_clamp_count(lines),
+        display_window_clamp_count=_display_window_clamp_count(lines, app_config),
         line_count=len(lines),
         timing_layers=timing_summary,
         timing_diagnostics=timing_diagnostics["summary"],

@@ -426,7 +426,7 @@ def _run_pipeline(job_id: str) -> None:
     job_dir = resolve_job_dir(JOBS_DIR, job_id)
     write_event(job_dir, "pipeline_thread_started", "running", details={"job_id": job_id})
     meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
-    preset = meta.get("preset", "cyberpunk")
+    preset = meta.get("preset", DEFAULT_STYLE_PRESET_ID)
     runner = PipelineRunner(
         job_dir=job_dir,
         python_exe=sys.executable,
@@ -2004,7 +2004,7 @@ def _run_retry_validate(job_id: str) -> None:
     runner = PipelineRunner(
         job_dir=job_dir,
         python_exe=sys.executable,
-        preset=meta.get("preset", "cyberpunk"),
+        preset=meta.get("preset", DEFAULT_STYLE_PRESET_ID),
         running_registry=_running,
         job_id=job_id,
     )
