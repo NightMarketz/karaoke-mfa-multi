@@ -129,6 +129,33 @@ class AssGenerationTests(unittest.TestCase):
         self.assertNotIn("\\k8", text)
         self.assertNotIn("\\k12", text)
 
+    def test_long_inter_word_gap_keeps_a_single_space_between_words(self):
+        # A gap wide enough to survive absorption used to be emitted as its own
+        # space-padded part, burning as "the  tomb".
+        text = _build_karaoke_text(
+            [
+                {"word": "the", "start": 43.60, "end": 43.92},
+                {"word": "tomb", "start": 45.62, "end": 45.74},
+            ],
+            line_start_ms=43600,
+            effect="highlight",
+        )
+
+        self.assertIn("\\k170}", text)          # the gap is still consumed
+        self.assertNotIn("  ", text)            # but adds no second space
+        self.assertEqual(text, text.strip())    # and no leading/trailing space
+        self.assertEqual(1, text.count(" "))
+
+    def test_leading_silence_gap_does_not_indent_the_line(self):
+        text = _build_karaoke_text(
+            [{"word": "Breathing", "start": 37.22, "end": 38.38}],
+            line_start_ms=36000,
+            effect="highlight",
+        )
+
+        self.assertIn("\\k122}", text)
+        self.assertEqual(0, text.count(" "), text)  # nothing to separate
+
     def test_section_coded_preset_exists(self):
         self.assertIn("section-coded", PRESETS)
         self.assertIn("drop", PRESETS["section-coded"])

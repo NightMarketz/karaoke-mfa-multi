@@ -522,11 +522,15 @@ def _build_karaoke_text(
         should_absorb_gap = gap_policy is not None and gap_should_be_absorbed(gap_policy)
         visual_end_ms = max(end_ms, next_start_ms) if next_start_ms is not None and should_absorb_gap else end_ms
 
+        # The inter-word gap rides with the word that follows it. As its own
+        # part it picked up a space on each side from the join below and burned
+        # as "the  tomb" — the tag carries no glyph, so the second space was
+        # pure padding that widened with the pause.
+        word_parts = []
         gap_cs = max(0, (start_ms - prev_end_ms) // 10)
         if gap_cs > 0:
-            visual_parts.append(f"{{\\k{gap_cs}}}")
+            word_parts.append(f"{{\\k{gap_cs}}}")
 
-        word_parts = []
         segment_prev_end_ms = start_ms
         visible_segments = [segment for segment in segments if str(segment.get("text", ""))]
         segment_runs = []
@@ -564,13 +568,16 @@ def _build_karaoke_text(
             )
 
         if word_parts:
-            visual_parts.append("".join(word_parts))
+            chunk = "".join(word_parts)
+            if segment_runs or not visual_parts:
+                visual_parts.append(chunk)
+            else:
+                # Timing-only chunk (word had no visible text): glue it to the
+                # previous word so it never becomes a space-padded part.
+                visual_parts[-1] += chunk
         prev_end_ms = visual_end_ms
 
-    return " ".join(
-        p if p.startswith("{") else p
-        for p in visual_parts
-    ).strip()
+    return " ".join(visual_parts).strip()
 
     parts = []
     prev_end_ms = line_start_ms

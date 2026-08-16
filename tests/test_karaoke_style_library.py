@@ -257,6 +257,48 @@ class StyleLibraryEdgeCaseTests(unittest.TestCase):
         self.assertFalse(is_supported_effect("Highlight"))
         self.assertFalse(is_supported_effect("NONE"))
 
+    def test_section_coded_verse_sweep_is_visible(self):
+        # The waiting/sung pair used to be 245,245,245 -> 255,255,255: same hue,
+        # 4% apart in brightness, so the \kf fill was invisible on every verse
+        # line (14 of 79 lines in jobs/202605290001).
+        from scripts.karaoke_styles.library import get_preset
+
+        def rgb(ass_color: str) -> tuple[int, int, int]:
+            c = ass_color.lstrip("&H")
+            return int(c[6:8], 16), int(c[4:6], 16), int(c[2:4], 16)
+
+        style = get_preset("section-coded").styles["verse"]
+        waiting, sung = rgb(style.primary_color), rgb(style.secondary_color)
+        distance = max(abs(a - b) for a, b in zip(waiting, sung))
+
+        self.assertGreaterEqual(distance, 32, f"waiting={waiting} sung={sung}")
+        self.assertLess(sum(waiting), sum(sung), "sung fill must be the brighter state")
+
+    def test_every_preset_style_has_a_visible_kf_sweep(self):
+        # Waiting and sung must be perceptibly different colors or the \kf fill
+        # renders as no change at all. Presets disagree on direction (some sing
+        # brighter, clean-editorial and soft-pastel sing into a deeper tint), so
+        # the floor is on distance, not on which side is lighter.
+        from scripts.karaoke_styles.library import PRESET_LIBRARY
+
+        def rgb(ass_color: str) -> tuple[int, int, int]:
+            c = ass_color.lstrip("&H")
+            return int(c[6:8], 16), int(c[4:6], 16), int(c[2:4], 16)
+
+        checked = 0
+        weak = []
+        for preset_id, preset in PRESET_LIBRARY.items():
+            for style_key, style in preset.styles.items():
+                checked += 1
+                waiting, sung = rgb(style.primary_color), rgb(style.secondary_color)
+                distance = max(abs(a - b) for a, b in zip(waiting, sung))
+                if distance < 32:
+                    weak.append(f"{preset_id}/{style_key}: {waiting} -> {sung} (dist {distance})")
+
+        # Cardinality first: a fence over an empty set is green for free.
+        self.assertGreaterEqual(checked, 100, "style library shrank - check the fence still covers it")
+        self.assertEqual([], weak, f"{len(weak)} of {checked} styles have an invisible sweep")
+
     # ------------------------------------------------------------------
     # _c() color helper
     # ------------------------------------------------------------------

@@ -128,14 +128,18 @@ DEFAULT_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=40,
     ),
+    # intro/outro stay understated, but the sung fill is now a muted cyan from
+    # the preset's own palette instead of a 20-step of the same gray: the old
+    # 180->200 pair had no hue and no brightness, so the sweep did not read.
+    # cyberpunk aliases both of these, so it inherits the fix.
     "intro": KaraokeStyle(
         name="Intro",
         fontname="Segoe UI Bold",
         fontsize=40,
         bold=False,
         italic=False,
-        primary_color=_c(180, 180, 180),
-        secondary_color=_c(200, 200, 200),
+        primary_color=_c(215, 215, 215),
+        secondary_color=_c(80, 150, 175),
         outline_color=_c(0, 0, 0),
         back_color=_c(0, 0, 0, 100),
         outline=2.0,
@@ -149,8 +153,8 @@ DEFAULT_STYLES: dict[str, KaraokeStyle] = {
         fontsize=40,
         bold=False,
         italic=False,
-        primary_color=_c(180, 180, 180),
-        secondary_color=_c(200, 200, 200),
+        primary_color=_c(215, 215, 215),
+        secondary_color=_c(80, 150, 175),
         outline_color=_c(0, 0, 0),
         back_color=_c(0, 0, 0, 100),
         outline=2.0,
@@ -289,7 +293,11 @@ SECTION_CODED_STYLES: dict[str, KaraokeStyle] = {
         fontsize=52,
         bold=True,
         italic=False,
-        primary_color=_c(245, 245, 245),
+        # Waiting text is a cool gray, not near-white: the old 245->255 pair
+        # was a luminance ratio of 1.09 with no hue shift either, so the \kf
+        # sweep was invisible. Verse stays the neutral section, but the fill
+        # now reads as a step in brightness.
+        primary_color=_c(168, 176, 190),
         secondary_color=_c(255, 255, 255),
         outline_color=_c(20, 20, 20),
         back_color=_c(0, 0, 0, 80),
@@ -1155,14 +1163,20 @@ AEGISUB_DUAL_VOCAL_STYLES: dict[str, KaraokeStyle] = {
 }
 
 AEGISUB_CLEAN_EDITORIAL_STYLES: dict[str, KaraokeStyle] = {
+    # The preset's language is "sung = the deeper tinted tone" (chorus gold,
+    # bridge silver-blue, ad_lib sage). intro/verse/outro were the three
+    # neutrals that had no tint at all — a 16..28 step of the same gray, which
+    # left the sweep invisible. They now carry the same tints: cool blue for
+    # the quiet sections, warm sand for the verse (a softer sibling of the
+    # chorus gold, so it stays distinct from the blue bridge).
     "intro": KaraokeStyle(
         name="Intro",
         fontname="Arial",
         fontsize=40,
         bold=False,
         italic=False,
-        primary_color=_c(206, 210, 214),
-        secondary_color=_c(190, 194, 200),
+        primary_color=_c(212, 216, 220),
+        secondary_color=_c(118, 140, 164),
         outline_color=_c(28, 32, 36),
         back_color=_c(0, 0, 0, 82),
         outline=1.8,
@@ -1177,7 +1191,7 @@ AEGISUB_CLEAN_EDITORIAL_STYLES: dict[str, KaraokeStyle] = {
         bold=True,
         italic=False,
         primary_color=_c(246, 246, 246),
-        secondary_color=_c(230, 230, 230),
+        secondary_color=_c(196, 170, 116),
         outline_color=_c(30, 32, 34),
         back_color=_c(0, 0, 0, 72),
         outline=2.0,
@@ -1221,8 +1235,8 @@ AEGISUB_CLEAN_EDITORIAL_STYLES: dict[str, KaraokeStyle] = {
         fontsize=40,
         bold=False,
         italic=False,
-        primary_color=_c(196, 198, 202),
-        secondary_color=_c(168, 172, 178),
+        primary_color=_c(200, 202, 206),
+        secondary_color=_c(112, 130, 152),
         outline_color=_c(28, 32, 36),
         back_color=_c(0, 0, 0, 84),
         outline=1.8,
