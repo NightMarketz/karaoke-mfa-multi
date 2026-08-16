@@ -41,3 +41,10 @@ Thumbs.db
 
 # Logs
 *.log
+
+# GPU render spike: source is tracked, its build/render artefacts are not
+spike/gpu-karaoke/node_modules/
+spike/gpu-karaoke/out/
+spike/gpu-karaoke/public/
+spike/gpu-karaoke/package-lock.json
+spike/gpu-karaoke/src/song_data.json

@@ -139,7 +139,8 @@ def build_stage_plan(
         stages.append(
             Stage(
                 "rendering_gpu",
-                [py, str(scripts_dir / "s06b_render_gpu.py"), "--job-dir", str(job_dir)],
+                [py, str(scripts_dir / "s06b_render_gpu.py"), "--job-dir", str(job_dir),
+                 "--preset", preset],
                 70,
                 timeout=_gpu_timeout_s() + _BUFFER_S,
             )
@@ -189,14 +190,14 @@ class PipelineRunner:
         self,
         job_dir: Path,
         python_exe: str | None = None,
-        preset: str = "cyberpunk",
+        preset: str | None = None,
         running_registry: dict[str, object] | None = None,
         job_id: str | None = None,
         run_id: str | None = None,
     ) -> None:
         self.job_dir = job_dir
         self.python_exe = python_exe or sys.executable
-        self.preset = preset
+        self.preset = preset or load_app_config().generate_style_preset_id
         self.running_registry = running_registry
         self.job_id = job_id
         self.run_id = run_id or f"run-{uuid4().hex}"

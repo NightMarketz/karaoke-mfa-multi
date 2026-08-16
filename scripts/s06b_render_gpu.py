@@ -43,7 +43,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from scripts.common.observability import record_artifact, write_event
+from scripts.common.config import load_app_config
 from scripts.common.provenance import file_sha256, write_manifest
+from scripts.karaoke_styles.library import get_preset
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,7 @@ FPS = 30
 WIDTH, HEIGHT = 1920, 1080
 DEFAULT_WORK_DIR = "C:/rk"
 DEFAULT_APP_DIR = Path(__file__).resolve().parent.parent / "spike" / "gpu-karaoke"
+DEFAULT_STYLE_PRESET_ID = load_app_config().generate_style_preset_id
 # soundtrack preference: instrumental first (karaoke), then any mix, then vocals
 SOUNDTRACK_CANDIDATES = ("instrumental.wav", "no_vocals.wav", "accompaniment.wav", "input.wav", "vocals.wav")
 FONT_CANDIDATES = ("C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/arial.ttf")
@@ -64,6 +67,58 @@ def _render_gpu_cfg(path: str = "pipeline.toml") -> dict[str, Any]:
         data = tomllib.load(fh)
     section = data.get("render_gpu", {})
     return section if isinstance(section, dict) else {}
+
+
+def _hex(ass_color: str) -> str:
+    """ASS &HAABBGGRR -> #RRGGBB, the form three.js/troika wants."""
+    c = ass_color.lstrip("&H")
+    return f"#{c[6:8]}{c[4:6]}{c[2:4]}"
+
+
+def _luma(hex_color: str) -> float:
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _dim(hex_color: str, factor: float) -> str:
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    return "#%02X%02X%02X" % tuple(max(0, min(255, round(c * factor))) for c in (r, g, b))
+
+
+# The waiting text is pulled down to this share of the sung text's luminance so
+# bloom always lights the half already sung — the ratio the original spike used
+# (#8fa6bd waiting against #ffffff sung). MIN_WAIT_LUMA keeps it legible on the
+# black canvas, and MAX_WAIT_SHARE keeps that floor from overtaking a preset
+# whose sung colour is itself dark (impact-red's saturated reds sit near 90).
+WAIT_LUMA_SHARE = 0.6
+MIN_WAIT_LUMA = 90.0
+MAX_WAIT_SHARE = 0.85
+
+
+def _palette(preset_id: str) -> dict[str, dict[str, str]]:
+    """The chosen preset's colours, per style key, for the GPU renderer.
+
+    The ASS path swaps primary/secondary on the way out because libass sweeps
+    \kf from SecondaryColour to PrimaryColour; here the field names are used
+    as written, so waiting stays waiting.
+
+    One adjustment: this renderer's bloom keys off luminance, so a preset whose
+    waiting colour is the brighter of the pair would light up the half that has
+    NOT been sung yet. Most presets are like that — on the ASS path the sweep
+    reads by hue and it does not matter. The waiting colour is dimmed rather
+    than replaced, so the preset's own hues survive.
+    """
+    palette: dict[str, dict[str, str]] = {}
+    for key, s in get_preset(preset_id).styles.items():
+        wait, sung = _hex(s.primary_color), _hex(s.secondary_color)
+        target = min(
+            _luma(sung) * MAX_WAIT_SHARE,
+            max(MIN_WAIT_LUMA, _luma(sung) * WAIT_LUMA_SHARE),
+        )
+        if _luma(wait) > target:
+            wait = _dim(wait, max(0.15, target / max(_luma(wait), 1.0)))
+        palette[key] = {"wait": wait, "sung": sung, "outline": _hex(s.outline_color)}
+    return palette
 
 
 def _units_from_word(word: dict) -> list[dict]:
@@ -99,7 +154,8 @@ def _vocal_envelope(vocals: Path, duration_frames: int) -> list[float]:
     return [round(float(x), 4) for x in env]
 
 
-def build_song_payload(job_dir: Path, max_seconds: float | None) -> tuple[dict, Path]:
+def build_song_payload(job_dir: Path, max_seconds: float | None,
+                       preset: str = DEFAULT_STYLE_PRESET_ID) -> tuple[dict, Path]:
     """Build the Remotion song_data.json payload from the job + pick soundtrack."""
     analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
     raw_lines = analysis.get("lines", [])
@@ -132,6 +188,7 @@ def build_song_payload(job_dir: Path, max_seconds: float | None) -> tuple[dict, 
                 charset.update(u["text"])
         if syllables:
             lines.append({"winStart": round(start, 4), "winEnd": round(min(end, track_s), 4),
+                          "style": str(ln.get("style", "verse")),
                           "syllables": syllables})
     if not lines:
         raise ValueError("no renderable lines after filtering")
@@ -140,6 +197,8 @@ def build_song_payload(job_dir: Path, max_seconds: float | None) -> tuple[dict, 
         "fps": FPS, "width": WIDTH, "height": HEIGHT,
         "durationInFrames": duration_frames,
         "job": job_dir.name,
+        "preset": preset,
+        "palette": _palette(preset),
         "audio": "song.wav",
         "chars": "".join(sorted(charset)),
         "lines": lines,
@@ -149,6 +208,12 @@ def build_song_payload(job_dir: Path, max_seconds: float | None) -> tuple[dict, 
     # self-check: timeline sanity
     assert len(payload["envelope"]) == duration_frames, "envelope/frame mismatch"
     assert all(s["end"] > s["start"] for ln in lines for s in ln["syllables"]), "bad syllable timing"
+    # every line's style must have colours, or the renderer silently falls back
+    missing = sorted({ln["style"] for ln in lines} - set(payload["palette"]))
+    assert not missing, f"preset {preset} has no colours for {missing}"
+    # the sung half must never be the dimmer one, or bloom lights the wrong text
+    dim = [k for k, c in payload["palette"].items() if _luma(c["sung"]) < _luma(c["wait"])]
+    assert not dim, f"preset {preset}: sung colour dimmer than waiting for {dim}"
     return payload, soundtrack
 
 
@@ -264,6 +329,8 @@ def main() -> int:
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--job-dir", required=True, type=Path)
     ap.add_argument("--app-dir", type=Path, default=DEFAULT_APP_DIR)
+    ap.add_argument("--preset", default=DEFAULT_STYLE_PRESET_ID,
+                    help="Style preset whose colours the GPU render uses.")
     ap.add_argument("--work-dir", type=Path, default=Path(str(cfg.get("work_dir", DEFAULT_WORK_DIR))))
     ap.add_argument("--browser-executable", default=str(cfg.get("browser_executable", "")))
     ap.add_argument("--timeout-s", type=int, default=int(cfg.get("timeout_s", 3600)))
@@ -304,7 +371,7 @@ def main() -> int:
     t0 = time.perf_counter()
 
     try:
-        payload, soundtrack = build_song_payload(job_dir, args.max_seconds)
+        payload, soundtrack = build_song_payload(job_dir, args.max_seconds, args.preset)
         app_dir = args.app_dir.resolve()
         vocals = job_dir / "vocals.wav"
         mix_vocals = args.with_vocals and vocals.exists()
