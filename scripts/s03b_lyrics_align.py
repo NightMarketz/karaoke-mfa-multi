@@ -81,6 +81,11 @@ from typing import Any, Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # project root
 sys.path.insert(0, str(Path(__file__).parent))                    # scripts/ dir
 from hw_detect import detect
+from scripts.karaoke_styles.library import (
+    SECTION_PREFIX_FALLBACK as _SECTION_PREFIX_FALLBACK,
+    SECTION_TO_STYLE,
+    resolve_section as _resolve_section,
+)
 try:
     from scripts.common.observability import write_event
 except ModuleNotFoundError:
@@ -124,131 +129,12 @@ LANGUAGE_MAP = {
 # Section label → style name (used by s05 to bypass LLM style inference)
 # Canonical section label → ASS style name.
 # Keys are lowercase, stripped. Add new genres / DAWs here as discovered.
-SECTION_TO_STYLE: dict[str, str] = {
-    # ── Intro / Outro ───────────────────────────────────────────────────
-    "intro":            "intro",
-    "introduction":     "intro",
-    "opening":          "intro",
-    "outro":            "outro",
-    "outro chorus":     "outro",
-    "outro hook":       "outro",
-    "ending":           "outro",
-    "fade out":         "outro",
-    "fade-out":         "outro",
-    "coda":             "outro",
-    # ── Verse ───────────────────────────────────────────────────────────
-    "verse":            "verse",
-    "verse 1":          "verse",
-    "verse 2":          "verse",
-    "verse 3":          "verse",
-    "estrofe":          "verse",   # Portuguese
-    "estrofa":          "verse",   # Spanish
-    "rap":              "rap",     # bare [Rap], common in Suno / pt-BR lyrics
-    "rap verse":        "verse",
-    "spoken":           "verse",
-    "spoken word":      "verse",
-    # ── Chorus / Hook ───────────────────────────────────────────────────
-    "chorus":           "chorus",
-    "chorus 2":         "chorus",
-    "chorus 3":         "chorus",
-    "refrao":           "chorus",  # Portuguese (no accent)
-    "refrão":           "chorus",  # Portuguese (with accent)
-    "refrán":           "chorus",  # Spanish
-    "hook":             "chorus",
-    "hook 2":           "chorus",
-    "drop":             "chorus",  # EDM
-    "drop 1":           "chorus",
-    "drop 2":           "chorus",
-    "big chorus":       "chorus",
-    "final chorus":     "chorus",
-    "climax":           "chorus",
-    # ── Pre-Chorus ──────────────────────────────────────────────────────
-    # Every preset defines a PreChorus style; mapping these to "verse" threw
-    # that distinction away. The style library already said "prechorus" — this
-    # map was the outlier, and s05 was quietly correcting it until s03b started
-    # carrying the style itself.
-    "pre-chorus":       "prechorus",
-    "pre-chorus 2":     "prechorus",
-    "pre chorus":       "prechorus",
-    "pre-hook":         "prechorus",
-    "lift":             "prechorus",   # some EDM / pop labels
-    "build":            "prechorus",
-    "build-up":         "prechorus",
-    "buildup":          "prechorus",
-    # ── Bridge / Breakdown ──────────────────────────────────────────────
-    "bridge":           "bridge",
-    "ponte":            "bridge",  # Portuguese/Spanish
-    "breakdown":        "bridge",
-    "break":            "bridge",
-    "interlude":        "bridge",
-    "guitar solo":      "bridge",
-    "solo":             "bridge",
-    "instrumental":     "bridge",
-    "instrumental break":"bridge",
-    "spoken bridge":    "bridge",
-    "dialogue":         "bridge",
-    "transition":       "bridge",
-    "middle 8":         "bridge",
-    "middle eight":     "bridge",
-}
-
-# Prefix-based fallback mapping (tried when exact label not found).
-# If a label STARTS WITH a prefix, it maps to that style.
-_SECTION_PREFIX_FALLBACK: dict[str, str] = {
-    "verse":    "verse",
-    "chorus":   "chorus",
-    "refra":    "chorus",   # refrão / refrán
-    "hook":     "chorus",
-    "drop":     "chorus",
-    "bridge":   "bridge",
-    "pont":     "bridge",   # ponte
-    "break":    "bridge",
-    "pre":      "prechorus",  # pre-chorus / pre-hook
-    "intro":    "intro",
-    "outro":    "outro",
-    "solo":     "bridge",
-    "interl":   "bridge",
-    "instru":   "bridge",
-    "build":    "prechorus",
-    "spoken":   "verse",
-    "coda":     "outro",
-}
 
 
 # ---------------------------------------------------------------------------
 # Lyrics parser
 # ---------------------------------------------------------------------------
 
-def _resolve_section(label: str) -> tuple[str, str]:
-    """
-    Map a raw section label to a canonical section key and ASS style.
-
-    Resolution order:
-    1. Exact match in SECTION_TO_STYLE
-    2. Numbered suffix strip: "chorus 3" → "chorus"
-    3. Prefix match in _SECTION_PREFIX_FALLBACK
-    4. Default "verse" (logged as unknown)
-
-    Returns (canonical_label, style_name).
-    """
-    # 1. Exact match
-    if label in SECTION_TO_STYLE:
-        return label, SECTION_TO_STYLE[label]
-
-    # 2. Strip trailing number/parenthetical and retry
-    # "chorus 3" → "chorus", "verse (2)" → "verse"
-    stripped = re.sub(r"[\s\d\(\)]+$", "", label).strip()
-    if stripped and stripped in SECTION_TO_STYLE:
-        return stripped, SECTION_TO_STYLE[stripped]
-
-    # 3. Prefix fallback
-    for prefix, style in _SECTION_PREFIX_FALLBACK.items():
-        if label.startswith(prefix):
-            # Return a normalized label so downstream grouping works
-            return label, style
-
-    # 4. Unknown — return as-is with verse style; caller logs the marker
-    return label, "verse"
 
 
 def _is_stage_direction(label: str) -> bool:

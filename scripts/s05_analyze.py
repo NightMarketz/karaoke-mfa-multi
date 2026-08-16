@@ -63,7 +63,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 from hw_detect import detect, HardwareProfile
 from scripts import syllables
-from scripts.karaoke_styles.library import STYLE_EFFECTS, supported_style_keys
+from scripts.karaoke_styles.library import (
+    SECTION_TO_STYLE,
+    STYLE_EFFECTS,
+    supported_style_keys,
+)
 from scripts.common.config import load_app_config
 from scripts.common.observability import write_event
 from scripts.common.validation import find_timestamp_errors
@@ -187,23 +191,6 @@ def _correct_low_confidence(
 # Section-to-style mapping (deterministic, for forced alignment path)
 # ---------------------------------------------------------------------------
 
-SECTION_TO_STYLE: dict[str, str] = {
-    "intro":         "intro",
-    "verse":         "verse",
-    "pre-chorus":    "prechorus",
-    "prechorus":     "prechorus",
-    "pre-chorus 2":  "prechorus",
-    "chorus":        "chorus",
-    "chorus 2":      "chorus",
-    "interlude":     "bridge",
-    "bridge":        "bridge",
-    "drop":          "drop",
-    "outro chorus":  "outro",
-    "outro hook":    "outro",
-    "outro":         "outro",
-    "guitar solo":   "bridge",
-    "rap":           "rap",
-}
 
 SYLLABLE_TIMING_MODE = "projected_from_stage04_phonemes"
 SYLLABLE_ALIGNMENT_SOURCE = "stage05_word_phoneme_projection"
@@ -389,9 +376,9 @@ def _segment_aware_grouper(
             continue
 
         section  = seg.get("section", "verse").lower()
-        # s03b already resolved the style against its 56-entry map; prefer it.
-        # The map below is the fallback for transcripts written before s03b
-        # started carrying the style, and it disagrees on 31 of those labels.
+        # s03b resolves the style from the same shared map; prefer what it
+        # carried. The lookup is the fallback for transcripts written before
+        # s03b started emitting a style.
         style    = seg.get("style") or SECTION_TO_STYLE.get(section, "verse")
 
         lines.append({

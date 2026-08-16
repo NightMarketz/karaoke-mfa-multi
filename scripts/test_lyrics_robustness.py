@@ -110,7 +110,7 @@ def test_resolve_numeric_strip():
         # was already rendering a pre-chorus with the PreChorus style. s03b now
         # says so itself, so the two agree.
         ("pre-chorus 2","prechorus"),("pre-chorus 3","prechorus"),("pre-chorus 4","prechorus"),
-        ("hook 2","chorus"),("hook 3","chorus"),("drop 3","chorus"),("drop 4","chorus"),
+        ("hook 2","chorus"),("hook 3","chorus"),("drop 3","drop"),("drop 4","drop"),
         ("bridge 2","bridge"),("verse (2)","verse"),("verse (3)","verse"),
         ("chorus (2)","chorus"),("outro (2)","outro"),
     ]
@@ -296,7 +296,7 @@ def test_parse_pt_es_edm_markers():
     try:
         lines = _parse_lyrics(lf)
         styles = [_resolve_section(l['section'])[1] for l in lines]
-        expected = ['chorus','bridge','chorus','chorus','verse']
+        expected = ['chorus','bridge','chorus','drop','verse']
         for i, (got, exp) in enumerate(zip(styles, expected)):
             check(got == exp, f"line {i} -> {exp} (got {got})")
     finally: _rm(lf)

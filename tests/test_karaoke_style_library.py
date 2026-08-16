@@ -2,14 +2,11 @@ import unittest
 
 from scripts.karaoke_styles.library import (
     DEFAULT_STYLE_KEY,
-    LYRICS_SECTION_PREFIX_FALLBACK,
-    LYRICS_SECTION_TO_STYLE,
     SUPPORTED_EFFECTS,
     StylePreset,
     get_preset,
     list_preset_metadata,
     list_preset_ids,
-    resolve_lyrics_section,
     resolve_section,
     supported_style_keys,
     validate_all_presets,
@@ -78,25 +75,32 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(KeyError, "Unknown karaoke style preset: missing"):
             get_preset("missing")
 
+    def test_one_map_serves_every_stage(self):
+        # s03b and s05 import this map instead of keeping their own; before,
+        # four copies disagreed on 11 labels and s05 knew only 15 of the 57.
+        from scripts.karaoke_styles.library import SECTION_TO_STYLE
+        from scripts.s03b_lyrics_align import SECTION_TO_STYLE as S03B
+        from scripts.s05_analyze import SECTION_TO_STYLE as S05
+
+        self.assertGreaterEqual(len(SECTION_TO_STYLE), 50)
+        self.assertIs(SECTION_TO_STYLE, S03B)
+        self.assertIs(SECTION_TO_STYLE, S05)
+        # every style a label can resolve to must exist in every preset
+        produced = set(SECTION_TO_STYLE.values())
+        self.assertTrue(produced)
+        for preset_id in list_preset_ids():
+            missing = produced - set(get_preset(preset_id).styles)
+            self.assertEqual(set(), missing, f"{preset_id} lacks {missing}")
+
     def test_section_resolution_preserves_existing_aliases(self):
-        self.assertEqual(("chorus", "chorus"), resolve_section("chorus 3"))
+        # A label the map knows keeps its own text as the canonical label, so
+        # "chorus 3" stays distinguishable from "chorus" downstream.
+        self.assertEqual(("chorus 3", "chorus"), resolve_section("chorus 3"))
         self.assertEqual(("pre-chorus", "prechorus"), resolve_section("pre-chorus"))
         self.assertEqual(("drop", "drop"), resolve_section("drop"))
         self.assertEqual(("guitar solo", "bridge"), resolve_section("guitar solo"))
 
-    def test_lyrics_section_resolution_preserves_stage03b_legacy_semantics(self):
-        self.assertEqual(("chorus 3", "chorus"), resolve_lyrics_section("chorus 3"))
-        self.assertEqual(("pre-chorus", "verse"), resolve_lyrics_section("pre-chorus"))
-        self.assertEqual(("build", "verse"), resolve_lyrics_section("build"))
-        self.assertEqual(("drop", "chorus"), resolve_lyrics_section("drop"))
-        self.assertEqual(("drop", "chorus"), resolve_lyrics_section("drop 3"))
-        self.assertEqual(("guitar solo", "bridge"), resolve_lyrics_section("guitar solo"))
 
-    def test_lyrics_legacy_maps_are_available_for_stage03b_imports(self):
-        self.assertEqual("verse", LYRICS_SECTION_PREFIX_FALLBACK["pre"])
-        self.assertEqual("verse", LYRICS_SECTION_PREFIX_FALLBACK["build"])
-        self.assertEqual("chorus", LYRICS_SECTION_PREFIX_FALLBACK["drop"])
-        self.assertEqual("chorus", LYRICS_SECTION_TO_STYLE["drop"])
 
     def test_unknown_section_falls_back_to_verse(self):
         self.assertEqual(("heavy wall of sound", DEFAULT_STYLE_KEY), resolve_section("heavy wall of sound"))
@@ -262,9 +266,11 @@ class StyleLibraryEdgeCaseTests(unittest.TestCase):
         self.assertEqual(DEFAULT_STYLE_KEY, style)
 
     def test_resolve_section_strips_trailing_numbers(self):
-        from scripts.karaoke_styles.library import resolve_section
-        self.assertEqual(("chorus", "chorus"), resolve_section("chorus 3"))
-        self.assertEqual(("verse", "verse"), resolve_section("verse 2"))
+        # The strip is the second chance, for ordinals the map does not list.
+        from scripts.karaoke_styles.library import SECTION_TO_STYLE, resolve_section
+        self.assertNotIn("chorus 99", SECTION_TO_STYLE)
+        self.assertEqual(("chorus", "chorus"), resolve_section("chorus 99"))
+        self.assertEqual(("verse", "verse"), resolve_section("verse (7)"))
 
     def test_resolve_section_handles_purely_numeric_label(self):
         from scripts.karaoke_styles.library import resolve_section, DEFAULT_STYLE_KEY
