@@ -307,6 +307,7 @@ def _build_layout_events(
     fade_tag: str,
     start_ts: str,
     end_ts: str,
+    start_ms: int,
     effect: str,
 ) -> list[str]:
     r"""One Dialogue per syllable, each positioned with \pos.
@@ -315,6 +316,13 @@ def _build_layout_events(
     back with a leading \k of the time elapsed before its own attack. That
     leading \k is the same number compile_syllable() anchors \t on, which is
     what keeps motion and fill agreed.
+
+    `start_ms` is the DIALOGUE's start, which is the line's start minus the
+    preroll — not line["start"]. \k, \t and \move all run on the Dialogue's
+    clock, so measuring attacks from the line instead throws every animation
+    early by the preroll AND leaves a lead-in effect with nowhere to come from:
+    resolve() clamps at 0, so the first syllable's fly-in collapsed to
+    \move(x,y,x,y,0,0) — a syllable that does not move, on every line.
 
     Anchoring is \an2, bottom-centre. MarginV means "distance from the bottom
     of the frame to the bottom of the text", so with \an2 the y we compute IS
@@ -326,7 +334,6 @@ def _build_layout_events(
     # The ASS Fontsize this line's Style row carries. measure() converts it to
     # a FreeType size itself -- see fonts.py; they are not the same number.
     ass_size = round(style.fontsize * scale)
-    line_start_ms = int(line["start"] * 1000)
 
     texts: list[str] = []
     widths: list[float] = []
@@ -344,10 +351,10 @@ def _build_layout_events(
             texts.append(text)
             widths.append(measure(text, font_path=font_path, size_px=ass_size))
             space_after.append(space_px if i == len(segments) - 1 else 0.0)
-            start_ms = int(float(segment["start"]) * 1000)
-            end_ms = int(float(segment["end"]) * 1000)
-            attacks.append(max(0, start_ms - line_start_ms))
-            durations.append(max(1, (end_ms - start_ms) // 10))
+            seg_start_ms = int(float(segment["start"]) * 1000)
+            seg_end_ms = int(float(segment["end"]) * 1000)
+            attacks.append(max(0, seg_start_ms - start_ms))
+            durations.append(max(1, (seg_end_ms - seg_start_ms) // 10))
 
     if not texts:
         return []
@@ -510,7 +517,7 @@ YCbCr Matrix: TV.601
             event_lines.extend(_build_layout_events(
                 line, s, scale=scale, play_res=(int(width), int(height)),
                 fade_tag=fade_tag, start_ts=start_ts, end_ts=end_ts,
-                effect=chosen_effect,
+                start_ms=display_start_ms, effect=chosen_effect,
             ))
         else:
             event_lines.append(

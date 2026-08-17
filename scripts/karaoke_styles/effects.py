@@ -110,6 +110,36 @@ EFFECTS: dict[str, Effect | TextEffect] = {
     # look, not a sing-along one: pair it with a preset, never default to it.
     "reveal": REVEAL,
     "typewriter": TextEffect("typewriter", _typewriter),
+
+    # ── Motion. These need LAYOUT_PROPS, so s06 gives each syllable its own
+    # Dialogue and \pos before the compiler will emit anything for them.
+    #
+    # ponytail: the numbers below (80px, -9 degrees, 1.12x) are first guesses,
+    # authored without watching a frame. They are structurally right -- the
+    # tracks say what moves and when -- but nobody should call the VALUES
+    # finished until they have been through preview_effects.py.
+
+    # Rises into place from 80px below, arriving exactly on the attack, fading
+    # up on the way so it does not slide in as a solid block.
+    "fly-in": Effect("fly-in", (
+        Track("offset_y", ((-260, 80.0), (0, 0.0)), accel=0.6),
+        Track("alpha", ((-260, 0.0), (-60, 1.0))),
+    )),
+    # Tips in from -9 degrees and settles level. \org keeps the pivot on the
+    # syllable, so a word at the frame edge does not swing off screen.
+    # The leading 0.0 is the RESTING pose (see below) -- without it the whole
+    # not-yet-sung tail of the line sat permanently at -9 and read as italic.
+    "swing": Effect("swing", (
+        Track("rotate", ((-200, 0.0), (-120, -9.0), (0, 0.0)), accel=0.5),
+    )),
+    # Uniform overshoot — the scale the old \fscy pop could not do without
+    # reflowing, now safe because each syllable owns its position.
+    # Rests at 1.0 for the same reason, and one sharper than swing's: a
+    # syllable drawn narrower than the width we measured shrinks toward its own
+    # \pos, so every unsung word visibly came apart ("i lu são").
+    "punch": Effect("punch", (
+        Track("scale", ((-80, 1.0), (0, 0.92), (110, 1.12), (260, 1.0)), accel=0.7),
+    )),
 }
 
 # Effects that used to live here and are gone: fade_in prefixed a per-syllable

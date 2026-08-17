@@ -19,8 +19,11 @@ CASES = ((40, "ta", 800), (7, "a", 0), (3, "aaa", 1234), (100, "lá", 55))
 
 class EffectPortRegressionTests(unittest.TestCase):
     def test_every_golden_effect_still_exists(self):
+        # The golden pins the SEVEN effects that existed before the port. Later
+        # tasks add more, so this is containment, not equality -- but the seven
+        # must all still be there, hence the count on both sides.
         self.assertEqual(7, len(GOLDEN))
-        self.assertEqual(sorted(GOLDEN), sorted(EFFECTS))
+        self.assertEqual(7, len(set(GOLDEN) & set(EFFECTS)))
 
     def test_tokens_are_unchanged_by_the_port(self):
         for name, expected in GOLDEN.items():

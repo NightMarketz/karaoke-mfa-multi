@@ -39,11 +39,14 @@ class LayoutEventTests(unittest.TestCase):
     def setUp(self):
         self.style = get_preset("word-pop").styles["verse"]
 
-    def _events(self, effect="fly-in"):
+    # "punch" animates uniform scale: a layout effect, so it takes the \pos
+    # path, but it emits no \move and therefore keeps its \pos. Naming a
+    # motion effect that DOES move here would delete the \pos these tests read.
+    def _events(self, effect="punch"):
         return _build_layout_events(
             LINE, self.style, scale=1.5, play_res=(1920, 1080),
             fade_tag=r"{\fad(300,500)}", start_ts="0:00:09.00", end_ts="0:00:12.10",
-            effect=effect,
+            start_ms=9000, effect=effect,
         )
 
     def test_one_event_per_syllable(self):
@@ -62,9 +65,29 @@ class LayoutEventTests(unittest.TestCase):
         # Every syllable's event runs the whole line, so each needs its own
         # leading \k to hold the fill back until its turn. Without it, all the
         # syllables fill at once from the line's first frame.
-        for event in self._events()[1:]:
+        for event in self._events():
             with self.subTest(event=event):
                 self.assertRegex(event, r"\\k\d+")
+
+    def test_the_clock_starts_at_the_dialogue_not_at_the_line(self):
+        r"""\k, \t and \move all run from the DIALOGUE's first frame.
+
+        The Dialogue starts one preroll before line["start"], so measuring
+        attacks from the line throws every animation early by that preroll and
+        leaves a lead-in effect nothing to come from: resolve() clamps at 0, so
+        fly-in's first syllable collapsed to \move(x,y,x,y,0,0) -- a syllable
+        that does not move, once per line, on the preset's own opening word.
+        """
+        leads = [int(re.search(r"\{\\k(\d+)\}", e).group(1)) for e in self._events()]
+        # Dialogue at 9.00s, syllables at 10.0s and 10.8s -> 100cs and 180cs.
+        self.assertEqual([100, 180], leads)
+
+        fly = self._events("fly-in")
+        moves = [re.search(r"\\move\(([-\d.,]+)\)", e).group(1).split(",") for e in fly]
+        for parts in moves:
+            with self.subTest(move=parts):
+                self.assertNotEqual(parts[1], parts[3], "flew from where it landed")
+                self.assertNotEqual(parts[4], parts[5], "flew in zero milliseconds")
 
     def test_every_event_shares_the_line_window(self):
         for event in self._events():

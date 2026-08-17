@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping
 
 DEFAULT_STYLE_KEY = "verse"
 # What a line may ask for. "flash" is not here: it is a style property
-# (flash_on_highlight), not something a line picks.
+# (KaraokeStyle.highlight_effect), not something a line picks.
 SUPPORTED_EFFECTS = ("highlight", "none")
 
 
@@ -38,7 +38,7 @@ class KaraokeStyle:
     alignment: int
     margin_v: int
     border_style: int = 1
-    flash_on_highlight: bool = False
+    highlight_effect: str = "highlight"
 
 
 @dataclass(frozen=True)
@@ -297,7 +297,7 @@ CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=50,
         border_style=3,
-        flash_on_highlight=True,
+        highlight_effect="flash",
     ),
     "prechorus": KaraokeStyle(
         name="PreChorus",
@@ -314,7 +314,7 @@ CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=50,
         border_style=3,
-        flash_on_highlight=True,
+        highlight_effect="flash",
     ),
     "chorus": KaraokeStyle(
         name="Chorus",
@@ -331,7 +331,7 @@ CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=50,
         border_style=3,
-        flash_on_highlight=True,
+        highlight_effect="flash",
     ),
     "bridge": KaraokeStyle(
         name="Bridge",
@@ -348,7 +348,7 @@ CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=50,
         border_style=3,
-        flash_on_highlight=False,
+        highlight_effect="highlight",
     ),
     "intro": DEFAULT_STYLES["intro"],
     "drop": KaraokeStyle(
@@ -366,7 +366,7 @@ CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=50,
         border_style=3,
-        flash_on_highlight=True,
+        highlight_effect="flash",
     ),
     "outro": DEFAULT_STYLES["outro"],
     "rap": KaraokeStyle(
@@ -548,7 +548,7 @@ SINGLE_STYLE_KF_STYLES: dict[str, KaraokeStyle] = {
         alignment=_SINGLE_STYLE_BASE.alignment,
         margin_v=_SINGLE_STYLE_BASE.margin_v,
         border_style=_SINGLE_STYLE_BASE.border_style,
-        flash_on_highlight=_SINGLE_STYLE_BASE.flash_on_highlight,
+        highlight_effect=_SINGLE_STYLE_BASE.highlight_effect,
     )
     for key in ("intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "rap", "ad_lib")
 }
@@ -1938,6 +1938,237 @@ AEGISUB_STAGE_LIGHTS_STYLES: dict[str, KaraokeStyle] = {
         margin_v=42,
     ),
 }
+# ── Modern presets ────────────────────────────────────────────────────────
+# Two looks the section-coded palettes cannot express with colour alone.
+#
+# pill: BorderStyle 3 = opaque box. In libass the box is filled with
+# OutlineColour and `outline` becomes its padding, so outline_color IS the box
+# colour here, not a border. Shadow 0 keeps the edge clean.
+# ponytail: BorderStyle 3 draws a hard RECTANGLE — the name is aspirational.
+# Rounded corners need a \p1 vector drawing on a layer below the text, which
+# also means measuring the line's width. Upgrade there only if the square
+# corners actually bother someone.
+#
+# focus-pull: the whole line sits out of focus and each syllable sharpens on its
+# own attack. It exists only because effects.py now anchors \t at the syllable's
+# offset — with the old line-relative \t every word sharpened at once.
+_LOUD_KEYS = ("chorus", "drop")
+
+
+def _modern_variants(base: KaraokeStyle, *, loud_fontsize: int) -> dict[str, KaraokeStyle]:
+    """One base, per-section name + a size bump on the hook. Nothing else."""
+    return {
+        key: replace(
+            base,
+            name=SECTION_CODED_STYLES[key].name,
+            fontsize=(
+                loud_fontsize if key in _LOUD_KEYS
+                else base.fontsize - 8 if key == "ad_lib"
+                else base.fontsize
+            ),
+            italic=key == "ad_lib",
+        )
+        for key in SECTION_CODED_STYLES
+    }
+
+
+_PILL_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Bold",
+    fontsize=52,
+    bold=True,
+    italic=False,
+    primary_color=_c(225, 225, 230),    # waiting: soft white on the box
+    secondary_color=_c(214, 255, 60),   # sung: reels lime
+    outline_color=_c(14, 14, 18),       # the box itself
+    back_color=_c(0, 0, 0, 255),        # transparent: no shadow box
+    outline=6.0,                        # box padding
+    shadow=0.0,
+    alignment=2,
+    margin_v=64,
+    border_style=3,
+)
+
+PILL_STYLES: dict[str, KaraokeStyle] = _modern_variants(_PILL_BASE, loud_fontsize=60)
+
+_FOCUS_PULL_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Bold",
+    fontsize=56,
+    bold=True,
+    italic=False,
+    primary_color=_c(148, 148, 158),    # waiting: dimmed, and blurred by \blur3
+    secondary_color=_c(255, 255, 255),  # sung: sharp white
+    outline_color=_c(8, 8, 12),
+    back_color=_c(0, 0, 0, 120),
+    outline=1.8,                        # thin: \blur muddies a heavy border
+    shadow=1.0,
+    alignment=2,
+    margin_v=52,
+    highlight_effect="focus",
+)
+
+FOCUS_PULL_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _FOCUS_PULL_BASE, loud_fontsize=64
+)
+
+# bold-highlight: the short-form caption spec that measures best today — heavy
+# sans, hot fill on the active word, a rim thick enough to survive any
+# background, parked in the lower-middle third instead of on the frame edge.
+# Its power is contrast, not motion, so it keeps the plain sweep.
+# ponytail: the references call for Montserrat/Proxima Nova Bold; neither is
+# installed here and libass substitutes silently, so this uses Segoe UI Black.
+# Install the font and change one field if the heavier cut is wanted.
+_BOLD_HIGHLIGHT_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Black",
+    fontsize=58,
+    bold=True,
+    italic=False,
+    primary_color=_c(255, 255, 255),   # waiting: pure white
+    secondary_color=_c(255, 214, 0),   # sung: hot yellow
+    outline_color=_c(0, 0, 0),         # the rim that does the readability work
+    back_color=_c(0, 0, 0, 160),
+    outline=4.5,
+    shadow=0.0,
+    alignment=2,
+    margin_v=150,                      # lower-middle third, not the very bottom
+)
+
+BOLD_HIGHLIGHT_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _BOLD_HIGHLIGHT_BASE, loud_fontsize=66
+)
+
+# word-reveal: nothing on screen ahead of the voice. Lyric-video look — the
+# singer cannot read ahead, which is why it is its own preset and not a default.
+_WORD_REVEAL_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Black",
+    fontsize=58,
+    bold=True,
+    italic=False,
+    primary_color=_c(255, 255, 255),
+    secondary_color=_c(120, 240, 255),  # sung: cold cyan against the white
+    outline_color=_c(10, 12, 20),
+    back_color=_c(0, 0, 0, 140),
+    outline=3.0,
+    shadow=1.0,
+    alignment=2,
+    margin_v=120,
+    highlight_effect="reveal",
+)
+
+WORD_REVEAL_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _WORD_REVEAL_BASE, loud_fontsize=66
+)
+
+# word-pop: the "word pop" caption — clean face, solid colour, a bounce on each
+# attack. The bounce is vertical only (see effects._pop), so it never reflows.
+_WORD_POP_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Black",
+    fontsize=56,
+    bold=True,
+    italic=False,
+    primary_color=_c(240, 240, 245),
+    secondary_color=_c(255, 106, 92),   # sung: coral
+    outline_color=_c(16, 10, 14),
+    back_color=_c(0, 0, 0, 150),
+    outline=3.5,
+    shadow=1.0,
+    alignment=2,
+    margin_v=130,
+    highlight_effect="pop",
+)
+
+WORD_POP_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _WORD_POP_BASE, loud_fontsize=64
+)
+
+# ── Motion presets ────────────────────────────────────────────────────────
+# The first three that could not exist before: their effects animate position,
+# rotation or uniform scale, so s06 gives every syllable its own Dialogue and
+# \pos placed from real font metrics. Same face and geometry as word-pop —
+# only the fill colour and the effect change, so the motion is what you are
+# comparing and not a second variable.
+
+_FLY_IN_BASE = replace(
+    _WORD_POP_BASE,
+    secondary_color=_c(120, 220, 255),   # sung: ice blue
+    highlight_effect="fly-in",
+)
+FLY_IN_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _FLY_IN_BASE, loud_fontsize=64
+)
+
+_SWING_BASE = replace(
+    _WORD_POP_BASE,
+    secondary_color=_c(255, 208, 92),    # sung: warm amber
+    highlight_effect="swing",
+)
+SWING_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _SWING_BASE, loud_fontsize=64
+)
+
+_PUNCH_BASE = replace(
+    _WORD_POP_BASE,
+    secondary_color=_c(255, 92, 141),    # sung: hot pink
+    highlight_effect="punch",
+)
+PUNCH_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _PUNCH_BASE, loud_fontsize=64
+)
+
+# typewriter: letters land one at a time. Narrative pacing, so a lighter cut and
+# generous tracking; the amber fill reads as terminal text rather than caption.
+_TYPEWRITER_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Semibold",
+    fontsize=52,
+    bold=False,
+    italic=False,
+    primary_color=_c(232, 228, 218),
+    secondary_color=_c(255, 176, 59),   # sung: amber
+    outline_color=_c(10, 8, 6),
+    back_color=_c(0, 0, 0, 130),
+    outline=2.6,
+    shadow=1.0,
+    alignment=2,
+    margin_v=110,
+    highlight_effect="typewriter",
+)
+
+TYPEWRITER_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _TYPEWRITER_BASE, loud_fontsize=58
+)
+
+# glitch: chromatic aberration on a single Dialogue line. The style's SHADOW is
+# the offset colour copy (cyan) and the outline is the opposite rim (magenta),
+# which is why shadow is opaque and unusually far out.
+# ponytail: this is one-sided aberration — real two-sided needs a ghost Dialogue
+# per line at an offset \pos, i.e. s06 emitting more than one event per line.
+# Worth doing only if the single offset reads as too tame on real footage.
+_GLITCH_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Black",
+    fontsize=56,
+    bold=True,
+    italic=False,
+    primary_color=_c(122, 134, 166),    # waiting: muted slate, so the sweep reads
+    secondary_color=_c(255, 255, 255),
+    outline_color=_c(255, 0, 110),      # magenta rim
+    back_color=_c(0, 229, 255),         # cyan offset copy, fully opaque
+    outline=2.0,
+    shadow=4.0,
+    alignment=2,
+    margin_v=120,
+)
+
+GLITCH_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _GLITCH_BASE, loud_fontsize=64
+)
+
+
 # The syllable effect each style key sings with. Two values on purpose: the
 # sweep for lyrics, an instant fill for ad-libs. The old table also carried a
 # "color" name per style that no renderer ever read, and a "fade_in" that
@@ -2060,6 +2291,76 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="White, blue, magenta, and gold stage-light palette.",
         styles=AEGISUB_STAGE_LIGHTS_STYLES,
+    ),
+    "pill": StylePreset(
+        id="pill",
+        label="Pill",
+        version=1,
+        description="Social-caption look: lyrics ride an opaque box, lime fill.",
+        styles=PILL_STYLES,
+    ),
+    "focus-pull": StylePreset(
+        id="focus-pull",
+        label="Focus Pull",
+        version=1,
+        description="Blurred line that sharpens syllable by syllable on the attack.",
+        styles=FOCUS_PULL_STYLES,
+    ),
+    "bold-highlight": StylePreset(
+        id="bold-highlight",
+        label="Bold Highlight",
+        version=1,
+        description="Heavy white caption with a hot yellow fill and a thick black rim.",
+        styles=BOLD_HIGHLIGHT_STYLES,
+    ),
+    "word-reveal": StylePreset(
+        id="word-reveal",
+        label="Word Reveal",
+        version=1,
+        description="Nothing on screen ahead of the voice: each syllable fades in on its attack.",
+        styles=WORD_REVEAL_STYLES,
+    ),
+    "word-pop": StylePreset(
+        id="word-pop",
+        label="Word Pop",
+        version=1,
+        description="Clean coral caption that bounces on every vocal attack.",
+        styles=WORD_POP_STYLES,
+    ),
+    "typewriter": StylePreset(
+        id="typewriter",
+        label="Typewriter",
+        version=1,
+        description="Amber letters landing one character at a time.",
+        styles=TYPEWRITER_STYLES,
+    ),
+    "glitch": StylePreset(
+        id="glitch",
+        label="Glitch",
+        version=1,
+        description="Chromatic aberration: magenta rim over an offset cyan copy.",
+        styles=GLITCH_STYLES,
+    ),
+    "fly-in": StylePreset(
+        id="fly-in",
+        label="Fly In",
+        version=1,
+        description="Each syllable rises into place and fades up, landing on its attack.",
+        styles=FLY_IN_STYLES,
+    ),
+    "swing": StylePreset(
+        id="swing",
+        label="Swing",
+        version=1,
+        description="Each syllable tips in off-angle and settles level on its attack.",
+        styles=SWING_STYLES,
+    ),
+    "punch": StylePreset(
+        id="punch",
+        label="Punch",
+        version=1,
+        description="Uniform overshoot on every attack — the bounce word-pop could not do.",
+        styles=PUNCH_STYLES,
     ),
 }
 

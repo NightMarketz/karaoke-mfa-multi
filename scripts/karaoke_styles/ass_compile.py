@@ -135,6 +135,11 @@ def compile_syllable(
             continue
         tag = usable[track.prop]
         keys = resolve(track, attack_ms=attack_ms, duration_ms=duration_ms)
+        # The first key is the RESTING pose, not just the start of the ramp:
+        # libass shows this static tag from the Dialogue's first frame until
+        # keys[0][0], which for a syllable late in the line is most of the time
+        # it is on screen. An effect that opens on its animated extreme leaves
+        # the whole not-yet-sung tail of the line sitting in that extreme.
         if track.prop == "rotate" and anchor is not None:
             # \frz without \org spins around the frame centre, which throws a
             # syllable near the edge clean off screen. Once per token.
