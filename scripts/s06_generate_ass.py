@@ -338,15 +338,24 @@ def _build_layout_events(
     chosen = EFFECTS[effect] if effect in EFFECTS else EFFECTS[DEFAULT_EFFECT]
     events = []
     for spot, attack_ms, duration_cs in zip(placed, attacks, durations):
+        anchor = (spot.x + spot.width / 2, spot.y)
         token = compile_syllable(
-            chosen, text=spot.text, duration_cs=duration_cs, attack_ms=attack_ms
+            chosen,
+            text=spot.text,
+            duration_cs=duration_cs,
+            attack_ms=attack_ms,
+            anchor=anchor,
         )
+        # An effect that animates offset compiles to \move, which already
+        # carries the destination. Emitting \pos as well leaves libass with two
+        # positioning tags; it keeps the first and drops the other, so the
+        # motion would silently vanish (or the placement would).
+        placement = "" if "\\move(" in token else f"\\pos({anchor[0]:.1f},{anchor[1]:.1f})"
         lead_cs = attack_ms // 10
         lead = f"{{\\k{lead_cs}}}" if lead_cs > 0 else ""
         events.append(
             f"Dialogue: 0,{start_ts},{end_ts},{style.name},,0,0,0,,"
-            f"{fade_tag}{{\\an2\\pos({spot.x + spot.width / 2:.1f},{spot.y:.1f})}}"
-            f"{lead}{token}"
+            f"{fade_tag}{{\\an2{placement}}}{lead}{token}"
         )
     return events
 

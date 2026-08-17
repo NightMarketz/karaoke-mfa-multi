@@ -71,6 +71,29 @@ class LayoutEventTests(unittest.TestCase):
             with self.subTest(event=event):
                 self.assertIn("0:00:09.00,0:00:12.10", event)
 
+    def test_a_moving_effect_emits_exactly_one_positioning_tag(self):
+        r"""\move already carries the destination; \pos alongside it is a bug.
+
+        libass keeps whichever positioning tag it parses first and drops the
+        other, so the pair fails silently -- either the motion vanishes or the
+        placement does, depending on emission order.
+        """
+        from scripts.karaoke_styles.effects import EFFECTS
+        from scripts.karaoke_styles.keyframes import Effect, Track
+
+        EFFECTS["_probe_move"] = Effect("_probe_move", (
+            Track("offset_y", ((-260, 80.0), (0, 0.0))),
+        ))
+        try:
+            events = self._events("_probe_move")
+            self.assertEqual(2, len(events))
+            for event in events:
+                with self.subTest(event=event):
+                    self.assertEqual(0, event.count(r"\pos("))
+                    self.assertEqual(1, event.count(r"\move("))
+        finally:
+            del EFFECTS["_probe_move"]
+
     def test_x_is_the_measured_advance_not_merely_an_increasing_number(self):
         r"""End-to-end scale fence: font resolution -> measure -> place -> \pos.
 

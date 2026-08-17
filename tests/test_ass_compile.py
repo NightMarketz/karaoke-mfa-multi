@@ -74,5 +74,67 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(r"{\kf20}x", out)
 
 
+class LayoutPropertyTests(unittest.TestCase):
+    def test_scale_drives_both_axes(self):
+        effect = Effect("e", (Track("scale", ((0, 1.0), (120, 1.3))),))
+        out = compile_syllable(
+            effect, text="x", duration_cs=20, attack_ms=0, anchor=(100.0, 500.0)
+        )
+        self.assertIn(r"\fscx100\fscy100", out)
+        self.assertIn(r"\t(0,120,\fscx130\fscy130)", out)
+
+    def test_rotation_pins_its_origin_to_the_anchor(self):
+        # Without \org libass rotates around the frame's centre, which throws a
+        # side-of-frame syllable clean off screen.
+        effect = Effect("e", (Track("rotate", ((0, -12.0), (150, 0.0))),))
+        out = compile_syllable(
+            effect, text="x", duration_cs=20, attack_ms=0, anchor=(100.0, 500.0)
+        )
+        self.assertIn(r"\org(100,500)", out)
+        self.assertIn(r"\frz-12", out)
+        self.assertIn(r"\t(0,150,\frz0)", out)
+
+    def test_org_is_emitted_once_however_many_rotate_tracks(self):
+        effect = Effect("e", (
+            Track("rotate", ((0, -12.0), (150, 0.0))),
+            Track("rotate", ((150, 0.0), (300, 4.0))),
+        ))
+        out = compile_syllable(
+            effect, text="x", duration_cs=20, attack_ms=0, anchor=(100.0, 500.0)
+        )
+        self.assertEqual(1, out.count(r"\org("))
+
+    def test_offset_becomes_a_move_from_the_anchor(self):
+        effect = Effect("e", (Track("offset_y", ((-300, -80.0), (0, 0.0))),))
+        out = compile_syllable(
+            effect, text="x", duration_cs=20, attack_ms=800, anchor=(100.0, 500.0)
+        )
+        self.assertIn(r"\move(100,420,100,500,500,800)", out)
+
+    def test_both_offset_axes_share_one_move(self):
+        effect = Effect("e", (
+            Track("offset_x", ((-200, -40.0), (0, 0.0))),
+            Track("offset_y", ((-200, -80.0), (0, 0.0))),
+        ))
+        out = compile_syllable(
+            effect, text="x", duration_cs=20, attack_ms=800, anchor=(100.0, 500.0)
+        )
+        self.assertEqual(1, out.count(r"\move("))
+        self.assertIn(r"\move(60,420,100,500,600,800)", out)
+
+    def test_layout_property_without_an_anchor_is_reported_not_emitted(self):
+        effect = Effect("e", (Track("rotate", ((0, -12.0), (150, 0.0))),))
+        out = compile_syllable(effect, text="x", duration_cs=20, attack_ms=0)
+        self.assertNotIn(r"\frz", out)
+        self.assertEqual({"rotate"}, unsupported_props(effect, anchored=False))
+
+    def test_anchored_compile_reports_only_future_props(self):
+        effect = Effect("e", (
+            Track("rotate", ((0, -12.0), (150, 0.0))),
+            Track("glow", ((0, 0.0), (90, 1.0))),
+        ))
+        self.assertEqual({"glow"}, unsupported_props(effect, anchored=True))
+
+
 if __name__ == "__main__":
     unittest.main()
