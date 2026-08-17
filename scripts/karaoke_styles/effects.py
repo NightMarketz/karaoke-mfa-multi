@@ -224,11 +224,24 @@ if __name__ == "__main__":
     for _name in EFFECTS:
         if _name != "none":
             assert SOFT_EDGE in syllable_ass(_name, 10, "x"), _name
-    # Every \t an effect emits must be anchored at the offset it was handed —
-    # the whole point of the argument. Effects without \t are exempt.
+    # Every time an effect emits is anchored on the offset it was handed — the
+    # whole point of the argument. Checked as a SHIFT rather than as "the first
+    # \t starts at the offset": an effect with a lead-in legitimately starts
+    # before its own attack (fly-in emits \t(974,..) for offset 1234), and the
+    # older form declared that a bug. Both offsets are far from zero so
+    # resolve()'s clamp never bites.
+    def _times(out: str) -> list[int]:
+        return [int(n) for pair in re.findall(r"\\t\((\d+),(\d+)", out) for n in pair]
+
+    _animated = 0
     for _name in EFFECTS:
-        _out = syllable_ass(_name, 30, "x", offset_ms=1234)
-        assert "\\t(" not in _out or "\\t(1234," in _out, (_name, _out)
+        _lo = _times(syllable_ass(_name, 30, "x", offset_ms=1000))
+        _hi = _times(syllable_ass(_name, 30, "x", offset_ms=2000))
+        assert len(_lo) == len(_hi), (_name, _lo, _hi)
+        assert all(h - l == 1000 for l, h in zip(_lo, _hi)), (_name, _lo, _hi)
+        _animated += bool(_lo)
+    # Cardinality: if nothing emitted a \t the loop above proved nothing.
+    assert _animated >= 5, _animated
     # Retired names must keep rendering, not vanish, on old analysis.json.
     for _retired in ("fade_in", "bounce", "scale_pop", "outline_pop", "glow_pulse", "soft_glow"):
         assert syllable_ass(_retired, 10, "x") == syllable_ass("highlight", 10, "x"), _retired

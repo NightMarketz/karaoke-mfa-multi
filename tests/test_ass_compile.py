@@ -5,7 +5,10 @@ is the clock libass runs \t on. A compiler that anchors at 0 animates every
 syllable of the line simultaneously on the first frame.
 """
 
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 from scripts.karaoke_styles.ass_compile import (
     compile_syllable,
@@ -134,6 +137,26 @@ class LayoutPropertyTests(unittest.TestCase):
             Track("glow", ((0, 0.0), (90, 1.0))),
         ))
         self.assertEqual({"glow"}, unsupported_props(effect, anchored=True))
+
+
+class EffectsSelfCheckTests(unittest.TestCase):
+    def test_the_effects_module_self_check_passes(self):
+        r"""`python -m scripts.karaoke_styles.effects` must exit 0.
+
+        That module carries a real assert-based self-check -- the karaoke clock
+        survives every effect, "none" is the only one without the soft edge,
+        retired names still render -- and nothing ran it. It went stale the
+        moment fly-in shipped: it asserted every \t starts exactly at the
+        offset handed in, which a lead-in effect correctly violates. A check
+        nobody executes is not a check.
+        """
+        root = Path(__file__).resolve().parents[1]
+        proc = subprocess.run(
+            [sys.executable, "-m", "scripts.karaoke_styles.effects"],
+            cwd=root, capture_output=True, text=True,
+        )
+        self.assertEqual(0, proc.returncode, proc.stderr[-2000:])
+        self.assertIn("ok:", proc.stdout)
 
 
 if __name__ == "__main__":
