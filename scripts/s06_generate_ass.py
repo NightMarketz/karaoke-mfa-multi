@@ -77,10 +77,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 from scripts.karaoke_styles.library import PRESETS, KaraokeStyle
-from scripts.karaoke_styles.ass_compile import compile_syllable
+from scripts.karaoke_styles.ass_compile import compile_syllable, unsupported_props
 from scripts.karaoke_styles.effects import (
     DEFAULT_EFFECT,
     EFFECTS,
+    TextEffect,
     resolve_effect,
     syllable_ass,
 )
@@ -269,6 +270,32 @@ def _build_karaoke_text(
         prev_end_ms = visual_end_ms
 
     return " ".join(visual_parts).strip()
+
+
+def _effect_capability_gaps(
+    lines: list[dict],
+    styles: dict[str, KaraokeStyle],
+) -> dict[str, list[str]]:
+    r"""Effect id -> properties the ASS compiler dropped, for every effect in use.
+
+    Resolved through resolve_effect, not read off line["effect"]: a plain
+    "highlight" line is upgraded to its preset's highlight_effect, so a preset
+    asking for something undeliverable renders as a bare sweep on every line
+    while line["effect"] still says "highlight". That is exactly the case this
+    report exists to catch.
+    """
+    gaps: dict[str, list[str]] = {}
+    for line in lines:
+        style = styles.get(line.get("style", "verse")) or styles.get("verse")
+        style_effect = style.highlight_effect if style is not None else DEFAULT_EFFECT
+        name = resolve_effect(line.get("effect", DEFAULT_EFFECT), style_effect)
+        chosen = EFFECTS[name]
+        if isinstance(chosen, TextEffect):
+            continue
+        missing = unsupported_props(chosen, anchored=chosen.needs_layout)
+        if missing:
+            gaps[name] = sorted(missing)
+    return gaps
 
 
 def _build_layout_events(
@@ -830,6 +857,20 @@ def main() -> int:
 
     # ── Generate ───────────────────────────────────────────────────────────
     styles = PRESETS[args.preset]
+
+    # An effect asking for something libass cannot draw must not render as a
+    # plain sweep in silence — the preview would disagree with the burn and
+    # nothing would say why.
+    for effect_id, dropped in _effect_capability_gaps(lines, styles).items():
+        logger.warning("effect %r: ASS cannot render %s", effect_id, ", ".join(dropped))
+        _stage06_event(
+            job_dir,
+            "stage06.effect_capability_gap",
+            level="warning",
+            message=f"effect {effect_id!r}: ASS cannot render {', '.join(dropped)}",
+            effect=effect_id,
+            dropped=dropped,
+        )
 
     # Log style distribution
     style_counts: dict[str, int] = {}
