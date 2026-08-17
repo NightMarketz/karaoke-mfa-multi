@@ -26,15 +26,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.karaoke_styles.effects import EFFECTS, syllable_ass  # noqa: E402
 from scripts.karaoke_styles.library import KaraokeStyle  # noqa: E402
-from scripts.s06_generate_ass import _build_layout_events  # noqa: E402
+from scripts.s06_generate_ass import SIDE_MARGIN_RATIO, _build_layout_events  # noqa: E402
 
 # Fake lyrics, grouped the way analysis.json groups them: words made of
 # syllables. The layout path needs that grouping to know where a word ends and
 # a space belongs; the in-place path just joins it back with spaces.
+#
+# Long enough to WRAP on purpose. Measured at 1162px against a 1152px margin --
+# 1.01x, which is the most informative width there is: greedy filling strands a
+# single word alone on the second row, so the balancing pass has to earn its
+# place. It also puts a layout preset's own wrapping and libass's side by side
+# in the same preview, which is the only way to see how far apart they land.
 DEMO_WORDS: list[tuple[str, list[str]]] = [
     ("Brilha", ["Bri", "lha"]),
     ("estrela", ["es", "tre", "la"]),
     ("acorda", ["a", "cor", "da"]),
+    ("o", ["o"]),
+    ("mundo", ["mun", "do"]),
+    ("inteiro", ["in", "tei", "ro"]),
+    ("dorme", ["dor", "me"]),
 ]
 SYL_COUNT = sum(len(s) for _, s in DEMO_WORDS)
 
@@ -46,6 +56,9 @@ LEAD_CS = 40         # blank head, so a lead-in effect has room to lead in
 WIDTH, HEIGHT = 1280, 720
 DESIGN_HEIGHT = 720
 MARGIN_V = 300       # both paths sit here, so the effects are comparable
+# Must be the ratio _build_layout_events wraps against, or the two paths wrap
+# at different widths and the preview compares them unfairly.
+MARGIN_LR = round(WIDTH * SIDE_MARGIN_RATIO)
 
 # The ASS Style below, as data, for the layout path. fontsize/margin_v/name
 # must match the "Demo" Style row exactly or a positioned syllable lands
@@ -130,9 +143,9 @@ def build_ass(effect_ids: list[str] | None = None) -> tuple[str, int]:
         f"{DEMO_STYLE.secondary_color},{DEMO_STYLE.primary_color},"
         f"{DEMO_STYLE.outline_color},{DEMO_STYLE.back_color},-1,0,0,0,"
         f"100,100,0,0,1,{DEMO_STYLE.outline},{DEMO_STYLE.shadow},"
-        f"{DEMO_STYLE.alignment},60,60,{MARGIN_V},1\n"
+        f"{DEMO_STYLE.alignment},{MARGIN_LR},{MARGIN_LR},{MARGIN_V},1\n"
         "Style: Label,Segoe UI Bold,36,&H00FF9664,&H00FF9664,&H00000000,&H50000000,-1,0,0,0,"
-        "100,100,0,0,1,2,1,8,60,60,70,1\n\n"
+        f"100,100,0,0,1,2,1,8,{MARGIN_LR},{MARGIN_LR},70,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )

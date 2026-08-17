@@ -37,19 +37,63 @@ def _greedy(widths: list[float], gaps: list[float], max_width: float) -> list[li
     return [line for line in lines if line]
 
 
+def _unbreakable(gaps: list[float]) -> list[list[int]]:
+    r"""Index groups that must share a row: split only where a gap actually is.
+
+    gaps[i] == 0 means token i is glued to i + 1, which is how a word's
+    syllables are handed to us. Wrapping over raw syllables puts a row break
+    wherever the margin happens to fall, and the lyrics come apart mid-word --
+    "dorme" drawn as "dor" closing one row and "me" opening the next.
+    """
+    groups: list[list[int]] = []
+    current: list[int] = []
+    for index, gap in enumerate(gaps):
+        current.append(index)
+        if gap > 0:
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    return groups
+
+
 def _wrap(widths: list[float], gaps: list[float], max_width: float) -> list[list[int]]:
     """Balanced line breaking. gaps[i] is the gap that FOLLOWS token i."""
     if not widths:
         return []
-    lines = _greedy(widths, gaps, max_width)
+    groups = _unbreakable(gaps)
+    # Wrap over whole words; each word's own width is the sum of its syllables,
+    # and the gap after a word is the one following its last syllable.
+    group_widths = [sum(widths[i] for i in g) for g in groups]
+    group_gaps = [gaps[g[-1]] for g in groups]
+
+    def rows(budget: float) -> list[list[int]]:
+        return [
+            [i for g in row for i in groups[g]]
+            for row in _greedy(group_widths, group_gaps, budget)
+        ]
+
+    lines = rows(max_width)
     if len(lines) <= 1:
         return lines
-    # Re-fill against a narrower budget so the last line is not left stranded,
-    # keeping the line count the greedy pass established.
-    total = sum(widths) + sum(gaps[:-1])
-    target = max(max(widths), total / len(lines))
-    balanced = _greedy(widths, gaps, target)
-    return balanced if len(balanced) == len(lines) else lines
+
+    # Balance by squeezing the budget: the narrowest budget that still fits in
+    # the row count greedy found is the one whose longest row is shortest, which
+    # is what "balanced" means. Found by bisection over whole pixels.
+    #
+    # The obvious cheaper move -- try total / row_count once and keep it if the
+    # row count happens to match -- is what this replaced. That budget usually
+    # does NOT hold the count, so it fell back to the greedy fill and rendered a
+    # full row followed by one stranded word.
+    lo, hi = int(max(group_widths)), int(max_width)
+    target = hi
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if len(rows(mid)) <= len(lines):
+            target, hi = mid, mid - 1
+        else:
+            lo = mid + 1
+    return rows(target)
 
 
 def wrap(

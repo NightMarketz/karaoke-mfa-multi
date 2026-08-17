@@ -366,7 +366,12 @@ def _build_layout_events(
         max_width=width_px * (1 - 2 * SIDE_MARGIN_RATIO),
         centre_x=width_px / 2,
         bottom_y=height_px - round(style.margin_v * scale),
-        line_height=ass_size * 1.2,
+        # Exactly the ASS Fontsize, which is what libass stacks rows by. Not a
+        # coincidence and not a guess: a Fontsize IS ascender + descender (the
+        # same fact fonts.py derives measure() from), so it already is the
+        # face's natural line height. Measured against a libass-wrapped render
+        # of the same text: libass 74px, and the 1.2x this replaced gave 89.
+        line_height=ass_size,
     )
 
     chosen = EFFECTS[effect] if effect in EFFECTS else EFFECTS[DEFAULT_EFFECT]
