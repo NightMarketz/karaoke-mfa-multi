@@ -85,7 +85,7 @@ The risk is specific: with `\pos` per syllable we own placement completely, so P
 - Consumes: nothing.
 - Produces: a go/no-go decision recorded in this plan file, plus the measured max intra-word error in pixels.
 
-- [ ] **Step 1: Write the spike**
+- [x] **Step 1: Write the spike**
 
 ```python
 # scratch/spike_metrics.py
@@ -167,13 +167,13 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: Run the spike and read the numbers**
+- [x] **Step 2: Run the spike and read the numbers**
 
 Run: `python scratch/spike_metrics.py`
 
 Note: a single Dialogue cannot hold several `\pos` tags — only the first wins. Emit **one Dialogue per syllable** for variant B instead; edit `render` to take a list of event lines. Fix this while running the spike; it is the same constraint T6 lives under.
 
-- [ ] **Step 3: Record the gate decision in this file**
+- [x] **Step 3: Record the gate decision in this file**
 
 Write the measured `width error` into the table below and pick a branch.
 
@@ -183,7 +183,75 @@ Write the measured `width error` into the table below and pick a branch.
 | 3–6px | **Go, degraded.** Position per **word**, and let libass lay out syllables inside the word. T7 loses per-syllable `offset_x`; scale/rotate become per-word. Update T5/T7 before starting them. |
 | > 6px | **No-go.** Drop the layout branch. T7/T9 ship with in-place properties only (`scale_y`, `alpha`, `blur`, `outline`), and per-word motion waits for the GPU compiler. |
 
-- [ ] **Step 4: Commit the decision**
+#### GATE RESULT (2026-08-17): **GO** — max intra-word error **1px**, mean 0.30px
+
+**Measured:** 30 of 30 syllable placements — 2 faces (Segoe UI Bold, Segoe UI
+Black) × 3 words (`Arrastapracima` 6 syl, `Vocêtambém` 4 syl, `Toqueiaporta`
+5 syl), ASS `Fontsize 84` at 1920×1080. 0 of 30 placements exceeded 2px.
+
+**The spike as drafted measured the wrong thing** and had to be rebuilt. It
+compared the whole word's ink width, which reports side bearings rather than
+where syllable 3 lands, and — as the plan warned — put several `\pos` tags in
+one Dialogue. What it now measures per syllable *i*:
+
+- **A_i** — the whole word in one Dialogue, every syllable but *i* hidden with
+  `\alpha&HFF&`. Alpha does not move the pen, so the visible glyph sits exactly
+  where libass's own layout puts it.
+- **C_i** — syllable *i* alone at `\pos(X0)`. `A_i.left − C_i.left` is libass's
+  true advance for the prefix, with the glyph's left side bearing cancelling
+  exactly. This is a measurement of libass, not a formula guessed at it.
+- **B_i** — syllable *i* alone at `\pos(X0 + our_advance)`. `|A_i.left −
+  B_i.left|` is the error the gate is about.
+
+**Two real bugs the gate caught, and they are both production findings, not
+spike trivia.** They are why `measure()` in T4 cannot be written as the plan
+drafts it:
+
+1. **An ASS `Fontsize` is not an em size.** libass sizes a face so that
+   ascender + descender equals `Fontsize`; `ImageFont.truetype(path, S)` treats
+   `S` as the em size. For Segoe UI that is a flat **0.75184×**, and the first
+   run reported a 129px "metrics error" that was one scale factor applied 30
+   times. The correct size is
+
+   ```python
+   px = ass_fontsize * REF_PPEM / sum(ImageFont.truetype(ttf, REF_PPEM).getmetrics())
+   ```
+
+   which reproduces `upem / (hhea_ascender − hhea_descender)` = 2048 / 2724 for
+   both faces, without parsing font tables.
+
+2. **Read that ratio, and every advance, at a high reference ppem.**
+   `getmetrics()` rounds ascent and descent to whole pixels, and FreeType
+   hinting quantises each glyph advance at the target ppem. Both errors are
+   systematic and accumulate along the word: at 84ppem they were worth 5px by
+   the last syllable. Measure at `REF_PPEM = 1024` and scale linearly.
+
+With both fixed, a least-squares fit of libass's measured advances against ours
+lands at **0.9958 (Segoe UI Bold)** and **0.9980 (Segoe UI Black)** — both
+within the ±0.5px ink-column noise of 1.0, so the factor is derivable from the
+font and needs no per-face calibration.
+
+**Negative control.** Not fabricated: the harness was seen red twice, on real
+defects — 129px with the em-size reading, 4px with the quantised ppem — and
+green at 1px once the size mapping was right. It discriminates.
+
+**Consequences for later tasks (binding):**
+- **T4** must use the derivation above. The drafted `measure()` uses
+  `size_px = round(style.fontsize * scale)` directly as the Pillow size, which
+  is 33% too large. The drafted T4 tests do not catch this — additivity and
+  monotonicity are both scale-invariant — so T4 gains a test that pins the
+  absolute scale against a known advance.
+- **T6** must pass the ASS `Fontsize` to `measure()`, not a pixel size it has
+  already converted.
+- Presets name `fontname="Segoe UI Bold"`, which is a family+subfamily pair and
+  not a family. The T4 resolver as drafted matches families exactly and would
+  raise `FontNotFound` on every shipped preset; the T4 test only exercises
+  `"Segoe UI Black"`, which *is* a real family, so it would have passed anyway.
+  T4 must strip trailing style words and gains a test for it.
+
+Spike: `scratch/spike_metrics.py`, throwaway, not committed.
+
+- [x] **Step 4: Commit the decision**
 
 The spike script is throwaway and stays out of git. Commit only this plan file.
 
