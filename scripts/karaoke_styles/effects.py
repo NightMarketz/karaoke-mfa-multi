@@ -121,24 +121,36 @@ EFFECTS: dict[str, Effect | TextEffect] = {
 
     # Rises into place from 80px below, arriving exactly on the attack, fading
     # up on the way so it does not slide in as a solid block.
+    #
+    # The 160ms lead is the load-bearing number, not the 80px. Syllables land
+    # roughly 200ms apart, so the first draft's 260ms lead had a syllable
+    # already in flight while the one before it was still being sung: the word
+    # visibly tore in half for the duration ("mun" seated, "do" still below).
+    # Keeping the flight shorter than a syllable's own gap keeps a word whole.
     "fly-in": Effect("fly-in", (
-        Track("offset_y", ((-260, 80.0), (0, 0.0)), accel=0.6),
-        Track("alpha", ((-260, 0.0), (-60, 1.0))),
+        Track("offset_y", ((-160, 80.0), (0, 0.0)), accel=0.6),
+        Track("alpha", ((-160, 0.0), (-40, 1.0))),
     )),
     # Tips in from -9 degrees and settles level. \org keeps the pivot on the
     # syllable, so a word at the frame edge does not swing off screen.
     # The leading 0.0 is the RESTING pose (see below) -- without it the whole
     # not-yet-sung tail of the line sat permanently at -9 and read as italic.
+    # -14, not the -9 of the first draft: measured on a burned frame, -9 moved
+    # the glyph's top corner 2px on a 44px cap height and read as a rendering
+    # artefact rather than as motion.
     "swing": Effect("swing", (
-        Track("rotate", ((-200, 0.0), (-120, -9.0), (0, 0.0)), accel=0.5),
+        Track("rotate", ((-200, 0.0), (-110, -14.0), (0, 0.0)), accel=0.5),
     )),
     # Uniform overshoot — the scale the old \fscy pop could not do without
     # reflowing, now safe because each syllable owns its position.
     # Rests at 1.0 for the same reason, and one sharper than swing's: a
     # syllable drawn narrower than the width we measured shrinks toward its own
     # \pos, so every unsung word visibly came apart ("i lu são").
+    # 0.88 -> 1.22, not the first draft's 0.92 -> 1.12: that delivered 6px of
+    # excursion on a 43px cap height, measured off a burned frame. Present, but
+    # small enough to pass for a compression artefact.
     "punch": Effect("punch", (
-        Track("scale", ((-80, 1.0), (0, 0.92), (110, 1.12), (260, 1.0)), accel=0.7),
+        Track("scale", ((-80, 1.0), (0, 0.88), (110, 1.22), (280, 1.0)), accel=0.7),
     )),
 }
 
