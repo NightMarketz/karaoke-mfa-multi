@@ -1926,8 +1926,8 @@ git commit -m "feat(preview): render any single effect from the registry"
 
 ## Execution notes (2026-08-17)
 
-All 11 tasks executed, 63 of 63 steps. Suite: **693 passed, 151 subtests, 0
-failed** — 626 pre-existing plus 67 added here. Every fence was watched red
+All 11 tasks executed, 63 of 63 steps. Suite: **694 passed, 151 subtests, 0
+failed** — 626 pre-existing plus 68 added here. Every fence was watched red
 under a prescribed sabotage before being trusted; two claimed fences did *not*
 go red on the first try and had to be rewritten (noted below).
 
@@ -1984,6 +1984,13 @@ wrong font size sails straight through them.
   looking italic. Both now rest neutral and wind up into the attack; `fly-in`
   keeps its displaced rest because it also rests invisible. Fenced by
   `test_motion_presets_rest_in_a_neutral_pose`.
+
+**Found at the end, by running the thing rather than the tests:**
+`effects.py` carries an assert-based self-check that nothing executed, and
+it had been broken since fly-in shipped — it asserted every `	` starts
+exactly at the offset handed in, which a lead-in effect correctly violates.
+Rewritten as a shift invariant with a cardinality guard, and the suite now
+runs it as a subprocess.
 
 **T10 — the preview was writing the Style colour fields un-swapped**, so every
 effect previewed filling the opposite way from how it burns. Now swapped the
