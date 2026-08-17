@@ -26,13 +26,37 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from dataclasses import replace  # noqa: E402
+
 from scripts.karaoke_styles.effects import EFFECTS  # noqa: E402
-from scripts.karaoke_styles.library import KaraokeStyle  # noqa: E402
+from scripts.karaoke_styles.library import KaraokeStyle, get_preset  # noqa: E402
 from scripts.s06_generate_ass import (  # noqa: E402
     SIDE_MARGIN_RATIO,
     _build_karaoke_text,
     _build_layout_events,
+    style_row,
 )
+
+# Which preset's LOOK each effect is shown in. Eight of the ten are the preset
+# that actually ships the effect, so what you see is what that preset burns.
+#
+# Two are not, and the difference matters when reading the result:
+#   highlight  18 presets select it; pill is the flagship modern one.
+#   none       NO preset selects it. The style here is borrowed, so this block
+#              shows the effect faithfully and the pairing not at all.
+PRESET_FOR_EFFECT = {
+    "flash": "cyberpunk",
+    "fly-in": "fly-in",
+    "focus": "focus-pull",
+    "highlight": "pill",
+    "none": "bold-highlight",     # borrowed: bold-highlight itself selects highlight
+    "pop": "word-pop",
+    "punch": "punch",
+    "reveal": "word-reveal",
+    "swing": "swing",
+    "typewriter": "typewriter",
+}
+BORROWED_STYLE = {"none"}
 
 # Fake lyrics, grouped the way analysis.json groups them: words made of
 # syllables. The layout path needs that grouping to know where a word ends and
@@ -126,6 +150,21 @@ def _demo_line(attack_cs: int) -> dict:
     }
 
 
+def _style_for(effect: str, style_key: str, *, one_style: bool) -> KaraokeStyle:
+    r"""The KaraokeStyle this effect's block is drawn in, with a unique name.
+
+    Each effect gets its own preset's look by default, taken at the LINE's own
+    section key -- so a chorus line is drawn in the preset's chorus style, not
+    in some stand-in. The ASS Style name has to be unique per (effect, section)
+    or the ten blocks would all collide on one row named "Verse".
+    """
+    if one_style:
+        return DEMO_STYLE
+    preset = get_preset(PRESET_FOR_EFFECT.get(effect, "pill"))
+    style = preset.styles.get(style_key) or preset.styles["verse"]
+    return replace(style, name=f"{effect}~{style_key}")
+
+
 def _shift_line(line: dict, delta_s: float) -> dict:
     """A copy of an analysis line with every timestamp moved by delta_s."""
     out = copy.deepcopy(line)
@@ -159,11 +198,16 @@ def build_ass(
     effect_ids: list[str] | None = None,
     *,
     lines: list[dict] | None = None,
+    one_style: bool = False,
 ) -> tuple[str, int]:
     """(ass text, total centiseconds). Unknown effect ids raise KeyError.
 
     `lines` are analysis.json-shaped lyric lines to play once per effect; the
     built-in demo phrase is used when they are not given.
+
+    Each effect is drawn in its own preset's look. `one_style` puts every one
+    of them in the same style instead, which isolates the effect as the only
+    variable -- useful for judging motion, useless for judging what ships.
     """
     showcase = sorted(EFFECTS) if effect_ids is None else list(effect_ids)
     unknown = [name for name in showcase if name not in EFFECTS]
@@ -178,6 +222,20 @@ def build_ass(
         block_cs = PREROLL_CS + span_cs + POSTROLL_CS + HOLD_CS
     else:
         block_cs = LEAD_CS + SYL_COUNT * SYL_CS + HOLD_CS
+    # Every (effect, section) pair in play needs its own Style row. Collected
+    # first so the header can be written before the events that reference it.
+    section_keys = sorted({str(ln.get("style") or "verse") for ln in lines}) if lines \
+        else ["verse"]
+    used: dict[str, KaraokeStyle] = {}
+    for name in showcase:
+        for key in section_keys:
+            s = _style_for(name, key, one_style=one_style)
+            used[s.name] = s
+
+    scale = HEIGHT / DESIGN_HEIGHT
+    style_rows = "\n".join(
+        style_row(s, scale=scale, margin_lr=MARGIN_LR) for s in used.values()
+    )
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -187,15 +245,7 @@ def build_ass(
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        # \kf sweeps ASS SecondaryColour -> PrimaryColour, so the sung fill goes
-        # in the Primary field. Swapped here exactly as s06 swaps it: the old
-        # preview wrote the fields straight through and previewed every effect
-        # filling the opposite way from how it burns.
-        f"Style: Demo,{DEMO_STYLE.fontname},{DEMO_STYLE.fontsize},"
-        f"{DEMO_STYLE.secondary_color},{DEMO_STYLE.primary_color},"
-        f"{DEMO_STYLE.outline_color},{DEMO_STYLE.back_color},-1,0,0,0,"
-        f"100,100,0,0,1,{DEMO_STYLE.outline},{DEMO_STYLE.shadow},"
-        f"{DEMO_STYLE.alignment},{MARGIN_LR},{MARGIN_LR},{MARGIN_V},1\n"
+        f"{style_rows}\n"
         "Style: Label,Segoe UI Bold,36,&H00FF9664,&H00FF9664,&H00000000,&H50000000,-1,0,0,0,"
         f"100,100,0,0,1,2,1,8,{MARGIN_LR},{MARGIN_LR},70,1\n\n"
         "[Events]\n"
@@ -222,10 +272,13 @@ def build_ass(
             windows = [(_demo_line(block_start + LEAD_CS), block_start, block_end)]
 
         for line, win_start, win_end in windows:
+            style = _style_for(
+                name, str(line.get("style") or "verse"), one_style=one_style
+            )
             if EFFECTS[name].needs_layout:
                 events += _build_layout_events(
-                    line, DEMO_STYLE,
-                    scale=HEIGHT / DESIGN_HEIGHT,
+                    line, style,
+                    scale=scale,
                     play_res=(WIDTH, HEIGHT),
                     fade_tag=fade,
                     start_ts=_ts(win_start), end_ts=_ts(win_end),
@@ -243,7 +296,8 @@ def build_ass(
                     line_style=line.get("style"),
                 )
                 events.append(
-                    f"Dialogue: 0,{_ts(win_start)},{_ts(win_end)},Demo,,0,0,0,,{fade}{text}"
+                    f"Dialogue: 0,{_ts(win_start)},{_ts(win_end)},{style.name},"
+                    f",0,0,0,,{fade}{text}"
                 )
 
         events.append(
@@ -267,6 +321,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="index of the first --job line to play (default 0)")
     parser.add_argument("--lines", type=int, default=4, metavar="N",
                         help="how many --job lines to play, 0 for all (default 4)")
+    parser.add_argument("--one-style", action="store_true",
+                        help="draw every effect in the same style, isolating the "
+                             "effect as the only variable")
     parser.add_argument("-o", "--out", default="effects_preview", metavar="NAME",
                         help="output basename under scratch/ (default effects_preview)")
     args = parser.parse_args(argv)
@@ -280,7 +337,9 @@ def main(argv: list[str] | None = None) -> int:
             job_lines(args.job, first=args.first, count=args.lines or None)
             if args.job else None
         )
-        ass_content, total_cs = build_ass(args.effects or None, lines=lines)
+        ass_content, total_cs = build_ass(
+            args.effects or None, lines=lines, one_style=args.one_style
+        )
     except KeyError as exc:
         print(exc.args[0], file=sys.stderr)
         return 2

@@ -424,6 +424,36 @@ def _bool_to_ass(b: bool) -> str:
     return "-1" if b else "0"
 
 
+def style_row(
+    style: KaraokeStyle,
+    *,
+    scale: float,
+    margin_lr: int,
+    name: str | None = None,
+) -> str:
+    r"""One [V4+ Styles] row for a preset style.
+
+    Its own function because it is written in two places -- here and in the
+    effect preview -- and the two details it encodes are both easy to get
+    silently wrong. libass \kf sweeps SecondaryColour -> PrimaryColour, so the
+    designer-facing secondary_color ("sung fill") goes in the ASS PRIMARY
+    field; a straight-through copy previews every effect filling backwards.
+    And every preset pixel is authored at 720p, so it scales here or the render
+    is the wrong size at any other height. The preview got both wrong while it
+    kept its own copy.
+    """
+    return (
+        f"Style: {name or style.name},"
+        f"{style.fontname},{round(style.fontsize * scale)},"
+        f"{style.secondary_color},{style.primary_color},"
+        f"{style.outline_color},{style.back_color},"
+        f"{_bool_to_ass(style.bold)},{_bool_to_ass(style.italic)},0,0,"
+        f"100,100,0,0,{style.border_style},"
+        f"{round(style.outline * scale, 1)},{round(style.shadow * scale, 1)},"
+        f"{style.alignment},{margin_lr},{margin_lr},{round(style.margin_v * scale)},1"
+    )
+
+
 def _generate_ass(
     lines:   list[dict],
     styles:  dict[str, KaraokeStyle],
@@ -469,20 +499,7 @@ YCbCr Matrix: TV.601
                    "Alignment, MarginL, MarginR, MarginV, Encoding"]
 
     for style_key, s in styles.items():
-        # libass \kf sweeps SecondaryColour -> PrimaryColour, so the ASS
-        # PrimaryColour field must carry our "sung fill" (secondary_color) and
-        # SecondaryColour our "not-yet-sung" (primary_color). Presets keep the
-        # designer-intuitive field names; the mapping is swapped here, at the
-        # single write point.
-        style_lines.append(
-            f"Style: {s.name},"
-            f"{s.fontname},{round(s.fontsize * scale)},"
-            f"{s.secondary_color},{s.primary_color},{s.outline_color},{s.back_color},"
-            f"{_bool_to_ass(s.bold)},{_bool_to_ass(s.italic)},0,0,"
-            f"100,100,0,0,{s.border_style},"
-            f"{round(s.outline * scale, 1)},{round(s.shadow * scale, 1)},"
-            f"{s.alignment},{margin_lr},{margin_lr},{round(s.margin_v * scale)},1"
-        )
+        style_lines.append(style_row(s, scale=scale, margin_lr=margin_lr))
 
     styles_section = "\n".join(style_lines)
 
