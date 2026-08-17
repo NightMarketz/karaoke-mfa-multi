@@ -277,7 +277,7 @@ git commit -m "docs: record font-metrics gate decision for the keyframe effect l
   - `resolve(track: Track, *, attack_ms: int, duration_ms: int) -> list[tuple[int, float]]` — keys as absolute line-relative milliseconds, sorted, duplicates at the same time collapsed keeping the last.
   - `Effect.needs_layout -> bool` — true when any track animates a `LAYOUT_PROPS` property.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_keyframes.py
@@ -358,12 +358,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_keyframes.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.karaoke_styles.keyframes'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # scripts/karaoke_styles/keyframes.py
@@ -443,17 +443,17 @@ def resolve(track: Track, *, attack_ms: int, duration_ms: int) -> list[tuple[int
     return sorted(resolved.items())
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_keyframes.py -v`
 Expected: PASS, 8 tests.
 
-- [ ] **Step 5: Negative control**
+- [x] **Step 5: Negative control**
 
 Change `max(0, int(round(...)))` to `int(round(...))` in `resolve`. Run
 `python -m pytest tests/test_keyframes.py -v`. Expected: `test_resolved_time_never_goes_negative` FAILS with `[(-300, 0.0), (200, 1.0)] != [(0, 0.0), (200, 1.0)]`. Restore the clamp and confirm green again.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/karaoke_styles/keyframes.py tests/test_keyframes.py
@@ -475,7 +475,7 @@ git commit -m "feat(effects): engine-neutral keyframe model for syllable effects
   - `unsupported_props(effect: Effect) -> set[str]` — properties this compiler cannot deliver.
   - `PROP_TAG: dict[str, callable]` — the property→tag table.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_ass_compile.py
@@ -559,12 +559,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_ass_compile.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.karaoke_styles.ass_compile'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # scripts/karaoke_styles/ass_compile.py
@@ -645,16 +645,16 @@ def compile_syllable(
     return f"{{{''.join(statics)}{''.join(transforms)}\\kf{duration_cs}}}{text}"
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_ass_compile.py -v`
 Expected: PASS, 10 tests.
 
-- [ ] **Step 5: Negative control on the anchoring rule**
+- [x] **Step 5: Negative control on the anchoring rule**
 
 In `compile_syllable`, change `resolve(track, attack_ms=attack_ms, ...)` to `resolve(track, attack_ms=0, ...)`. Run `python -m pytest tests/test_ass_compile.py -v`. Expected: `test_first_key_becomes_a_static_tag_and_the_rest_become_transforms` FAILS showing `\t(0,90,...)` instead of `\t(800,890,...)`. Restore and confirm green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/karaoke_styles/ass_compile.py tests/test_ass_compile.py
@@ -678,7 +678,7 @@ it and inventing one for a single effect would be speculative.
 - Consumes: `Effect`, `Track` (T1); `compile_syllable`, `unsupported_props` (T2).
 - Produces: `EFFECTS: dict[str, Effect | TextEffect]`; `syllable_ass(...)` keeps its exact current signature `(effect, duration_cs, text, *, offset_ms=0, style_effect=DEFAULT_EFFECT) -> str`.
 
-- [ ] **Step 1: Capture the current output as a golden file**
+- [x] **Step 1: Capture the current output as a golden file**
 
 Run this before touching `effects.py`:
 
@@ -701,7 +701,7 @@ EOF
 
 Expected: `7 effects captured`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```python
 # tests/test_effect_port_regression.py
@@ -740,12 +740,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 3: Run it — it must PASS before the port**
+- [x] **Step 3: Run it — it must PASS before the port**
 
 Run: `python -m pytest tests/test_effect_port_regression.py -v`
 Expected: PASS. This is the control: the golden matches the implementation it was captured from. If it fails now, the capture is wrong — fix that before continuing.
 
-- [ ] **Step 4: Rewrite `effects.py` over the language**
+- [x] **Step 4: Rewrite `effects.py` over the language**
 
 Replace the effect function bodies. `_sweep` becomes an empty-track effect, and the ordering of static tags must reproduce the golden exactly — `\be1` before the transforms in the ported effects.
 
@@ -823,12 +823,12 @@ def syllable_ass(
     return token.replace("\\kf", f"{SOFT_EDGE}\\kf", 1)
 ```
 
-- [ ] **Step 5: Run the regression and the whole suite**
+- [x] **Step 5: Run the regression and the whole suite**
 
 Run: `python -m pytest tests/test_effect_port_regression.py tests/ -q`
 Expected: PASS — 626 existing tests plus the new ones, zero failures. Any diff in the golden is a real behaviour change: fix the port, do not edit the golden.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/karaoke_styles/effects.py tests/test_effect_port_regression.py tests/golden/effect_tokens.json
@@ -852,7 +852,7 @@ git commit -m "refactor(effects): define the shipped effects as keyframe data"
   - `measure(text: str, *, font_path: Path, size_px: int, spacing: float = 0.0) -> float` — advance width in pixels.
   - `class FontNotFound(RuntimeError)`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_fonts.py
@@ -917,12 +917,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_fonts.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.karaoke_styles.fonts'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # scripts/karaoke_styles/fonts.py
@@ -1028,16 +1028,16 @@ def measure(text: str, *, font_path: Path, size_px: int, spacing: float = 0.0) -
     return width + spacing * len(text)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_fonts.py -v`
 Expected: PASS on Windows, 6 tests. On Linux/macOS: 6 skipped, which is correct — the layout path is Windows-first because the presets name Windows faces.
 
-- [ ] **Step 5: Negative control**
+- [x] **Step 5: Negative control**
 
 In `measure`, change `spacing * len(text)` to `spacing * (len(text) - 1)`. Run `python -m pytest tests/test_fonts.py -v`. Expected: `test_spacing_adds_one_gap_per_character` FAILS with a 5px difference. Restore and confirm green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/karaoke_styles/fonts.py tests/test_fonts.py
@@ -1064,7 +1064,7 @@ count, then re-balance to that count.
   - `wrap(tokens: list[str], widths: list[float], space_width: float, max_width: float) -> list[list[int]]` — token indices per visual line.
   - `place(syllables, *, widths, space_after, max_width, centre_x, bottom_y, line_height) -> list[Placed]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_layout.py
@@ -1133,12 +1133,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_layout.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.karaoke_styles.layout'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # scripts/karaoke_styles/layout.py
@@ -1233,16 +1233,16 @@ def place(
     return placed
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_layout.py -v`
 Expected: PASS, 8 tests.
 
-- [ ] **Step 5: Negative control**
+- [x] **Step 5: Negative control**
 
 In `place`, change `x = centre_x - run / 2` to `x = centre_x`. Run `python -m pytest tests/test_layout.py -v`. Expected: both `PlaceTests` centring tests FAIL (`500.0 != 445.0`). Restore and confirm green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/karaoke_styles/layout.py tests/test_layout.py
@@ -1261,7 +1261,7 @@ git commit -m "feat(layout): balanced wrapping and per-syllable placement"
 - Consumes: `Placed`, `place` (T5); `resolve_font_path`, `measure` (T4); `compile_syllable` (T2); `Effect.needs_layout` (T1).
 - Produces: `_build_layout_events(line, style, *, scale, play_res, fade_tag, start_ts, end_ts, effect) -> list[str]` in `s06_generate_ass.py`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_s06_layout_events.py
@@ -1343,12 +1343,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_s06_layout_events.py -v`
 Expected: FAIL — `ImportError: cannot import name '_build_layout_events'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add to `scripts/s06_generate_ass.py`:
 
@@ -1453,16 +1453,16 @@ Then wire it into the event loop, replacing the single `event_lines.append(...)`
             )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_s06_layout_events.py tests/ -q`
 Expected: PASS. The whole existing suite stays green because no shipped preset sets a layout effect yet — T9 is the first to do that.
 
-- [ ] **Step 5: Negative control**
+- [x] **Step 5: Negative control**
 
 In `_build_layout_events`, change `lead = f"{{\\k{lead_cs}}}" if lead_cs > 0 else ""` to `lead = ""`. Run `python -m pytest tests/test_s06_layout_events.py -v`. Expected: `test_each_event_carries_the_full_line_karaoke_clock` FAILS. Restore and confirm green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/s06_generate_ass.py tests/test_s06_layout_events.py
@@ -1482,7 +1482,7 @@ git commit -m "feat(ass): emit one positioned Dialogue per syllable for layout e
 - Consumes: everything from T2 and T6.
 - Produces: `compile_syllable(effect, *, text, duration_cs, attack_ms, anchor: tuple[float, float] | None = None) -> str`. When `anchor` is given, `offset_x`/`offset_y` compile to `\move` and `rotate` compiles to `\frz` with `\org` at the anchor.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # append to tests/test_ass_compile.py
@@ -1528,12 +1528,12 @@ class LayoutPropertyTests(unittest.TestCase):
         self.assertEqual({"glow"}, unsupported_props(effect, anchored=True))
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_ass_compile.py -k Layout -v`
 Expected: FAIL — `TypeError: compile_syllable() got an unexpected keyword argument 'anchor'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `ass_compile.py`:
 
@@ -1599,16 +1599,16 @@ The `\move` is built after the loop from the `offset_x`/`offset_y` tracks:
 
 When a `\move` is emitted, `_build_layout_events` must **not** also emit `\pos` — the two conflict and libass keeps whichever it parses first. Have `compile_syllable` return the token and let `_build_layout_events` check `"\\move(" in token` before adding its `\pos`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_ass_compile.py tests/ -q`
 Expected: PASS, all suites.
 
-- [ ] **Step 5: Negative control**
+- [x] **Step 5: Negative control**
 
 Remove the `\org` append. Run `python -m pytest tests/test_ass_compile.py -k rotation -v`. Expected: `test_rotation_pins_its_origin_to_the_anchor` FAILS on the missing `\org(100,500)`. Restore and confirm green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/karaoke_styles/ass_compile.py scripts/s06_generate_ass.py tests/test_ass_compile.py
@@ -1630,7 +1630,7 @@ generator records what it dropped, in the job's own observability stream.
 - Consumes: `unsupported_props` (T2, T7).
 - Produces: `_effect_capability_gaps(lines: list[dict], styles: dict) -> dict[str, list[str]]` — effect id → sorted property names the ASS compiler dropped. Emitted through the existing `write_event` as `stage06.effect_capability_gap`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_s06_capability_report.py
@@ -1671,12 +1671,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_s06_capability_report.py -v`
 Expected: FAIL — `ImportError: cannot import name '_effect_capability_gaps'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 def _effect_capability_gaps(lines: list[dict], styles: dict) -> dict[str, list[str]]:
@@ -1703,16 +1703,16 @@ Call it in `main()` right after the lines are loaded, and emit:
                        effect=effect_id, dropped=props)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_s06_capability_report.py tests/ -q`
 Expected: PASS.
 
-- [ ] **Step 5: Negative control**
+- [x] **Step 5: Negative control**
 
 Change `if missing:` to `if False:`. Run `python -m pytest tests/test_s06_capability_report.py -v`. Expected: `test_a_gap_is_reported_with_the_property_named` FAILS with `{} != {'_probe': ['glow']}`. Restore and confirm green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/s06_generate_ass.py tests/test_s06_capability_report.py
@@ -1734,7 +1734,7 @@ The first effects that could not exist before: real per-syllable motion.
 - Consumes: `Effect`, `Track` (T1); positioned emission (T6, T7).
 - Produces: effects `fly-in`, `swing`, `punch`; presets `fly-in`, `swing`, `punch` in `PRESET_LIBRARY`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # append to tests/test_karaoke_style_library.py, and extend the two lists at
@@ -1756,12 +1756,12 @@ The first effects that could not exist before: real per-syllable motion.
                 self.assertTrue(effect.needs_layout, f"{preset_id} does not move")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_karaoke_style_library.py -v`
 Expected: FAIL — `KeyError: 'Unknown karaoke style preset: fly-in'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # scripts/karaoke_styles/effects.py — added to EFFECTS
@@ -1800,7 +1800,7 @@ _PUNCH_BASE = replace(_WORD_POP_BASE, secondary_color=_c(255, 92, 141),
 PUNCH_STYLES = _modern_variants(_PUNCH_BASE, loud_fontsize=64)
 ```
 
-- [ ] **Step 4: Run tests and verify visually**
+- [x] **Step 4: Run tests and verify visually**
 
 Run: `python -m pytest tests/ -q` — expected PASS.
 
@@ -1819,11 +1819,11 @@ Dialogue text of each new preset and confirm the visible text is identical to
 `scratch/preset-preview/pill/output.ass` — 52 lines, 1401 non-space characters.
 A layout preset that loses a syllable shows up here and nowhere else.
 
-- [ ] **Step 5: Negative control**
+- [x] **Step 5: Negative control**
 
 Delete the `offset_y` track from `fly-in`. Run `python -m pytest tests/test_karaoke_style_library.py -k motion -v`. Expected: FAIL with `fly-in does not move`. Restore and confirm green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/karaoke_styles/effects.py scripts/karaoke_styles/library.py tests/test_karaoke_style_library.py
@@ -1845,7 +1845,7 @@ data, see it burned, iterate.
 - Consumes: `EFFECTS` (T3, T9); `_build_layout_events` (T6).
 - Produces: `build_ass(effect_ids: list[str] | None = None) -> tuple[str, int]`; CLI `python scripts/karaoke_styles/preview_effects.py [effect ...]`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_preview_effects.py
@@ -1883,25 +1883,25 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_preview_effects.py -v`
 Expected: FAIL — `TypeError: build_ass() takes 0 positional arguments but 1 was given`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Give `build_ass` an `effect_ids` parameter defaulting to `sorted(EFFECTS)`, raise
 `KeyError` for unknown ids, and route layout effects through
 `_build_layout_events` instead of the inline token path. Add `argparse` so the
 CLI takes effect names.
 
-- [ ] **Step 4: Run test and render**
+- [x] **Step 4: Run test and render**
 
 Run: `python -m pytest tests/test_preview_effects.py -q` — expected PASS.
 Run: `python scripts/karaoke_styles/preview_effects.py punch fly-in swing`
 Expected: `ok -> scratch/effects_preview.mp4 (Ns, 3 effects)`. Watch it.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/karaoke_styles/preview_effects.py tests/test_preview_effects.py
@@ -1921,3 +1921,100 @@ git commit -m "feat(preview): render any single effect from the registry"
 - T5's `wrap` reproduces WrapStyle 0's *intent*, not its algorithm. Lines will break at slightly different places than today for long lyrics. Only layout presets are affected; every existing preset keeps libass's own wrapping.
 - T9's motion presets are authored blind — the numbers (80px, -9°, 1.12×) are first guesses and should be tuned against the T10 preview before anyone calls them finished.
 - The layout path is Windows-first. `resolve_font_path` searches Linux font dirs too, but no preset names a face that exists there, so `FontNotFound` is the expected outcome off Windows. If the pipeline has to run on Linux, that is its own task and it is not in this plan.
+
+---
+
+## Execution notes (2026-08-17)
+
+All 11 tasks executed, 63 of 63 steps. Suite: **693 passed, 151 subtests, 0
+failed** — 626 pre-existing plus 67 added here. Every fence was watched red
+under a prescribed sabotage before being trusted; two claimed fences did *not*
+go red on the first try and had to be rewritten (noted below).
+
+### Where the plan was wrong, and what the code does instead
+
+**T0 — the spike measured the wrong thing, twice.** Comparing whole-word ink
+width reports side bearings, not where syllable 3 lands. Rebuilt to measure per
+syllable against libass's own advance (render the word with all but one
+syllable hidden by `\alpha&HFF&`; alpha does not move the pen). It then found
+two real defects that are binding on production code, not spike trivia:
+
+1. An ASS `Fontsize` is not a FreeType em size — libass fits ascender+descender
+   to it, a flat 0.752x for Segoe UI. The first run reported a 129px "metrics
+   error" that was one scale factor applied 30 times.
+2. That ratio and every advance must be read at a high reference ppem;
+   `getmetrics()` and FreeType hinting quantise to whole pixels and the error
+   accumulates along the word (5px by the last syllable at 84ppem).
+
+Gate result **GO**: max intra-word error 1px, mean 0.30px, 0 of 30 over 2px.
+
+**T4 — `measure()` could not be written as drafted**, per the above, and the
+drafted tests would not have caught it (additivity and monotonicity are both
+scale-invariant). Added an absolute-scale fence pinned to a number libass
+actually drew. Separately, weight must be matched by subfamily **word**: on
+Windows `seguibl.ttf` reports family "Segoe UI" subfamily "Black", so a boolean
+`bold` resolves "Segoe UI Black" to `segoeuib.ttf` — a real face, wrong weight,
+~7% narrower. The drafted test passed anyway because it only asked for a name
+that happens to be a real family elsewhere.
+
+**T5 — `place()` collapsed the per-syllable gaps.** Passing `max(space_after)`
+as one uniform space charges a gap between *every* syllable, so a line of 20
+syllables in 5 words is measured as if it had 19 spaces. `_greedy` already took
+per-token gaps; only `wrap` flattened them. (First version of this fence used
+all-zero gaps and stayed green under sabotage — rewritten with mixed gaps.)
+
+**T6 — anchored `\an2`, not `\an5`.** MarginV means the distance from the
+bottom of the frame to the bottom of the text, so with `\an2` the computed y is
+that edge outright and a layout preset lands on the same baseline as every
+other preset. `\an5` at the same number lifts the whole row half a line. Also
+added an end-to-end scale fence: the ordering tests are scale-invariant and a
+wrong font size sails straight through them.
+
+**T9 — two defects that only a burned frame showed.**
+
+- Attacks were measured from `line["start"]`, but `\k`, `\t` and `\move` run on
+  the **Dialogue's** clock, which starts one preroll earlier. Every animation
+  fired early, and a lead-in effect had nowhere to come from: `resolve()`
+  clamps at 0, so fly-in's first syllable per line compiled to
+  `\move(x,y,x,y,0,0)` and did not move at all.
+- A track's first key is its **resting pose**, held from the Dialogue's first
+  frame. `punch` opening on scale 0.86 drew every unsung word narrower than the
+  width we measured and placed it at, so words came apart on screen — "ilusão"
+  rendered "i lu são". `swing` opening at -9° left the whole unsung tail
+  looking italic. Both now rest neutral and wind up into the attack; `fly-in`
+  keeps its displaced rest because it also rests invisible. Fenced by
+  `test_motion_presets_rest_in_a_neutral_pose`.
+
+**T10 — the preview was writing the Style colour fields un-swapped**, so every
+effect previewed filling the opposite way from how it burns. Now swapped the
+way s06 swaps them.
+
+**T3 — `typewriter` stayed a hand-written token**, not just a `TextEffect`
+wrapper around the compiler. `compile_syllable` floors every token at 1cs,
+which is right for a syllable and wrong per character: a 2cs syllable split
+across 3 characters legitimately gives one of them `\kf0`, and flooring it adds
+time to the line's karaoke clock — the one invariant this plan forbids
+touching.
+
+**Small refactor not in the plan:** the line/style effect dispatch moved into
+`effects.resolve_effect`. s06 has to answer that question a second time (to
+decide whether the line needs the `\pos` path) and the rule has a subtlety
+worth not re-deriving. T8's report resolves through it too, which the drafted
+version did not — a preset asking for an undeliverable property would have been
+reported as nothing at all.
+
+### Reconciliation
+
+Rendered on `jobs/publi-bet` at 1920x1080: fly-in, swing and punch each emit
+**538 of 538** positioned events, and the visible text of all three is
+byte-identical to the pill baseline — **52 Dialogue lines, 1401 non-space
+characters**, with the per-line sum re-derived against the concatenation.
+
+### Still open
+
+- T9's motion numbers (80px, -9°, 1.12x) remain first guesses. They now rest
+  correctly and read cleanly, but `swing`'s -9° is subtle enough to be nearly
+  invisible in a still frame; worth a pass through `preview_effects.py` before
+  anyone calls the values finished.
+- `_effect_capability_gaps` fires through `_stage06_event`, but no shipped
+  effect has a gap, so the emitting branch has not run outside its unit test.
