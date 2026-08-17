@@ -18,15 +18,21 @@ Output: scratch/effects_preview.mp4  (+ the .ass beside it)
 from __future__ import annotations
 
 import argparse
+import copy
+import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from scripts.karaoke_styles.effects import EFFECTS, syllable_ass  # noqa: E402
+from scripts.karaoke_styles.effects import EFFECTS  # noqa: E402
 from scripts.karaoke_styles.library import KaraokeStyle  # noqa: E402
-from scripts.s06_generate_ass import SIDE_MARGIN_RATIO, _build_layout_events  # noqa: E402
+from scripts.s06_generate_ass import (  # noqa: E402
+    SIDE_MARGIN_RATIO,
+    _build_karaoke_text,
+    _build_layout_events,
+)
 
 # Fake lyrics, grouped the way analysis.json groups them: words made of
 # syllables. The layout path needs that grouping to know where a word ends and
@@ -52,6 +58,11 @@ SYL_CS = 20          # centiseconds of \kf fill per syllable (~0.20s)
 HOLD_CS = 70         # hold after the sweep completes so the line is readable
 GAP_CS = 25          # blank gap between effects
 LEAD_CS = 40         # blank head, so a lead-in effect has room to lead in
+# Head and tail around a real line's own window. The head is not decoration:
+# a lead-in effect resolves its keys against the DIALOGUE start, and with no
+# head at all resolve() clamps them and the motion collapses.
+PREROLL_CS = 30
+POSTROLL_CS = 30
 
 WIDTH, HEIGHT = 1280, 720
 DESIGN_HEIGHT = 720
@@ -115,8 +126,45 @@ def _demo_line(attack_cs: int) -> dict:
     }
 
 
-def build_ass(effect_ids: list[str] | None = None) -> tuple[str, int]:
-    """(ass text, total centiseconds). Unknown effect ids raise KeyError."""
+def _shift_line(line: dict, delta_s: float) -> dict:
+    """A copy of an analysis line with every timestamp moved by delta_s."""
+    out = copy.deepcopy(line)
+    out["start"] = float(out["start"]) + delta_s
+    out["end"] = float(out["end"]) + delta_s
+    for word in out.get("words", []):
+        for key in ("start", "end", "start_s", "end_s"):
+            if key in word:
+                word[key] = float(word[key]) + delta_s
+        for syllable in word.get("syllables") or []:
+            for key in ("start", "end", "karaoke_start", "karaoke_end"):
+                if key in syllable:
+                    syllable[key] = float(syllable[key]) + delta_s
+    return out
+
+
+def job_lines(job_dir: str | Path, *, first: int = 0, count: int | None = None) -> list[dict]:
+    r"""Real lyric lines from a job's analysis.json, for previewing on real material.
+
+    The fake demo phrase is built to stress layout (it wraps, it has short and
+    long words). Real lyrics stress something else entirely -- syllables of
+    wildly uneven duration, lines that start on a beat, words the aligner split
+    oddly -- and an effect can read perfectly on the demo and badly on a song.
+    """
+    data = json.loads((Path(job_dir) / "analysis.json").read_text(encoding="utf-8"))
+    lines = data["lines"][first:]
+    return lines[:count] if count else lines
+
+
+def build_ass(
+    effect_ids: list[str] | None = None,
+    *,
+    lines: list[dict] | None = None,
+) -> tuple[str, int]:
+    """(ass text, total centiseconds). Unknown effect ids raise KeyError.
+
+    `lines` are analysis.json-shaped lyric lines to play once per effect; the
+    built-in demo phrase is used when they are not given.
+    """
     showcase = sorted(EFFECTS) if effect_ids is None else list(effect_ids)
     unknown = [name for name in showcase if name not in EFFECTS]
     if unknown:
@@ -125,7 +173,11 @@ def build_ass(effect_ids: list[str] | None = None) -> tuple[str, int]:
             f"(known: {', '.join(sorted(EFFECTS))})"
         )
 
-    line_cs = LEAD_CS + SYL_COUNT * SYL_CS + HOLD_CS
+    if lines:
+        span_cs = round((float(lines[-1]["end"]) - float(lines[0]["start"])) * 100)
+        block_cs = PREROLL_CS + span_cs + POSTROLL_CS + HOLD_CS
+    else:
+        block_cs = LEAD_CS + SYL_COUNT * SYL_CS + HOLD_CS
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -154,36 +206,50 @@ def build_ass(effect_ids: list[str] | None = None) -> tuple[str, int]:
     fade = "{\\fad(200,200)}"
     t = 20
     for name in showcase:
-        start, end = t, t + line_cs
-        line = _demo_line(start + LEAD_CS)
-        if EFFECTS[name].needs_layout:
-            events += _build_layout_events(
-                line, DEMO_STYLE,
-                scale=HEIGHT / DESIGN_HEIGHT,
-                play_res=(WIDTH, HEIGHT),
-                fade_tag=fade,
-                start_ts=_ts(start), end_ts=_ts(end),
-                start_ms=start * 10,
-                effect=name,
-            )
+        block_start, block_end = t, t + block_cs
+
+        # (line, its own Dialogue window) pairs for this effect's block.
+        if lines:
+            base = float(lines[0]["start"]) - PREROLL_CS / 100
+            shifted = [_shift_line(ln, block_start / 100 - base) for ln in lines]
+            windows = [
+                (ln,
+                 round(float(ln["start"]) * 100) - PREROLL_CS,
+                 round(float(ln["end"]) * 100) + POSTROLL_CS)
+                for ln in shifted
+            ]
         else:
-            parts = [f"{{\\k{LEAD_CS}}}"]
-            elapsed = LEAD_CS
-            for index, (_, syllables) in enumerate(DEMO_WORDS):
-                if index:
-                    parts.append(" ")
-                for text in syllables:
-                    parts.append(
-                        syllable_ass(name, SYL_CS, text, offset_ms=elapsed * 10)
-                    )
-                    elapsed += SYL_CS
-            events.append(
-                f"Dialogue: 0,{_ts(start)},{_ts(end)},Demo,,0,0,0,,{fade}{''.join(parts)}"
-            )
+            windows = [(_demo_line(block_start + LEAD_CS), block_start, block_end)]
+
+        for line, win_start, win_end in windows:
+            if EFFECTS[name].needs_layout:
+                events += _build_layout_events(
+                    line, DEMO_STYLE,
+                    scale=HEIGHT / DESIGN_HEIGHT,
+                    play_res=(WIDTH, HEIGHT),
+                    fade_tag=fade,
+                    start_ts=_ts(win_start), end_ts=_ts(win_end),
+                    start_ms=win_start * 10,
+                    effect=name,
+                )
+            else:
+                # s06's own builder, not a second copy of it: this is what
+                # burns, gap absorption and \kf quantisation included.
+                text = _build_karaoke_text(
+                    line["words"],
+                    round(float(line["start"]) * 1000),
+                    name,
+                    style_effect=name,
+                    line_style=line.get("style"),
+                )
+                events.append(
+                    f"Dialogue: 0,{_ts(win_start)},{_ts(win_end)},Demo,,0,0,0,,{fade}{text}"
+                )
+
         events.append(
-            f"Dialogue: 0,{_ts(start)},{_ts(end)},Label,,0,0,0,,{fade}{name}"
+            f"Dialogue: 0,{_ts(block_start)},{_ts(block_end)},Label,,0,0,0,,{fade}{name}"
         )
-        t = end + GAP_CS
+        t = block_end + GAP_CS
     return header + "\n".join(events) + "\n", t
 
 
@@ -193,6 +259,16 @@ def main(argv: list[str] | None = None) -> int:
         "effects", nargs="*",
         help=f"effect ids to preview (default: all). Known: {', '.join(sorted(EFFECTS))}",
     )
+    parser.add_argument(
+        "--job", metavar="DIR",
+        help="play real lyrics from this job's analysis.json instead of the demo phrase",
+    )
+    parser.add_argument("--first", type=int, default=0, metavar="N",
+                        help="index of the first --job line to play (default 0)")
+    parser.add_argument("--lines", type=int, default=4, metavar="N",
+                        help="how many --job lines to play, 0 for all (default 4)")
+    parser.add_argument("-o", "--out", default="effects_preview", metavar="NAME",
+                        help="output basename under scratch/ (default effects_preview)")
     args = parser.parse_args(argv)
 
     if not shutil.which("ffmpeg"):
@@ -200,15 +276,22 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        ass_content, total_cs = build_ass(args.effects or None)
+        lines = (
+            job_lines(args.job, first=args.first, count=args.lines or None)
+            if args.job else None
+        )
+        ass_content, total_cs = build_ass(args.effects or None, lines=lines)
     except KeyError as exc:
         print(exc.args[0], file=sys.stderr)
+        return 2
+    except (OSError, ValueError) as exc:
+        print(f"could not read job lines: {exc}", file=sys.stderr)
         return 2
     count = len(args.effects) if args.effects else len(EFFECTS)
 
     out_dir = Path(__file__).resolve().parents[2] / "scratch"
     out_dir.mkdir(exist_ok=True)
-    (out_dir / "effects_preview.ass").write_bytes(ass_content.encode("utf-8-sig"))
+    (out_dir / f"{args.out}.ass").write_bytes(ass_content.encode("utf-8-sig"))
 
     duration_s = total_cs / 100 + 0.5
     # Run from out_dir so the ass= filter gets a bare relative filename and we
@@ -216,15 +299,17 @@ def main(argv: list[str] | None = None) -> int:
     cmd = [
         "ffmpeg", "-y",
         "-f", "lavfi", "-i", f"color=c=0x14141C:s={WIDTH}x{HEIGHT}:r=30:d={duration_s:.2f}",
-        "-vf", "ass=effects_preview.ass",
+        "-vf", f"ass={args.out}.ass",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "effects_preview.mp4",
+        f"{args.out}.mp4",
     ]
     proc = subprocess.run(cmd, cwd=out_dir, capture_output=True, text=True)
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr[-2000:])
         return proc.returncode
-    print(f"ok -> {out_dir / 'effects_preview.mp4'}  ({duration_s:.1f}s, {count} effects)")
+    where = f" on {len(lines)} lines of {args.job}" if lines else ""
+    print(f"ok -> {out_dir / (args.out + '.mp4')}  "
+          f"({duration_s:.1f}s, {count} effects{where})")
     return 0
 
 
