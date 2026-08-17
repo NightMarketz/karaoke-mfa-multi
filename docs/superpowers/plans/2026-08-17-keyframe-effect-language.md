@@ -2017,11 +2017,45 @@ Rendered on `jobs/publi-bet` at 1920x1080: fly-in, swing and punch each emit
 byte-identical to the pill baseline — **52 Dialogue lines, 1401 non-space
 characters**, with the per-line sum re-derived against the concatenation.
 
+### Follow-up, same day: the wrapping path and the motion values
+
+**The multi-row half of `place()` had never been rendered.** Across the 52 real
+lines of `jobs/publi-bet`, 0 wrapped, so the balanced wrap, the upward stacking
+and `line_height` were covered only by unit tests over synthetic widths. Making
+the preview's demo phrase wrap on purpose (measured at 1162px against a 1152px
+margin) exposed three defects at once:
+
+- `wrap()` broke rows between any two syllables. `space_after` already says
+  which syllables are glued into a word and nothing consulted it, so "dorme"
+  burned as "dor" closing one row and "me" opening the next.
+- Balancing tried a single budget (`total / row count`) and fell back to the
+  greedy fill whenever that budget produced a different row count, which is
+  most of the time. Rendered: a full row then one stranded word, where libass
+  on the same text split evenly. Replaced with a bisection for the narrowest
+  budget that holds the row count.
+- `line_height = ass_size * 1.2` was a guess. libass stacks rows by exactly the
+  Fontsize, because a Fontsize IS ascender + descender -- the same fact
+  `fonts.py` derives `measure()` from. Burned frames: libass 74px, ours 89px.
+
+The wrapped layout line and the libass-wrapped line of the same text now agree
+pixel for pixel: same break point, same row bands (291-332, 365-406).
+
+**The motion values were set against contact sheets** -- strips of consecutive
+frames across one syllable's animation window, because stills lie about motion.
+`punch` at 0.92 -> 1.12 delivered 6px of excursion on a 43px cap height (14%),
+small enough to pass for a compression artefact; now 0.88 -> 1.22 at 11px
+(25%). `swing` at -9 degrees moved the top corner 2px; now -14. `fly-in`'s
+260ms lead-in was longer than the ~200ms gap between syllables, so a syllable
+flew while the previous one was still being sung and the word tore in half;
+now 160ms.
+
 ### Still open
 
-- T9's motion numbers (80px, -9°, 1.12x) remain first guesses. They now rest
-  correctly and read cleanly, but `swing`'s -9° is subtle enough to be nearly
-  invisible in a still frame; worth a pass through `preview_effects.py` before
-  anyone calls the values finished.
 - `_effect_capability_gaps` fires through `_stage06_event`, but no shipped
   effect has a gap, so the emitting branch has not run outside its unit test.
+- `fly-in` flies each SYLLABLE, so a word is briefly in pieces while its later
+  syllables are still arriving. Shortening the lead bounds the window but does
+  not remove it. Flying whole words would need word grouping in the effect
+  model, which does not exist and is a design decision, not a tuning one.
+- The GPU compiler. `glow`, `gradient`, `motion_blur` and `audio` exist in the
+  vocabulary today only so the ASS compiler can refuse them by name.
