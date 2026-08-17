@@ -1,0 +1,44 @@
+{
+  "flash": [
+    "{\\bord8\\t(800,1000,\\bord2)\\be1\\kf40}ta",
+    "{\\bord8\\t(0,200,\\bord2)\\be1\\kf7}a",
+    "{\\bord8\\t(1234,1434,\\bord2)\\be1\\kf3}aaa",
+    "{\\bord8\\t(55,255,\\bord2)\\be1\\kf100}lá"
+  ],
+  "focus": [
+    "{\\blur3\\t(800,1200,\\blur0)\\be1\\kf40}ta",
+    "{\\blur3\\t(0,70,\\blur0)\\be1\\kf7}a",
+    "{\\blur3\\t(1234,1264,\\blur0)\\be1\\kf3}aaa",
+    "{\\blur3\\t(55,1055,\\blur0)\\be1\\kf100}lá"
+  ],
+  "highlight": [
+    "{\\be1\\kf40}ta",
+    "{\\be1\\kf7}a",
+    "{\\be1\\kf3}aaa",
+    "{\\be1\\kf100}lá"
+  ],
+  "none": [
+    "{\\k40}ta",
+    "{\\k7}a",
+    "{\\k3}aaa",
+    "{\\k100}lá"
+  ],
+  "pop": [
+    "{\\fscy100\\t(800,890,\\fscy124)\\t(890,1040,\\fscy100)\\be1\\kf40}ta",
+    "{\\fscy100\\t(0,90,\\fscy124)\\t(90,240,\\fscy100)\\be1\\kf7}a",
+    "{\\fscy100\\t(1234,1324,\\fscy124)\\t(1324,1474,\\fscy100)\\be1\\kf3}aaa",
+    "{\\fscy100\\t(55,145,\\fscy124)\\t(145,295,\\fscy100)\\be1\\kf100}lá"
+  ],
+  "reveal": [
+    "{\\alpha&HFF&\\t(800,940,\\alpha&H00&)\\be1\\kf40}ta",
+    "{\\alpha&HFF&\\t(0,140,\\alpha&H00&)\\be1\\kf7}a",
+    "{\\alpha&HFF&\\t(1234,1374,\\alpha&H00&)\\be1\\kf3}aaa",
+    "{\\alpha&HFF&\\t(55,195,\\alpha&H00&)\\be1\\kf100}lá"
+  ],
+  "typewriter": [
+    "{\\alpha&HFF&\\t(800,860,\\alpha&H00&)\\be1\\kf20}t{\\alpha&HFF&\\t(1000,1060,\\alpha&H00&)\\be1\\kf20}a",
+    "{\\alpha&HFF&\\t(0,140,\\alpha&H00&)\\be1\\kf7}a",
+    "{\\alpha&HFF&\\t(1234,1294,\\alpha&H00&)\\be1\\kf1}a{\\alpha&HFF&\\t(1244,1304,\\alpha&H00&)\\be1\\kf1}a{\\alpha&HFF&\\t(1254,1314,\\alpha&H00&)\\be1\\kf1}a",
+    "{\\alpha&HFF&\\t(55,115,\\alpha&H00&)\\be1\\kf50}l{\\alpha&HFF&\\t(555,615,\\alpha&H00&)\\be1\\kf50}á"
+  ]
+}
