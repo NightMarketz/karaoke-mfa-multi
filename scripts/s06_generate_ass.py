@@ -18,6 +18,11 @@ Placement comes from the style itself — Alignment (2 = bottom centre in every
 shipped preset) plus MarginV. No \an or \pos override is emitted, so a player
 honouring the style's own margins renders what the preset asked for.
 
+The exception is an effect that animates position, rotation or uniform scale:
+libass cannot do those without owning the syllable's origin, so such a line
+becomes one Dialogue per syllable, each carrying its own \an2\pos computed from
+real font metrics. See _build_layout_events and Effect.needs_layout.
+
 Each line gets one \fad(fade_in, fade_out) and the \kf run built from its
 words.
 
@@ -72,7 +77,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 from scripts.karaoke_styles.library import PRESETS, KaraokeStyle
-from scripts.karaoke_styles.effects import syllable_ass
+from scripts.karaoke_styles.ass_compile import compile_syllable
+from scripts.karaoke_styles.effects import (
+    DEFAULT_EFFECT,
+    EFFECTS,
+    resolve_effect,
+    syllable_ass,
+)
+from scripts.karaoke_styles.fonts import measure, resolve_font_path
+from scripts.karaoke_styles.layout import place
 
 # Preset pixel values (fontsize, outline, shadow, margin_v) are authored
 # against this canvas height and scaled to whatever the render asks for.
@@ -134,7 +147,7 @@ def _build_karaoke_text(
     words: list[dict],
     line_start_ms: int,
     effect: str,
-    use_flash_default: bool = False,
+    style_effect: str = "highlight",
     line_style: str | None = None,
 ) -> str:
     r"""
@@ -163,18 +176,25 @@ def _build_karaoke_text(
             end_ms = start_ms + MIN_WORD_MS
         word_segment_groups.append((segments, start_ms, end_ms))
 
+    # Karaoke time consumed so far in this line, in centiseconds. ASS times \t
+    # from the Dialogue start, so this is what lets an effect animate on the
+    # syllable's own attack instead of on the line's first frame.
+    elapsed_cs = 0
+
     def append_segment(
         target: list[str],
         *,
         duration_cs: int,
         visible_segment: str,
+        offset_cs: int,
     ) -> None:
         target.append(
             syllable_ass(
                 effect,
                 duration_cs,
                 visible_segment,
-                flash_default=use_flash_default,
+                offset_ms=offset_cs * 10,
+                style_effect=style_effect,
             )
         )
 
@@ -197,6 +217,7 @@ def _build_karaoke_text(
         gap_cs = max(0, (start_ms - prev_end_ms) // 10)
         if gap_cs > 0:
             word_parts.append(f"{{\\k{gap_cs}}}")
+            elapsed_cs += gap_cs
 
         segment_prev_end_ms = start_ms
         visible_segments = [segment for segment in segments if str(segment.get("text", ""))]
@@ -228,11 +249,14 @@ def _build_karaoke_text(
         for run, duration_cs in zip(segment_runs, duration_cs_values):
             if run["gap_cs"] > 0:
                 word_parts.append(f"{{\\k{run['gap_cs']}}}")
+                elapsed_cs += run["gap_cs"]
             append_segment(
                 word_parts,
                 duration_cs=duration_cs,
                 visible_segment=run["visible_segment"],
+                offset_cs=elapsed_cs,
             )
+            elapsed_cs += duration_cs
 
         if word_parts:
             chunk = "".join(word_parts)
@@ -245,6 +269,86 @@ def _build_karaoke_text(
         prev_end_ms = visual_end_ms
 
     return " ".join(visual_parts).strip()
+
+
+def _build_layout_events(
+    line: dict,
+    style: KaraokeStyle,
+    *,
+    scale: float,
+    play_res: tuple[int, int],
+    fade_tag: str,
+    start_ts: str,
+    end_ts: str,
+    effect: str,
+) -> list[str]:
+    r"""One Dialogue per syllable, each positioned with \pos.
+
+    Every event spans the whole line window, so each syllable holds its fill
+    back with a leading \k of the time elapsed before its own attack. That
+    leading \k is the same number compile_syllable() anchors \t on, which is
+    what keeps motion and fill agreed.
+
+    Anchoring is \an2, bottom-centre. MarginV means "distance from the bottom
+    of the frame to the bottom of the text", so with \an2 the y we compute IS
+    that edge and a layout preset lands on exactly the baseline every other
+    preset in the library uses.
+    """
+    width_px, height_px = play_res
+    font_path = resolve_font_path(style.fontname, bold=style.bold, italic=style.italic)
+    # The ASS Fontsize this line's Style row carries. measure() converts it to
+    # a FreeType size itself -- see fonts.py; they are not the same number.
+    ass_size = round(style.fontsize * scale)
+    line_start_ms = int(line["start"] * 1000)
+
+    texts: list[str] = []
+    widths: list[float] = []
+    space_after: list[float] = []
+    attacks: list[int] = []
+    durations: list[int] = []
+
+    space_px = measure(" ", font_path=font_path, size_px=ass_size)
+    for word in line["words"]:
+        segments = [s for s in build_word_highlight_segments(word) if str(s.get("text", ""))]
+        for i, segment in enumerate(segments):
+            text = _escape_ass_text(str(segment["text"]))
+            if not text:
+                continue
+            texts.append(text)
+            widths.append(measure(text, font_path=font_path, size_px=ass_size))
+            space_after.append(space_px if i == len(segments) - 1 else 0.0)
+            start_ms = int(float(segment["start"]) * 1000)
+            end_ms = int(float(segment["end"]) * 1000)
+            attacks.append(max(0, start_ms - line_start_ms))
+            durations.append(max(1, (end_ms - start_ms) // 10))
+
+    if not texts:
+        return []
+
+    placed = place(
+        texts,
+        widths=widths,
+        space_after=space_after,
+        max_width=width_px * (1 - 2 * SIDE_MARGIN_RATIO),
+        centre_x=width_px / 2,
+        bottom_y=height_px - round(style.margin_v * scale),
+        line_height=ass_size * 1.2,
+    )
+
+    chosen = EFFECTS[effect] if effect in EFFECTS else EFFECTS[DEFAULT_EFFECT]
+    events = []
+    for spot, attack_ms, duration_cs in zip(placed, attacks, durations):
+        token = compile_syllable(
+            chosen, text=spot.text, duration_cs=duration_cs, attack_ms=attack_ms
+        )
+        lead_cs = attack_ms // 10
+        lead = f"{{\\k{lead_cs}}}" if lead_cs > 0 else ""
+        events.append(
+            f"Dialogue: 0,{start_ts},{end_ts},{style.name},,0,0,0,,"
+            f"{fade_tag}{{\\an2\\pos({spot.x + spot.width / 2:.1f},{spot.y:.1f})}}"
+            f"{lead}{token}"
+        )
+    return events
 
 
 def _raw_display_window(line: dict, cfg) -> tuple[int, int]:
@@ -356,16 +460,27 @@ YCbCr Matrix: TV.601
             line["words"],
             start_ms,
             line.get("effect", "highlight"),
-            use_flash_default=s.flash_on_highlight,
+            style_effect=s.highlight_effect,
             line_style=style_key,
         )
 
         # Single visible karaoke layer. The \kf text itself keeps the
         # not-yet-sung text visible and applies the progressive fill.
-        event_lines.append(
-            f"Dialogue: 0,{start_ts},{end_ts},{s.name},,0,0,0,,"
-            f"{fade_tag}{kf_text}"
-        )
+        #
+        # Unless the effect animates something libass cannot do in place, in
+        # which case the line becomes one positioned Dialogue per syllable.
+        chosen_effect = resolve_effect(line.get("effect", DEFAULT_EFFECT), s.highlight_effect)
+        if EFFECTS[chosen_effect].needs_layout:
+            event_lines.extend(_build_layout_events(
+                line, s, scale=scale, play_res=(int(width), int(height)),
+                fade_tag=fade_tag, start_ts=start_ts, end_ts=end_ts,
+                effect=chosen_effect,
+            ))
+        else:
+            event_lines.append(
+                f"Dialogue: 0,{start_ts},{end_ts},{s.name},,0,0,0,,"
+                f"{fade_tag}{kf_text}"
+            )
 
     events_section = "\n".join(event_lines)
 

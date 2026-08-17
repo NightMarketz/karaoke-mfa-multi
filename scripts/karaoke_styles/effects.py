@@ -120,6 +120,23 @@ EFFECTS: dict[str, Effect | TextEffect] = {
 # fall back to the sweep, so old analysis.json files keep rendering.
 
 
+def resolve_effect(effect: str, style_effect: str = DEFAULT_EFFECT) -> str:
+    r"""Which effect a line actually gets, given its own choice and its style's.
+
+    One implementation on purpose. s06 has to answer this question a second
+    time -- before rendering, to decide whether the line needs the per-syllable
+    \pos path -- and a second copy of the rule is a second thing to keep in
+    step. It already has a subtlety worth not re-deriving: a retired or unknown
+    name (shipped analysis.json still carries "fade_in") means "no opinion",
+    not "plain sweep", so it normalises to the default BEFORE the style upgrade
+    or a preset's animation never reaches those lines.
+    """
+    name = effect if effect in EFFECTS else DEFAULT_EFFECT
+    if name == DEFAULT_EFFECT and style_effect in EFFECTS:
+        name = style_effect
+    return name
+
+
 def syllable_ass(
     effect: str,
     duration_cs: int,
@@ -136,12 +153,7 @@ def syllable_ass(
     line upgrades to — cyberpunk's \bord8 glitch pulse, focus-pull's blur ramp.
     A line that explicitly picked something else keeps its own choice.
     """
-    # A retired or unknown name (shipped analysis.json still carries "fade_in")
-    # means "no opinion", not "plain sweep" — it must normalise to the default
-    # BEFORE the style upgrade, or a preset's animation never reaches those lines.
-    name = effect if effect in EFFECTS else DEFAULT_EFFECT
-    if name == DEFAULT_EFFECT and style_effect in EFFECTS:
-        name = style_effect
+    name = resolve_effect(effect, style_effect)
     chosen = EFFECTS[name]
     attack_ms = max(0, int(offset_ms))
     if isinstance(chosen, TextEffect):
