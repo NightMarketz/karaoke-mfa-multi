@@ -2625,3 +2625,282 @@ emitted `Dialogue: 0,` prefix end to end.
 - `shine` in frame coordinates will look wrong on a very short line. Accepted:
   the band is soft and wide, and measuring the line would force any preset
   wanting shine onto the positioned path.
+
+---
+
+## Execution notes
+
+Task 6 executed 2026-08-20 on `mvp-pipeline-runner`, system python 3.11.9,
+ffmpeg 8.1 (Gyan build), Windows 11. Reference job `jobs/publi-bet`.
+
+### Suite total, with denominators and both reconciliations
+
+Entering Task 6: **819 passed, 218 subtests passed, 0 failed** (measured with
+the pre-existing GPU-spike WIP present, which is the real tree).
+Leaving Task 6: **824 passed, 292 subtests passed, 0 failed**.
+
+Task delta: **+5 tests** (all in `tests/test_karaoke_style_library.py`,
+44 -> 49) and **+74 subtests**, reconciled per file rather than asserted:
+
+| file | subtests before | after | delta |
+|---|---|---|---|
+| `tests/test_karaoke_style_library.py` | 32 | 90 | +58 |
+| `tests/test_preview_effects.py` | 20 | 28 | +8 |
+| `tests/test_layers.py` | 31 | 39 | +8 |
+| every other file | unchanged | unchanged | 0 |
+| **total** | **218** | **292** | **+74** |
+
+The +58 re-derives as 46 new (4 presets x 9 style keys = 36, plus 4 + 4 + 2)
+plus 12 from three existing loops that now iterate 14 presets instead of 10.
+The two +8 rows are the four new effects entering two loops that iterate
+`EFFECTS`. Before/after per file measured by stashing only the four source
+files, not by estimating.
+
+**Whole-plan reconciliation.** Session baseline before Task 1 was
+760 passed / 165 subtests. Per-task deltas T2 +9, T3 +22 then +7, T4 +6,
+T5 +15, T6 +5:
+
+    760 + 9 + 22 + 7 + 6 + 15 = 819   (entering T6 -- matches the measurement)
+    819 + 5 = 824                     (leaving T6 -- matches the measurement)
+
+**The total closes on both.**
+
+> The brief predicted `808 + 5 = 813` and re-derived it as
+> `760 + 9 + 17 (T3) + 6 + 16 (T5) + 5`. That arithmetic is stale: T3 shipped
+> +22 then +7 (= +29, not 17) and T5 shipped +15, not 16. The brief was
+> extracted before those two tasks finished. The measured tree is the
+> authority; nothing was adjusted to make it agree.
+
+### What the plan got wrong
+
+Four things, all found by measuring rather than by reading.
+
+**1. Step 10's re-derivation assumed the wrong file layout.** The brief's
+`chars[:per_layer] == base_chars` treats a multi-layer file as `L` whole
+copies of the baseline concatenated. It is not: `ass_emit` writes a line's
+layers consecutively, so the event order is
+`line1/layer0, line1/layer1, line2/layer0, ...` and event `j` belongs to layer
+`j % L`. Run as written, the check called **glow, sweep and aberration
+DIFFERS** while their character counts were exactly `L x 1401` -- a false
+negative, and the same shape of error every probe in `scratch/probes/` has hit:
+a verdict over a population that could not have matched.
+
+Fixed by reconciling **per layer** instead, which is strictly stronger than the
+brief's version rather than looser: every layer's own visible text is compared
+to the baseline separately (so a syllable lost from one layer only is still
+caught), **and** the total must still be exactly `L x 1401` (so a duplication
+present in every copy is caught too). Either check alone would pass a file the
+other rejects.
+
+**2. The brief's Step 1 test expected `"none"` for the `ad_lib` style key.**
+`_modern_variants` copies the base's `highlight_effect` to every key, so
+`style.highlight_effect` is the preset's effect on all nine keys; the `"none"`
+for `ad_lib` comes from `STYLE_EFFECTS` through `resolve_effect`, which is a
+different table. The brief's own Step 4 note asserts both, which cannot both
+hold. The existing `test_each_modern_preset_selects_its_own_effect` already
+pins the single-value-across-all-styles behaviour, so the new test was written
+to match it (`preset_id` for every key, `ad_lib` included).
+
+**3. Two cardinality guards the brief did not mention had to move.**
+`test_every_modern_preset_covers_all_style_keys` hard-codes
+`assertEqual(10, len(MODERN_PRESET_IDS))` and
+`test_no_other_preset_takes_the_layout_path` hard-codes
+`assertEqual(7, len(others))`. Both went red on Step 6 and were updated to 14
+and 11. These are the "count before verdict" guards doing their job -- they are
+supposed to fail when the population changes.
+
+**4. Layer cost is NOT linear in the layer count.** See Step 12 below.
+
+### Step 8 -- colour probe, re-run on this machine
+
+    sweep front (rightmost unsung column) at t=(0.15, 0.45, 0.75)
+
+      plain sweep (control)              [324, 461, 598]  moved= +274  fill ALIVE
+      sweep + \t on \1c (fill colour)    [324, -1, -1]  moved= -325  fill DEAD
+      sweep + static \1c override        [-1, -1, -1]  moved=   +0  fill DEAD
+      sweep + \t on \3c (outline)        [324, 461, 598]  moved= +274  fill ALIVE
+      sweep + \t on \2c (unsung)         [324, 461, 598]  moved= +274  fill ALIVE
+      sweep + \t on \1a (fill alpha)     [324, 461, -1]  moved= -325  fill DEAD
+
+      control swept 274px, so the verdicts above are real
+
+Control swept 274px (> 50), so the column is usable. `\1c` animated, `\1c`
+static and `\1a` are dead; `\3c` and `\2c` are alive. The main-layer refusal
+stands, and `flare` animating `\3c` on the main layer is legitimate.
+
+### Step 9 -- event counts against `52 x layers`
+
+52 lines, all four off the positioned path:
+
+| preset | layers | predicted | measured |
+|---|---|---|---|
+| pill (baseline) | 1 | 52 | **52** |
+| flare | 1 | 52 | **52** |
+| glow | 2 | 104 | **104** |
+| sweep | 2 | 104 | **104** |
+| aberration | 3 | 156 | **156** |
+
+Every count is exactly `52 x layers`. The `pill` baseline file was confirmed
+current by regenerating it into a scratch directory and comparing: byte
+identical (sha256 `75a8e3aaf49b6706...`), so the baseline is not stale.
+
+### Step 10 -- visible-text reconciliation, with denominators
+
+    baseline  pill : 52 Dialogue lines, 1401 non-space chars (per-line sum: 1401)
+         fly-in : 538 Dialogue events, 1401 non-space chars = 1 x 1401; 1 of 1 layers match the 1401-char baseline  -> IDENTICAL to baseline
+          swing : 538 Dialogue events, 1401 non-space chars = 1 x 1401; 1 of 1 layers match the 1401-char baseline  -> IDENTICAL to baseline
+          punch : 538 Dialogue events, 1401 non-space chars = 1 x 1401; 1 of 1 layers match the 1401-char baseline  -> IDENTICAL to baseline
+           glow : 104 Dialogue events, 2802 non-space chars = 2 x 1401; 2 of 2 layers match the 1401-char baseline  -> IDENTICAL to baseline
+     aberration : 156 Dialogue events, 4203 non-space chars = 3 x 1401; 3 of 3 layers match the 1401-char baseline  -> IDENTICAL to baseline
+          flare :  52 Dialogue events, 1401 non-space chars = 1 x 1401; 1 of 1 layers match the 1401-char baseline  -> IDENTICAL to baseline
+          sweep : 104 Dialogue events, 2802 non-space chars = 2 x 1401; 2 of 2 layers match the 1401-char baseline  -> IDENTICAL to baseline
+         fly-in : 538 of 538 events carry \pos or \move
+          swing : 538 of 538 events carry \pos or \move
+          punch : 538 of 538 events carry \pos or \move
+           glow : 0 of 104 positioned (expected 0 -- non-layout path)
+     aberration : 0 of 156 positioned (expected 0 -- non-layout path)
+          flare : 0 of 52 positioned (expected 0 -- non-layout path)
+          sweep : 0 of 104 positioned (expected 0 -- non-layout path)
+
+Exit code 0. **11 layers compared, 1401 characters each, 15411 characters
+total, against a 1401-character baseline that re-derives against its own
+per-line sum.** No preset is judged on an empty set.
+
+### Step 11 -- SABOTAGE, seen RED twice and green again
+
+**Sabotage A (the brief's): 3 characters off the first `Dialogue: 0,` line of
+glow.**
+
+    sabotaged: \bord5\1c&HFFE838&\2c&HFFE838&\3c&HFFE838&\alpha&H66&\be1\k1
+           glow : 104 Dialogue events, 2867 non-space chars = 2 x 1401; 1 of 2 layers match the 1401-char baseline  -> DIFFERS
+                  layer 0: first divergence at char 17: baseline 'poVaivaivaiOlhaogolpenostoriesPrintdegre' vs '{\blur9\bord5\1c&HFFE838&\2c&HFFE838&\3c'
+    exit=1
+
+RED, and it names the preset and the layer. (The character count went *up*,
+to 2867: trimming the tail broke a closing `}`, so tag text leaked into the
+visible-text extraction. The check catches it on both axes regardless.)
+Restored by regenerating: all seven `IDENTICAL`, `exit=0`.
+
+**Sabotage B (added): one character off the LAST layer, aberration layer 2.**
+This is what the per-layer rewrite bought -- the brief's version could only
+have seen it as a total-length change, without localising it.
+
+    before tail: f23}pa{\k10}{\be1\kf1}po
+     after tail: kf23}pa{\k10}{\be1\kf1}p
+     aberration : 156 Dialogue events, 4202 non-space chars = 3 x 1401; 2 of 3 layers match the 1401-char baseline  -> DIFFERS
+                  layer 2: first divergence at char 18: baseline 'oVaivaivaiOlhaogolpenostoriesPrintdegree' vs 'VaivaivaiOlhaogolpenostoriesPrintdegreen'
+    exit=1
+
+RED, naming layer 2. Restored by regenerating: all seven `IDENTICAL`, `exit=0`.
+
+**A third sabotage attempt was a no-op and was discarded, not counted.** It
+tried `text.replace("papo", "pap")`, but the emitter splits that word across
+tag groups (`pa{\k10}{\be1\kf1}po`), so the substring never occurred and
+nothing changed. The probe stayed green -- correctly, since nothing had been
+sabotaged. Recorded because "green after a sabotage" is worthless unless the
+sabotage is confirmed to have landed.
+
+### Step 12 -- burn time, MEASURED (and where it contradicts the spec)
+
+60s of 1920x1080 through `ffmpeg -vf ass=... -c:v libx264 -preset ultrafast
+-f null -`, best of 2-3 runs, this machine:
+
+| preset | layers | events | **measured** 60s burn | x baseline | 3-min song |
+|---|---|---|---|---|---|
+| pill | 1 | 52 | **4.12s** | 1.00x | ~12.4s |
+| flare | 1 | 52 | **4.51s** | 1.09x | ~13.5s |
+| sweep | 2 | 104 | **4.95s** | 1.20x | ~14.8s |
+| aberration | 3 | 156 | **11.59s** | **2.81x** | ~34.8s |
+| glow | 2 | 104 | **12.82s** (12.90s on a 3-run repeat) | **3.11x** | ~38.5s |
+
+Every preset is **tens of seconds for a 3-minute song, not minutes**.
+
+**The 3-layer number the spec interpolated: interpolated ~2.3x, measured
+2.81x.** The spec interpolated between its measured 2-layer (1.65x, 7.4s) and
+4-layer (2.99x, 13.4s) rows. The direct measurement is higher than the
+interpolation but still below the 4-layer row, so the ceiling of 4 is not
+threatened. Recorded as measured, beside the interpolation it replaces.
+
+**The finding the spec's model does not survive: cost is not a function of the
+layer count.** `glow` has TWO layers and burns *slower* than `aberration`'s
+three (12.82s vs 11.59s), and `sweep` has two layers and burns at almost the
+1-layer baseline (4.95s). Controls, same file, same 104 events, only one tag
+changed:
+
+| control | measured | reading |
+|---|---|---|
+| glow as shipped | 12.90s | -- |
+| glow, `\blur9` -> `\blur0` | **8.20s** | the blur alone costs 4.7s |
+| glow, `\bord5` -> `\bord0` (blur kept) | **11.17s** | the wide outline costs 1.7s |
+
+Stripped of its blur, glow's two layers cost 8.20s = **2.0x** the 4.12s
+baseline, and aberration's three plain layers cost 11.59s = **2.81x**. So
+*plain* layers are roughly linear, and what a layer DRAWS is the dominant
+term: a gaussian blur over a wide outline adds more than a whole extra layer,
+while a `\clip`-masked band costs almost nothing because the rasteriser culls
+most of it. The comment in `effects.py` was corrected to say this; budget by
+what the layer draws, not by counting layers.
+
+### Step 13 -- watching the four looks
+
+`preview_effects.py --job jobs/publi-bet glow aberration flare sweep` ->
+`scratch/effects_preview.mp4`, 74.8s, 4 effects on 4 lines. Each look was
+checked with a measurement as well as a frame, because a still cannot tell a
+working animation from a stuck one.
+
+- **glow** -- reads as intended: a soft cyan halo around the whole line, white
+  sung text inside it, cool slate unsung. The halo sits exactly behind the
+  line (its under layer is ASS Layer 0, main is Layer 1, so no collision).
+- **flare** -- reads as intended, and *pulses*. Counting hot-pink rim pixels
+  across 53 frames of one line gives nine clean spikes, one per syllable
+  attack (peak 2218px), resting at 35-59px between them. That is the
+  resting-pose claim confirmed on burned pixels rather than in tags.
+- **sweep** -- reads as intended, and *moves*. Measured by burning the over
+  layer ALONE over black, so the band is the only ink in frame and nothing
+  else can be mistaken for it: the band spans x 409..664 at +0.50s and
+  x 751..912 at +0.70s, a **295px centre travel**. Two controls: the same
+  events with `\t` stripped produce **no ink at any of 6 instants** (the
+  resting clip sits off-frame at x -257..-1, so the band exists only while
+  animating); and the band shows ink at only 2 of 6 sampled instants because
+  it is only over the text for part of its crossing, which the geometry
+  predicts. A first attempt measured the band by subtracting a control frame
+  from the full preview and taking the x-centroid of what brightened; that was
+  **discarded as contaminated** -- the karaoke fill brightens the same pixels
+  as it sings, the centroid was non-monotonic, and its "MOVING" verdict could
+  not be attributed to the band.
+- **aberration** -- **does NOT render as designed.** See below.
+
+### Open defect: aberration's two ghosts collide
+
+Both ghosts are `under` layers, and `Effect.layer_numbers` maps **role** to the
+ASS Layer field (under = -1, main = 0, over = +1, translated to base 0). Two
+`under` layers therefore receive the **same** ASS Layer number. libass treats
+two same-layer unpositioned events that overlap in time and space as a
+collision and pushes the second onto its own row, so the magenta copy renders
+about 64px **above** the line instead of 4px to the right of it. The cyan copy
+is correct.
+
+Ruled out first: the emitted margins are right. The two ghosts carry
+`MarginL/MarginR/MarginV` of `92/100/195` and `100/92/195` -- identical
+vertical margin, horizontal margins swapped by 8px, exactly the requested
+`dx=+-4, dy=0`. The displacement is not ours.
+
+Control, same three events burned twice, only the Layer field changed:
+
+| variant | magenta ink rows | span |
+|---|---|---|
+| as emitted (both ghosts on Layer 0) | **474..527** | 53px |
+| second ghost moved to Layer 2 | **538..591** | 53px |
+
+Same glyph span both times; a 64px shift caused purely by the Layer field, and
+538..591 is the main line's own row. That is the collision, confirmed.
+
+`aberration` is the first effect with two layers sharing a role, which is why
+nothing caught this earlier -- `glow` (under + main) and `sweep` (main + over)
+each have at most one layer per role and render correctly. The fix belongs in
+`keyframes.layer_numbers` (rank within a role, not by role alone); it would
+leave `glow` at (0,1) and a main-only effect at (0,) -- so the Task 3 fences
+still hold -- and change only `aberration` from (0,0,1) to (0,1,2). It was
+**not applied here**: it changes Task 3's shipped contract, and a measurement
+that disagrees with the plan is a finding to report, not an expectation to
+adjust. The defect is recorded in a comment on the effect itself.
