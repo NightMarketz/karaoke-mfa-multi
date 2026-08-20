@@ -368,5 +368,95 @@ class LayerOffsetTests(unittest.TestCase):
         self.assertIn(",0,0,0,,", _events("highlight")[0])
 
 
+from scripts.karaoke_styles.effects import ghost_layer, glow_layer
+
+
+class LayerConstructorTests(unittest.TestCase):
+    def test_glow_builds_an_under_layer_that_is_wider_and_softer(self):
+        layer = glow_layer(color="#38E8FF", blur=9.0, spread=5.0, alpha=0.6)
+        self.assertEqual("under", layer.role)
+        props = {track.prop: track.keys[0][1] for track in layer.tracks}
+        self.assertEqual(9.0, props["blur"])
+        self.assertEqual(5.0, props["outline"])
+        self.assertEqual("#38E8FF", props["fill_color"])
+        self.assertEqual("#38E8FF", props["outline_color"])
+        self.assertEqual(0.6, props["alpha"])
+
+    def test_glow_is_static_so_it_never_emits_a_transform(self):
+        # A glow that animates is a different effect. Every track is one key,
+        # which compiles to a resting tag and no \t at all.
+        for track in glow_layer().tracks:
+            with self.subTest(prop=track.prop):
+                self.assertEqual(1, len(track.keys))
+
+    def test_ghost_carries_its_displacement_as_a_static_offset(self):
+        layer = ghost_layer(-4.0, 2.0, "#00E5FF")
+        self.assertEqual("under", layer.role)
+        self.assertEqual((-4.0, 2.0), layer.offset)
+        props = {track.prop: track.keys[0][1] for track in layer.tracks}
+        self.assertEqual("#00E5FF", props["fill_color"])
+        self.assertEqual("#00E5FF", props["outline_color"])
+
+    def test_ghost_needs_no_layout_which_is_the_whole_point(self):
+        # If a ghost forced needs_layout, any preset wanting chromatic
+        # aberration would become a layout preset and multiply its event count
+        # by ten. The T0 gate exists so it does not have to.
+        effect = Effect("aberration", (
+            ghost_layer(-4.0, 0.0, "#00E5FF"),
+            ghost_layer(4.0, 0.0, "#FF006E"),
+            Layer("main"),
+        ))
+        self.assertFalse(effect.needs_layout)
+        self.assertEqual((0, 0, 1), effect.layer_numbers)
+
+
+class GhostDisplacementTests(unittest.TestCase):
+    """The margin arithmetic, against the numbers the T0 gate measured."""
+
+    def _margins(self, event):
+        fields = event.split(",")
+        return tuple(int(f) for f in fields[5:8])
+
+    def test_an_offset_layer_writes_its_own_margins_off_the_layout_path(self):
+        from scripts.karaoke_styles.keyframes import Effect as _E
+        import scripts.karaoke_styles.effects as fx
+        fx.EFFECTS["_ghosttest"] = _E("_ghosttest", (
+            ghost_layer(-6.0, 3.0, "#00E5FF"),
+            Layer("main"),
+        ))
+        try:
+            events = _events("_ghosttest")
+        finally:
+            del fx.EFFECTS["_ghosttest"]
+        self.assertEqual(2, len(events))
+        ghost, main = events
+        # centre_x = W/2 + (L - R)/2, so dx=-6 needs L = 96-6, R = 96+6.
+        # MarginV is the distance from the BOTTOM, so dy=+3 (down) needs
+        # V = round(margin_v * scale) - 3.
+        base_v = round(get_preset("pill").styles["verse"].margin_v * 1.5)
+        self.assertEqual((90, 102, base_v - 3), self._margins(ghost))
+        # The main layer is untouched: 0,0,0 means "inherit the style row".
+        self.assertEqual((0, 0, 0), self._margins(main))
+        self.assertTrue(ghost.startswith("Dialogue: 0,"))
+        self.assertTrue(main.startswith("Dialogue: 1,"))
+
+    def test_a_margin_never_reaches_zero_because_zero_means_inherit(self):
+        # The trap the T0 gate turned up: an event margin of 0 is "use the
+        # style's", not "no margin". A ghost whose dx reaches the base margin
+        # would otherwise silently halve its own displacement.
+        from scripts.karaoke_styles.keyframes import Effect as _E
+        import scripts.karaoke_styles.effects as fx
+        fx.EFFECTS["_farghost"] = _E("_farghost", (
+            ghost_layer(999.0, 999.0, "#00E5FF"),
+            Layer("main"),
+        ))
+        try:
+            ghost = _events("_farghost")[0]
+        finally:
+            del fx.EFFECTS["_farghost"]
+        for value in self._margins(ghost):
+            self.assertGreaterEqual(value, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

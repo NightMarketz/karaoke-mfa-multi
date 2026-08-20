@@ -33,6 +33,71 @@ POP_SCALE_Y = 1.24
 TYPE_FADE_MS = 60
 
 
+# ── Layer constructors ────────────────────────────────────────────────────
+# NOT engine roles. Role is the axis the compiler needs in order to refuse;
+# these are authoring convenience, and convenience should not become an engine
+# concept. Both build an `under` layer, which carries \k rather than \kf -- so
+# the fill-colour prohibition does not reach them, which is precisely why glow
+# and ghost live outside main.
+
+def glow_layer(
+    *,
+    color: str = "#FFFFFF",
+    blur: float = 9.0,
+    spread: float = 5.0,
+    alpha: float = 0.6,
+) -> Layer:
+    r"""A soft wide copy of the line, drawn behind it.
+
+    Made of LAYERS, not of the `glow` property -- that one stays reserved for a
+    renderer that does real glow rather than stacking blurred copies.
+
+    Every track is a single key, so this compiles to a resting tag and no \t:
+    a glow that animates is a different effect, and the one that ships should
+    cost the least it can.
+    """
+    return Layer("under", (
+        Track("blur", ((0, blur),)),
+        Track("outline", ((0, spread),)),
+        # Both registers, because an under layer carries \k: without \1c the
+        # glyph body would show through at the STYLE's fill colour instead of
+        # the halo's.
+        Track("fill_color", ((0, color),)),
+        Track("unsung_color", ((0, color),)),
+        Track("outline_color", ((0, color),)),
+        Track("alpha", ((0, alpha),)),
+    ))
+
+
+def ghost_layer(
+    dx: float,
+    dy: float,
+    color: str,
+    *,
+    alpha: float = 0.85,
+    blur: float = 0.0,
+) -> Layer:
+    r"""A displaced coloured copy of the line -- one half of an aberration.
+
+    The displacement is a STATIC Layer.offset, not an offset_x/offset_y track,
+    and that is load-bearing: those are LAYOUT_PROPS, so a ghost built from
+    them would force needs_layout and multiply any preset wanting glitch by ten
+    events per line. Measured instead (T0 gate): the Dialogue's own
+    MarginL/MarginR/MarginV displace an unpositioned line on BOTH axes, so
+    ass_emit.build_line_events turns this offset into margins off the layout
+    path and into the anchor on it.
+    """
+    tracks = [
+        Track("fill_color", ((0, color),)),
+        Track("unsung_color", ((0, color),)),
+        Track("outline_color", ((0, color),)),
+        Track("alpha", ((0, alpha),)),
+    ]
+    if blur:
+        tracks.append(Track("blur", ((0, blur),)))
+    return Layer("under", tuple(tracks), offset=(dx, dy))
+
+
 def _in_place(layer, d: int, t: str, off: int, *, karaoke: str, frame=None) -> str:
     """Compile a layer and splice the soft edge in just before the karaoke tag."""
     token = compile_layer(

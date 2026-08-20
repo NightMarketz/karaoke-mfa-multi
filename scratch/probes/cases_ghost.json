@@ -1,0 +1,7 @@
+[
+  ["margin sign flipped", "ml = max(1, round(margin_lr + dx))", "ml = max(1, round(margin_lr - dx))"],
+  ["dx applied at full width instead of half", "mr = max(1, round(margin_lr - dx))", "mr = max(1, round(margin_lr))"],
+  ["MarginV sign flipped", "mv = max(1, round(style.margin_v * scale - dy))", "mv = max(1, round(style.margin_v * scale + dy))"],
+  ["zero-means-inherit clamp removed", "ml = max(1, round(margin_lr + dx))\n            mr = max(1, round(margin_lr - dx))\n            mv = max(1, round(style.margin_v * scale - dy))", "ml = round(margin_lr + dx)\n            mr = round(margin_lr - dx)\n            mv = round(style.margin_v * scale - dy)"],
+  ["offset ignored entirely", "if dx or dy:", "if False:"]
+]
