@@ -39,6 +39,23 @@ class TrackResolutionTests(unittest.TestCase):
         track = Track("alpha", ((-500, 0.0), (0, 1.0)))
         self.assertEqual([(0, 0.0), (200, 1.0)], resolve(track, attack_ms=200, duration_ms=400))
 
+    def test_a_colour_value_survives_resolve_instead_of_being_coerced(self):
+        # resolve() used to call float() on every value. With colour in the
+        # vocabulary the value is no longer always numeric, so only the TIME
+        # stays arithmetic.
+        track = Track("fill_color", ((0, "#FF00AA"), (100, "#00FFAA")))
+        self.assertEqual(
+            [(500, "#FF00AA"), (600, "#00FFAA")],
+            resolve(track, attack_ms=500, duration_ms=400),
+        )
+
+    def test_numeric_values_are_still_floats_after_resolve(self):
+        track = Track("blur", ((0, 3), (100, 0)))
+        values = [v for _, v in resolve(track, attack_ms=0, duration_ms=400)]
+        self.assertEqual([3.0, 0.0], values)
+        for value in values:
+            self.assertIsInstance(value, float)
+
 
 class VocabularyTests(unittest.TestCase):
     def test_unknown_property_is_rejected_at_definition_time(self):

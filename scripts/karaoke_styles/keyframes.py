@@ -12,9 +12,17 @@ milliseconds, because that is the only clock \t and \move actually run on.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
+# Colour, authored as "#RRGGBB" and converted at emission. NOT interpolated
+# here: \t interpolates colour itself, so only the endpoints are ever emitted.
+COLOR_PROPS = frozenset({"fill_color", "outline_color", "shadow_color", "unsung_color"})
+# Per-register transparency. Neutral 1.0 = fully visible, like `alpha`.
+ALPHA_PROPS = frozenset({"fill_alpha", "outline_alpha", "shadow_alpha"})
 # Properties libass can animate on a syllable without owning its position.
-IN_PLACE_PROPS = frozenset({"scale_y", "alpha", "blur", "outline"})
+IN_PLACE_PROPS = (
+    frozenset({"scale_y", "alpha", "blur", "outline"}) | COLOR_PROPS | ALPHA_PROPS
+)
 # Properties that need us to place the syllable ourselves (one Dialogue each
 # with \pos), because they change the glyph's advance or its origin.
 LAYOUT_PROPS = frozenset({"scale", "scale_x", "rotate", "offset_x", "offset_y"})
@@ -60,15 +68,21 @@ class Effect:
         return {track.prop for track in self.tracks}
 
 
-def resolve(track: Track, *, attack_ms: int, duration_ms: int) -> list[tuple[int, float]]:
+def resolve(track: Track, *, attack_ms: int, duration_ms: int) -> list[tuple[int, Any]]:
     r"""Keys as (absolute_ms_from_line_start, value), sorted and de-duplicated.
 
     Clamped at 0: a lead-in longer than the line's own head would ask libass to
     animate before the Dialogue exists.
+
+    The VALUE is preserved, not coerced -- a colour key is a "#RRGGBB" string
+    and float() would throw on it. Only the time is arithmetic.
     """
     scale = duration_ms if track.time == "frac" else 1
-    resolved: dict[int, float] = {}
+    resolved: dict[int, Any] = {}
     for at, value in track.keys:
         ms = max(0, int(round(attack_ms + at * scale)))
-        resolved[ms] = float(value)
-    return sorted(resolved.items())
+        resolved[ms] = value if isinstance(value, str) else float(value)
+    # Sorted by TIME only. The default tuple sort falls through to the value on
+    # a tie, and comparing a str to a float raises -- unreachable today because
+    # dict keys are unique, but one line is cheaper than the landmine.
+    return sorted(resolved.items(), key=lambda item: item[0])

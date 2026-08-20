@@ -21,17 +21,41 @@ def _fmt(value: float) -> str:
     return f"{value:g}"
 
 
-def _alpha_tag(value: float) -> str:
-    # Neutral 1.0 = fully visible; ASS alpha is transparency, so invert.
-    visible = min(1.0, max(0.0, value))
-    return f"\\alpha&H{255 - round(visible * 255):02X}&"
+def _ass_colour(value: str) -> str:
+    r"""#RRGGBB -> &HBBGGRR&.
+
+    Authored in the web hex every designer already has, stored in ASS's
+    reversed byte order. Refused rather than truncated when it is not six hex
+    digits: a silently wrong colour is invisible until someone watches the
+    video, which is exactly the class of bug this vocabulary exists to remove.
+    """
+    text = str(value).lstrip("#")
+    if len(text) != 6 or any(c not in "0123456789abcdefABCDEF" for c in text):
+        raise ValueError(f"colour must be #RRGGBB, got {value!r}")
+    return f"&H{text[4:6]}{text[2:4]}{text[0:2]}&".upper()
+
+
+def _alpha_of(tag: str):
+    """Builder for one alpha register. Neutral 1.0 = fully visible."""
+    def build(value: float) -> str:
+        # ASS alpha is transparency, so invert.
+        visible = min(1.0, max(0.0, float(value)))
+        return f"\\{tag}&H{255 - round(visible * 255):02X}&"
+    return build
 
 
 PROP_TAG = {
     "scale_y": lambda v: f"\\fscy{_fmt(v * 100)}",
-    "alpha": _alpha_tag,
+    "alpha": _alpha_of("alpha"),
     "blur": lambda v: f"\\blur{_fmt(v)}",
     "outline": lambda v: f"\\bord{_fmt(v)}",
+    "fill_color": lambda v: f"\\1c{_ass_colour(v)}",
+    "unsung_color": lambda v: f"\\2c{_ass_colour(v)}",
+    "outline_color": lambda v: f"\\3c{_ass_colour(v)}",
+    "shadow_color": lambda v: f"\\4c{_ass_colour(v)}",
+    "fill_alpha": _alpha_of("1a"),
+    "outline_alpha": _alpha_of("3a"),
+    "shadow_alpha": _alpha_of("4a"),
 }
 
 ASS_SUPPORTED = frozenset(PROP_TAG)
