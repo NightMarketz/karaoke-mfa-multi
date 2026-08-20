@@ -76,7 +76,6 @@ logger = logging.getLogger(__name__)
 from scripts.karaoke_styles.library import PRESETS, KaraokeStyle
 from scripts.karaoke_styles.effects import (
     DEFAULT_EFFECT,
-    EFFECTS,
     resolve_effect,
 )
 

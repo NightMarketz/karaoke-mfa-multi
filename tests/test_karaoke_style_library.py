@@ -484,7 +484,7 @@ class LayerPresetTests(unittest.TestCase):
             with self.subTest(preset=preset_id):
                 self.assertLessEqual(len(EFFECTS[preset_id].layers), MAX_LAYERS)
 
-    def test_only_aberration_and_glow_pay_for_extra_events(self):
+    def test_each_layer_preset_costs_the_events_it_says_it_does(self):
         from scripts.karaoke_styles.effects import EFFECTS
 
         self.assertEqual(1, len(EFFECTS["flare"].layers))

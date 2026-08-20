@@ -285,17 +285,19 @@ EFFECTS: dict[str, Effect | TextEffect] = {
     # the layout path. The glitch preset's one-sided shadow trick is what this
     # replaces.
     #
-    # KNOWN DEFECT, measured on burned frames, not yet fixed. Both ghosts are
-    # `under`, and Effect.layer_numbers maps ROLE -> ASS Layer, so both land on
-    # Layer 0. libass then treats two same-layer unpositioned events that
-    # overlap in time and space as a collision and pushes the second onto its
-    # own row: the magenta copy renders 64px ABOVE the line instead of 4px to
-    # the right of it. Control: re-burning the identical three events with the
-    # second ghost moved to Layer 2 puts it back on the main row (magenta ink
-    # rows 474..527 -> 538..591). aberration is the first effect with two
-    # layers sharing a role, which is why nothing caught this before.
-    # Fix belongs in keyframes.layer_numbers (rank within a role, not just by
-    # role); it changes Task 3's contract, so it is reported, not done here.
+    # Both ghosts are `under`. Effect.layer_numbers ranks WITHIN a role, not
+    # just by role (fixed in 9edccc3b), so the two ghosts land on distinct ASS
+    # Layers instead of both landing on Layer 0 -- which matters because
+    # libass runs collision avoidance between events that share a Layer and
+    # overlap in time and space, and pushes the second onto its own row.
+    # Measured on burned frames, each event alone as its own control: before
+    # the fix the magenta ghost sat at rows 474..527 while the main line sat
+    # at 538..591, a full 64px row apart. After the fix: cyan 542..590,
+    # magenta 538..590, main 540..589 -- a max spread of 4px, i.e. the same
+    # row, which is what makes it a ghost rather than a second line of lyrics.
+    # The horizontal displacement survives: burned alone, cyan occupies
+    # columns 362..910 and magenta 370..919, an 8px shift for the requested
+    # +/-4px.
     "aberration": Effect("aberration", (
         ghost_layer(-4.0, 0.0, "#00E5FF"),
         ghost_layer(4.0, 0.0, "#FF006E"),

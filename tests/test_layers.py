@@ -6,9 +6,12 @@ The three rules here are each a measurement, not a preference:
     -> PrimaryColour, so a track writing \1c writes the register the fill reads
     from. Measured: animating \1c, setting \1c statically and animating \1a all
     stop the sweep dead, while \3c and \2c leave it alone.
-  * the ceiling is FOUR because layer cost is linear in burn time -- 538 events
-    burn 60s of 1920x1080 in 4.5s, 2152 events in 13.4s, 8608 in 49.4s -- and 4
-    keeps a 3-minute song at roughly 40s.
+  * the ceiling is FOUR as a burn-time budget, not a linear-cost rule -- layer
+    cost is NOT linear in count: measured, 60s of 1920x1080, pill (1 layer)
+    4.12s, sweep (2) 4.95s, aberration (3) 11.59s, glow (2) 12.82s. Glow's two
+    layers cost more than aberration's three because what a layer DRAWS
+    dominates (its \blur9 alone accounts for most of the difference). 4 heavy
+    layers still keeps a 3-minute song at roughly 40s.
   * a main-only effect must number Layer 0, byte for byte what shipped before
     layers existed.
 """
@@ -227,11 +230,13 @@ class EmittedLayerTests(unittest.TestCase):
         # The one invariant no effect may touch. Same clock on every copy, or
         # the layers drift apart against the audio.
         #
-        # ponytail: every SHIPPED effect is main-only, so this loop compares a
-        # set built from ONE event and cannot fail on its own. It is a smoke
-        # pass, not the fence. The fence is TwoLayerClockTests below, which
-        # registers an effect that really has two layers. The counters here
-        # exist only so this loop cannot degrade into a pass over nothing.
+        # This loop compares 14 events across 10 non-layout effects (glow and
+        # sweep contribute 2 each, aberration 3, the rest 1) and can genuinely
+        # fail if a shipped multi-layer effect drifts its clocks apart. The
+        # dedicated fence is still TwoLayerClockTests below: it registers a
+        # probe effect so the invariant is pinned even if every shipped
+        # effect were ever reduced back to main-only. The counter here exists
+        # so this loop cannot silently degrade into a pass over nothing.
         import re
         compared = 0
         for name, effect in EFFECTS.items():
@@ -248,13 +253,39 @@ class EmittedLayerTests(unittest.TestCase):
                 # make the line above true for the wrong reason.
                 self.assertNotIn(0, clocks, (name, clocks))
                 compared += len(events)
-        # Cardinality: six main-only effects ship today, one event each.
-        self.assertGreaterEqual(compared, 6, compared)
+        # Cardinality: 10 non-layout effects ship today (6 main-only at one
+        # event each, glow and sweep at 2, aberration at 3) = 14 events total.
+        self.assertGreaterEqual(compared, 14, compared)
 
     def test_only_the_main_layer_carries_the_sweep(self):
         effect = EFFECTS["highlight"]
         self.assertEqual("main", effect.main.role)
         self.assertIn("\\kf", _events("highlight")[0])
+
+
+class ResolutionAgreementTests(unittest.TestCase):
+    """The layer count and the rendered content must come from ONE resolution."""
+
+    def test_a_style_upgrade_renders_the_style_effect_whole(self):
+        # A plain "highlight" line is upgraded to its preset's effect. Before
+        # this was fixed, build_line_events took the layer COUNT from
+        # "highlight" (one) and the CONTENT from "glow" (whose first layer is
+        # the under halo), so the line burned as one blurred cyan event with
+        # no \kf and no main layer at all.
+        events = _events("highlight", style_effect="glow")
+        self.assertEqual(2, len(events))                    # glow is 2 layers
+        self.assertTrue(events[0].startswith("Dialogue: 0,"))
+        self.assertTrue(events[1].startswith("Dialogue: 1,"))
+        self.assertIn("\\blur9", events[0])                  # the halo, underneath
+        self.assertNotIn("\\kf", events[0])                  # under layers carry \k
+        self.assertIn("\\kf", events[1])                     # main carries the sweep
+
+    def test_a_line_that_picked_its_own_effect_keeps_it(self):
+        # The control for the test above: if the style ALWAYS won, the test
+        # above would pass for the wrong reason.
+        events = _events("flare", style_effect="glow")
+        self.assertEqual(1, len(events))                     # flare is main-only
+        self.assertIn("\\kf", events[0])
 
 
 class SyllableLayerTests(unittest.TestCase):

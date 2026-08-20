@@ -382,6 +382,17 @@ def build_line_events(
     line["start"], which is what the non-layout builder measures word gaps
     against.
     """
+    # Resolve ONCE. The layer count and numbers come from `chosen`, and the
+    # per-syllable tokens come from syllable_ass, which resolves again through
+    # resolve_effect -- so if the two resolutions disagree, the layer count is
+    # taken from one effect and the content rendered from another. Measured:
+    # effect="highlight" with style_effect="glow" emitted a single event
+    # carrying glow's UNDER halo layer -- \blur9\bord5 and a \k, no \kf, no
+    # main layer, a line of blurred cyan with no sung text. Both shipped
+    # callers pre-resolve, so this was unreachable; an unguarded footgun in a
+    # shared emitter is a bug waiting for the third caller.
+    effect = resolve_effect(effect, style_effect)
+    style_effect = effect
     chosen = EFFECTS[effect]
     if isinstance(chosen, TextEffect):
         layers: tuple = (None,)

@@ -31,8 +31,10 @@ LAYOUT_PROPS = frozenset({"scale", "scale_x", "rotate", "offset_x", "offset_y"})
 FUTURE_PROPS = frozenset({"glow", "gradient", "motion_blur", "audio"})
 # The one mask. Generic vector \clip is a large vocabulary in exchange for one
 # look, so it stays out until something needs it. The value is the normalised
-# position of a diagonal band: 0.0 before the frame's left edge, 1.0 past its
-# right.
+# position of an axis-aligned band: 0.0 before the frame's left edge, 1.0 past
+# its right. Not diagonal -- measured impossible: libass only animates the
+# 4-number rectangular \clip through \t, not a vector-drawing clip, and
+# _shine_clip is axis-aligned to match.
 MASK_PROPS = frozenset({"shine"})
 ALL_PROPS = IN_PLACE_PROPS | LAYOUT_PROPS | FUTURE_PROPS | MASK_PROPS
 
@@ -68,11 +70,14 @@ class Track:
 # is authoring convenience and convenience should not become an engine concept.
 ROLE_Z = {"under": -1, "main": 0, "over": 1}
 
-# Measured, 60s of 1920x1080 @30 from a real 538-event file: 1 layer 4.5s,
-# 2 layers 7.4s, 4 layers 13.4s, 8 layers 25.7s, 16 layers 49.4s. No knee --
-# cost is linear -- so the ceiling is a budget decision, not a cliff. 4 keeps a
-# 3-minute song at roughly 40s of burn; 16 is where "seconds, not minutes"
-# breaks.
+# Layer cost is NOT linear in count -- measured, 60s of 1920x1080: pill (1
+# layer) 4.12s, flare (1) 4.51s, sweep (2) 4.95s, aberration (3) 11.59s, glow
+# (2) 12.82s. Glow's two layers cost more than aberration's three because what
+# a layer DRAWS dominates: dropping glow's \blur9 to \blur0 takes it from
+# 12.90s to 8.20s, and \bord5 to \bord0 takes it to 11.17s (see effects.py).
+# The ceiling is a burn-time budget informed by that, not a linear-cost
+# extrapolation: worst case (4 heavy layers) is roughly 39s for a 3-minute
+# song, still tens of seconds, not minutes.
 MAX_LAYERS = 4
 
 # \kf sweeps SecondaryColour -> PrimaryColour, so a track writing the FILL
@@ -140,8 +145,10 @@ class Effect:
         if len(self.layers) > MAX_LAYERS:
             raise ValueError(
                 f"effect {self.id!r} has {len(self.layers)} layers; the ceiling "
-                f"is {MAX_LAYERS}. Layer cost is linear in burn time and 4 keeps "
-                "a 3-minute song at roughly 40s."
+                f"is {MAX_LAYERS}. Cost is driven by what a layer draws, not by "
+                "count alone (a blurred/bordered layer costs far more than a "
+                "plain one) -- 4 heavy layers still keeps a 3-minute song at "
+                "roughly 40s of burn."
             )
 
     @property
