@@ -2948,3 +2948,75 @@ agreeing with code is not evidence. The pixel measurement was the only thing
 that disagreed, and it was right. Any future rule about how events are
 numbered, stacked or positioned should be burned before it is written down as
 a contract.
+
+### Final whole-branch review, and the totals it moved
+
+Reviewed at `280c8f23..ec80bf48`, on the most capable model, pointed at the
+ledger's deferred minors. **Two Important findings and six Minor**, all fixed
+in one wave (`8bd3d333`); the scoped re-review verdicted **8 of 8 ADDRESSED**
+with no new breakage.
+
+**Final suite: `827 passed, 305 subtests passed, 0 failed`** — the fix wave
+added the two `ResolutionAgreementTests`, so `825 + 2 = 827`. The reconciliation
+above still closes; only its last line moves.
+
+The two Important ones are worth keeping in the record:
+
+1. **A "KNOWN DEFECT" comment for a defect that had already been fixed.** The
+   `aberration` entry still told a reader the two ghosts collide and that the
+   fix "is reported, not done here" — three commits after `9edccc3b` did it. In
+   a codebase where three real defects survived because the code, the test and
+   the plan all agreed with each other, a confident comment that contradicts a
+   measurement is not a typo.
+
+2. **`build_line_events` took its layer COUNT and its rendered CONTENT from two
+   different resolutions.** The count came from `EFFECTS[effect]`; the content
+   came from `syllable_ass`, which resolves again through
+   `resolve_effect(effect, style_effect)`. Measured: `effect="highlight"` with
+   `style_effect="glow"` emitted **one** event, and it was glow's *under* halo
+   layer — `\blur9\bord5`, a `\k`, **no `\kf` and no main layer**: a line of
+   blurred cyan with no sung text. Unreachable from either shipped caller,
+   because both pre-resolve — and `_build_layout_events` documents this exact
+   hazard and guards its own path while its sibling did not. Now resolved once
+   at the top, fenced by a test whose sabotage goes red while its control stays
+   green.
+
+Four of the six minors were **stale claims that a measurement had already
+falsified**: "layer cost is linear" in three shipped places (including the
+`ValueError` a preset author actually reads), a `MASK_PROPS` comment still
+describing a diagonal band, and a `ponytail:` note claiming a loop could not
+fail that had since been made real. That is the branch's recurring failure mode
+in miniature, and it is why they were fixed rather than deferred.
+
+### Controller's own final verification
+
+Measured directly, not taken from a report:
+
+| check | result |
+|---|---|
+| suite | **827 of 827**, 305 of 305 subtests, 0 failed |
+| visible-text reconciliation | exit 0 — **7 of 7** presets IDENTICAL; 11 layers x 1401 = **15411 chars** against a 52-line / 1401-char baseline |
+| burn, 60s @1920x1080 | pill 4.32s · flare 4.77s · sweep 4.84s · aberration 11.18s · glow 11.88s |
+| the same, scaled to a 3-minute song | **13.0s to 35.6s** — seconds, not minutes |
+| the four looks | all VISIBLE on real lyrics; glow Layers [0,1], aberration [0,1,2], flare [0], sweep [0,1] |
+
+### One last note on measuring, because it happened to the controller too
+
+Verifying the preview took **three attempts, and the first two were wrong in
+exactly the way every probe in `scratch/probes/` was wrong at least once**.
+
+The first passed `-ss` before `-i`, which seeks to the nearest keyframe: it
+returned the *same frame* for four different instants of two different presets.
+The second sampled a moment with nothing on screen, then measured a left edge
+that moved only because a different *line* had appeared — nothing to do with
+the mask.
+
+Both were caught the same way: **the control moved too.** `flare` carries no
+mask and reported an identical span to `sweep`, which is impossible if the
+measurement were measuring the mask. Neither attempt was caught by looking
+harder at the experimental column.
+
+The question "does the band actually move" is answered by
+`scratch/probes/probe_shine.py`, which isolates the band on a static line and
+has its own control: centre **127.0 -> 999.5 -> 1791.5** across a 1920px frame.
+Re-asking it with a worse instrument would have been a step backwards.
