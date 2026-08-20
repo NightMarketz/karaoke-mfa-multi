@@ -102,9 +102,10 @@ se roda um modelo de GPU dentro de um request HTTP.
 | Arquivo | Responsabilidade |
 | --- | --- |
 | `templates/game.html` | markup das três telas |
-| `static/game-pitch.worklet.js` | MPM/NSDF no AudioWorklet (~60 linhas) |
+| `static/game-pitch.js` | `detectPitch()` puro (NSDF/McLeod) + decimação |
 | `static/game-scoring.js` | funções **puras** de pontuação, testáveis fora do navegador |
-| `static/game.js` | relógio, render em canvas, playback, calibração, os quatro extras |
+| `static/game-assist.js` | calibração, vazamento e transposição — também puras |
+| `static/game.js` | relógio, render em canvas, playback, captura |
 
 Sem bundler e sem dependência nova: o Flask serve estático puro e o frontend atual é JS
 simples. Detector de pitch escrito à mão custa menos que introduzir um build step.
@@ -115,8 +116,16 @@ simples. Detector de pitch escrito à mão custa menos que introduzir um build s
 autoGainControl: false } })`. Supressão de ruído e AGC deformam o sinal e envenenam o
 detector — ficam desligados de propósito.
 
-O worklet acumula janela de 2048 amostras com hop de 512 (~11 ms a 48 kHz) e roda
-MPM/NSDF na faixa de 65 a 1000 Hz, emitindo `{ t, hz, clarity }`.
+A cada quadro do `requestAnimationFrame` que já desenha a tela, um `AnalyserNode`
+(`fftSize` 2048) entrega as últimas 2048 amostras via `getFloatTimeDomainData()`. Elas são
+decimadas para ~16 kHz e passam pelo NSDF/McLeod na faixa de 65 a 1000 Hz, produzindo
+`{ t, hz, clarity }`.
+
+**Por que não `AudioWorklet`** (decidido no planejamento, 2026-08-20): amostrar dentro do
+mesmo quadro que desenha dá à amostra de pitch exatamente o mesmo instante e o mesmo
+`instrumental.currentTime` do que aparece na tela — some uma fonte de erro de sincronia.
+E some um arquivo, um `MessagePort` e o risco de ESM dentro de worklet. Custo com
+decimação: ~0,15 ms por quadro, dentro dos 16,7 ms de um quadro a 60 fps.
 
 ### 5.3 Playback
 
@@ -204,7 +213,7 @@ voz, combo, pontuação. Sliders de latência e de voz guia sempre acessíveis.
 **Depois:** porcentagem, letra, maior combo, e as linhas ordenadas da pior para a melhor.
 Nada é salvo em disco.
 
-**Erros com tela própria:** microfone negado; navegador sem AudioWorklet; `melody.json`
+**Erros com tela própria:** microfone negado; navegador sem `getUserMedia`; `melody.json`
 ausente (com o comando para gerar); job sem `instrumental.wav`.
 
 ## 9. Provas
@@ -246,7 +255,7 @@ plano SOFA/ROSVOT como derrubado. Antes de qualquer linha do jogo: subir o model
 Publi, registrar o schema real de saída e os três números da prova de campo. Todo o resto
 depende desses números, e não o contrário.
 
-Depois: `s05b_melody.py` → rotas → scoring puro com testes → worklet de pitch → render e
+Depois: `s05b_melody.py` → rotas → scoring puro com testes → detector de pitch → render e
 playback → os quatro tratamentos → telas de erro.
 
 ## 11. Fora de escopo
