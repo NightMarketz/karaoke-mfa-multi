@@ -1,0 +1,21 @@
+# Probes and harnesses
+
+Throwaway by intent, kept because the design spec leans on what they measure
+and on how they measure it. Not part of the pipeline; nothing imports them.
+
+| script | what it answers |
+|---|---|
+| `probe_tags.py` | which ASS override tags this libass actually draws (48/48) |
+| `probe_colour_kf.py` | whether animating a colour kills the \kf sweep. **Aborts if the control does not sweep** -- it reported a working fill as dead once by measuring the wrong edge |
+| `probe_layers.py` | burn cost of stacking N layers per syllable |
+| `sabotage.py` | negative-control harness: patch one anchor, run tests, restore. Treats "no tests ran" as a void verdict, not a pass |
+| `reconcile.py` | visible-text reconciliation of generated .ass against a baseline |
+| `strip.py` | contact sheet across one syllable's animation window |
+| `peak.py` | pixel excursion an effect actually delivers |
+| `rowbands.py` | ink row bands in a burned frame (line spacing) |
+| `montage.py` | one frame per effect, stacked |
+| `probe_margins.py` | T0 gate: can an event be displaced without \pos, through its own Margin fields? (yes, both axes) |
+
+Every one of these was wrong at least once before it was right, always the
+same way: a verdict rendered over a situation where the measured thing could
+not have appeared. Check the control before trusting the column.

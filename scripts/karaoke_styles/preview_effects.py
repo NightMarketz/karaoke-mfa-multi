@@ -30,12 +30,12 @@ from dataclasses import replace  # noqa: E402
 
 from scripts.karaoke_styles.effects import EFFECTS  # noqa: E402
 from scripts.karaoke_styles.library import KaraokeStyle, get_preset  # noqa: E402
-from scripts.s06_generate_ass import (  # noqa: E402
+from scripts.ass_emit import (  # noqa: E402
     SIDE_MARGIN_RATIO,
     _build_karaoke_text,
     _build_layout_events,
-    style_row,
 )
+from scripts.s06_generate_ass import style_row  # noqa: E402
 
 # Which preset's LOOK each effect is shown in. Eight of the ten are the preset
 # that actually ships the effect, so what you see is what that preset burns.
