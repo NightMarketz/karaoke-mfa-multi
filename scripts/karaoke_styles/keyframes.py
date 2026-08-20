@@ -29,9 +29,17 @@ LAYOUT_PROPS = frozenset({"scale", "scale_x", "rotate", "offset_x", "offset_y"})
 # Named on purpose so the ASS compiler can refuse them by name rather than
 # ignore them. Delivered by the GPU compiler, which is not part of this plan.
 FUTURE_PROPS = frozenset({"glow", "gradient", "motion_blur", "audio"})
-ALL_PROPS = IN_PLACE_PROPS | LAYOUT_PROPS | FUTURE_PROPS
+# The one mask. Generic vector \clip is a large vocabulary in exchange for one
+# look, so it stays out until something needs it. The value is the normalised
+# position of a diagonal band: 0.0 before the frame's left edge, 1.0 past its
+# right.
+MASK_PROPS = frozenset({"shine"})
+ALL_PROPS = IN_PLACE_PROPS | LAYOUT_PROPS | FUTURE_PROPS | MASK_PROPS
 
-TIME_MODES = ("ms", "frac")
+# "abs" is measured from the DIALOGUE rather than from the syllable's attack.
+# A line-wide mask needs the same animation on every syllable of the line; with
+# "ms" each token would drag its own band along behind it.
+TIME_MODES = ("ms", "frac", "abs")
 
 
 @dataclass(frozen=True)
@@ -175,10 +183,13 @@ def resolve(track: Track, *, attack_ms: int, duration_ms: int) -> list[tuple[int
     The VALUE is preserved, not coerced -- a colour key is a "#RRGGBB" string
     and float() would throw on it. Only the time is arithmetic.
     """
-    scale = duration_ms if track.time == "frac" else 1
     resolved: dict[int, Any] = {}
     for at, value in track.keys:
-        ms = max(0, int(round(attack_ms + at * scale)))
+        if track.time == "abs":
+            ms = max(0, int(round(at)))
+        else:
+            scale = duration_ms if track.time == "frac" else 1
+            ms = max(0, int(round(attack_ms + at * scale)))
         resolved[ms] = value if isinstance(value, str) else float(value)
     # Sorted by TIME only. The default tuple sort falls through to the value on
     # a tie, and comparing a str to a float raises -- unreachable today because

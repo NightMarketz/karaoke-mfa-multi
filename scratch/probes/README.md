@@ -15,6 +15,7 @@ and on how they measure it. Not part of the pipeline; nothing imports them.
 | `rowbands.py` | ink row bands in a burned frame (line spacing) |
 | `montage.py` | one frame per effect, stacked |
 | `probe_margins.py` | T0 gate: can an event be displaced without \pos, through its own Margin fields? (yes, both axes) |
+| `probe_shine.py` | does libass actually ANIMATE a `\clip` band via `\t`? Caught a real defect: the first `_shine_clip` drew a skewed VECTOR drawing that rendered but never moved under `\t` on this libass; a plain rectangular `\clip(x1,y1,x2,y2)` does animate. `_shine_clip` was rewritten as the rectangle as a result. Static-endpoint control proves "frozen" wasn't just "always off-frame" |
 
 Every one of these was wrong at least once before it was right, always the
 same way: a verdict rendered over a situation where the measured thing could

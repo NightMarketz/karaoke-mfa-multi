@@ -1,0 +1,32 @@
+[
+  [
+    "band never leaves the frame at v=0",
+    "centre = -half - SHINE_CLEARANCE + float(value) * travel",
+    "centre = float(value) * width"
+  ],
+  [
+    "band stops moving",
+    "centre = -half - SHINE_CLEARANCE + float(value) * travel",
+    "centre = width / 2"
+  ],
+  [
+    "clearance removed, band touches the frame edge",
+    "SHINE_CLEARANCE = 1.0",
+    "SHINE_CLEARANCE = 0.0"
+  ],
+  [
+    "band no longer spans the frame height",
+    "{round(centre - half)},0,{round(centre + half)},{height})",
+    "{round(centre - half)},0,{round(centre + half)},{height // 2})"
+  ],
+  [
+    "clip coordinates crossed",
+    "return f\"\\\\clip({round(centre - half)},0,{round(centre + half)},{height})\"",
+    "return f\"\\\\clip({round(centre + half)},0,{round(centre - half)},{height})\""
+  ],
+  [
+    "mask silently dropped without a frame",
+    "            if frame is None:\n                raise ValueError(",
+    "            if frame is None:\n                pass\n            if False:\n                raise ValueError("
+  ]
+]

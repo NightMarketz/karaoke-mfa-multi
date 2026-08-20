@@ -11,7 +11,7 @@ through unsupported_props(), never silently ignored.
 
 from __future__ import annotations
 
-from .keyframes import IN_PLACE_PROPS, Effect, Layer, resolve
+from .keyframes import IN_PLACE_PROPS, MASK_PROPS, Effect, Layer, resolve
 
 
 def _fmt(value: float) -> str:
@@ -72,6 +72,43 @@ LAYOUT_TAG = {
 # compile to a single \move instead of a \t chain.
 MOVE_PROPS = ("offset_x", "offset_y")
 
+# The band's own geometry, as fractions of the FRAME width. Wide and soft on
+# purpose: shine works in frame coordinates because the non-layout path never
+# measures its line, so a narrow band would miss a short line entirely. The
+# documented cost is that a very short line gets a band wider than itself --
+# acceptable, because the band is soft.
+SHINE_HALF_WIDTH = 0.10
+# One pixel of clearance at each end of the travel, so v=0 and v=1 put the band
+# strictly OFF the frame instead of exactly touching its edge. The coordinates
+# are rounded to ints, so without it the same arithmetic at another frame size
+# can round the other way and light a one-pixel stripe at an instant the design
+# says is dark.
+SHINE_CLEARANCE = 1.0
+
+
+def _shine_clip(value: float, frame: tuple[int, int]) -> str:
+    r"""\clip rectangle for the band at normalised position `value`.
+
+    0.0 puts the band entirely left of the frame and 1.0 entirely right of it,
+    so a 0 -> 1 track sweeps it clean across and nothing is masked at either
+    end of the travel.
+
+    AXIS-ALIGNED, and that is a measurement rather than a taste. The first
+    draft drew a skewed four-point vector drawing, `\clip(m x y l ...)`.
+    Measured on this libass, three instants each, with two controls: an
+    animated RECTANGULAR clip sweeps 581px; the static vector form draws and
+    its endpoint shapes differ by 407px; the same vector form animated through
+    `\t` does not move at all. libass interpolates the four-number rectangle
+    and leaves a vector drawing frozen at its resting shape. A diagonal band
+    would therefore be a mask that never sweeps on the machine that burns the
+    video.
+    """
+    width, height = frame
+    half = width * SHINE_HALF_WIDTH
+    travel = width + 2 * half + 2 * SHINE_CLEARANCE
+    centre = -half - SHINE_CLEARANCE + float(value) * travel
+    return f"\\clip({round(centre - half)},0,{round(centre + half)},{height})"
+
 
 def unsupported_props(effect: Effect, *, anchored: bool = False) -> set[str]:
     """Properties this effect asks for that the ASS compiler cannot deliver.
@@ -79,7 +116,7 @@ def unsupported_props(effect: Effect, *, anchored: bool = False) -> set[str]:
     `anchored` is whether the caller will hand compile_syllable an anchor. Off
     the positioned path, scale/rotate/offset are just as undeliverable as glow.
     """
-    usable = set(ASS_SUPPORTED)
+    usable = set(ASS_SUPPORTED) | set(MASK_PROPS)
     if anchored:
         usable |= set(LAYOUT_TAG) | set(MOVE_PROPS)
     return {t.prop for t in effect.tracks} - usable
@@ -165,6 +202,20 @@ def compile_layer(
         usable.update(LAYOUT_TAG)
 
     for track in layer.tracks:
+        if track.prop in MASK_PROPS:
+            if frame is None:
+                raise ValueError(
+                    f"track {track.prop!r} needs the frame size to place its "
+                    "band; pass frame=(width, height)"
+                )
+            keys = resolve(track, attack_ms=attack_ms, duration_ms=duration_ms)
+            statics.append(_shine_clip(keys[0][1], frame))
+            for (t0, _), (t1, v1) in zip(keys, keys[1:]):
+                if t1 <= t0:
+                    continue
+                accel = "" if track.accel == 1.0 else f"{_fmt(track.accel)},"
+                transforms.append(f"\\t({t0},{t1},{accel}{_shine_clip(v1, frame)})")
+            continue
         if track.prop in MOVE_PROPS or track.prop not in usable:
             continue
         tag = usable[track.prop]

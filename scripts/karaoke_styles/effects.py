@@ -98,6 +98,46 @@ def ghost_layer(
     return Layer("under", tuple(tracks), offset=(dx, dy))
 
 
+def shine_layer(
+    *,
+    color: str = "#FFFFFF",
+    start_ms: int = 0,
+    travel_ms: int = 900,
+    alpha: float = 0.9,
+    blur: float = 2.0,
+) -> Layer:
+    r"""A bright copy of the line, masked to a soft vertical band that wipes
+    across it.
+
+    An `over` layer, so it draws on top of main; everything outside the band is
+    clipped away, which is what makes it read as a light rather than as a
+    second line of text.
+
+    AXIS-ALIGNED, not diagonal -- see `_shine_clip`'s docstring in
+    ass_compile.py. Measured on this libass: an animated rectangular `\clip`
+    sweeps, a `\clip` written as a vector drawing (what a skewed band would
+    need) draws but stays frozen at its resting shape under `\t`. A diagonal
+    band would therefore never move on the machine that burns the video.
+
+    The shine track is time="abs" -- measured from the DIALOGUE, not from each
+    syllable's attack -- because the band belongs to the line, not to the
+    syllable. With "ms" every token would drag its own band behind it.
+
+    ponytail: the clip tags repeat once per syllable token, because the emitter
+    builds a line as a run of per-syllable groups and hoisting them would mean
+    a layer-level text prefix the emitter does not have. They are identical, so
+    libass lands on the same band; it costs bytes, not correctness. Hoist if a
+    file size ever matters.
+    """
+    return Layer("over", (
+        Track("shine", ((start_ms, 0.0), (start_ms + travel_ms, 1.0)), time="abs"),
+        Track("fill_color", ((0, color),)),
+        Track("unsung_color", ((0, color),)),
+        Track("alpha", ((0, alpha),)),
+        Track("blur", ((0, blur),)),
+    ))
+
+
 def _in_place(layer, d: int, t: str, off: int, *, karaoke: str, frame=None) -> str:
     """Compile a layer and splice the soft edge in just before the karaoke tag."""
     token = compile_layer(
