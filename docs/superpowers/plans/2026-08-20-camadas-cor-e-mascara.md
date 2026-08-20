@@ -2637,7 +2637,14 @@ ffmpeg 8.1 (Gyan build), Windows 11. Reference job `jobs/publi-bet`.
 
 Entering Task 6: **819 passed, 218 subtests passed, 0 failed** (measured with
 the pre-existing GPU-spike WIP present, which is the real tree).
-Leaving Task 6: **824 passed, 292 subtests passed, 0 failed**.
+After the four presets landed: **824 passed, 292 subtests passed, 0 failed**.
+Leaving Task 6, after fix round 1 (the layer-numbering defect below):
+**825 passed, 305 subtests passed, 0 failed**.
+
+Fix round 1 added +1 test and +13 subtests, both in `tests/test_layers.py`
+(35 -> 36, 39 -> 52). The +1 is a new general fence; the DISTINCT test replaced
+the old one rather than adding to it. The +13 is that fence's subtests, one per
+layered effect -- **13 of 14**, `typewriter` being the lone `TextEffect`.
 
 Task delta: **+5 tests** (all in `tests/test_karaoke_style_library.py`,
 44 -> 49) and **+74 subtests**, reconciled per file rather than asserted:
@@ -2661,9 +2668,11 @@ files, not by estimating.
 T5 +15, T6 +5:
 
     760 + 9 + 22 + 7 + 6 + 15 = 819   (entering T6 -- matches the measurement)
-    819 + 5 = 824                     (leaving T6 -- matches the measurement)
+    819 + 5 = 824                     (four presets -- matches)
+    824 + 1 = 825                     (fix round 1 -- matches)
+    819 + 6 = 825                     (T6 total, both rounds)
 
-**The total closes on both.**
+**The total closes on all of them.**
 
 > The brief predicted `808 + 5 = 813` and re-derived it as
 > `760 + 9 + 17 (T3) + 6 + 16 (T5) + 5`. That arithmetic is stale: T3 shipped
@@ -2870,37 +2879,72 @@ working animation from a stuck one.
   not be attributed to the band.
 - **aberration** -- **does NOT render as designed.** See below.
 
-### Open defect: aberration's two ghosts collide
+### Defect found, ruled on and FIXED: aberration's two ghosts collided
 
-Both ghosts are `under` layers, and `Effect.layer_numbers` maps **role** to the
-ASS Layer field (under = -1, main = 0, over = +1, translated to base 0). Two
-`under` layers therefore receive the **same** ASS Layer number. libass treats
-two same-layer unpositioned events that overlap in time and space as a
-collision and pushes the second onto its own row, so the magenta copy renders
-about 64px **above** the line instead of 4px to the right of it. The cyan copy
-is correct.
+The plan's layer-numbering contract -- "two layers in the same role share a
+number" -- was derived from the ASS spec and **never burned**. It was wrong for
+exactly the case that motivated the whole feature.
 
-Ruled out first: the emitted margins are right. The two ghosts carry
-`MarginL/MarginR/MarginV` of `92/100/195` and `100/92/195` -- identical
-vertical margin, horizontal margins swapped by 8px, exactly the requested
-`dx=+-4, dy=0`. The displacement is not ours.
+Both ghosts are `under` layers, and `Effect.layer_numbers` mapped **role** ->
+ASS Layer (under -1, main 0, over +1, translated to base 0), so both got
+Layer 0. libass runs collision avoidance between same-layer unpositioned events
+that overlap in time and space, and pushed the second onto a row of its own:
+the magenta copy rendered ~64px **above** the line instead of 4px to its right.
 
-Control, same three events burned twice, only the Layer field changed:
+Ruled out first -- the emitted margins were always correct: `92/100/195` and
+`100/92/195`, identical vertical margin, horizontal margins swapped by 8px,
+exactly `dx=+-4, dy=0`. The displacement was never ours.
+
+**Control that found it** (same three events burned twice, only the Layer field
+changed):
 
 | variant | magenta ink rows | span |
 |---|---|---|
 | as emitted (both ghosts on Layer 0) | **474..527** | 53px |
 | second ghost moved to Layer 2 | **538..591** | 53px |
 
-Same glyph span both times; a 64px shift caused purely by the Layer field, and
-538..591 is the main line's own row. That is the collision, confirmed.
+Same glyph span, a 64px shift caused purely by the Layer field, and 538..591 is
+the main line's own row. Independently reproduced by the coordinator with a
+single-event control pinning the reference row (one event alone 258-292; two on
+Layer 0 at 194-228 AND 258-292; the same two on Layers 0 and 1 sharing
+258-292).
 
-`aberration` is the first effect with two layers sharing a role, which is why
-nothing caught this earlier -- `glow` (under + main) and `sweep` (main + over)
-each have at most one layer per role and render correctly. The fix belongs in
-`keyframes.layer_numbers` (rank within a role, not by role alone); it would
-leave `glow` at (0,1) and a main-only effect at (0,) -- so the Task 3 fences
-still hold -- and change only `aberration` from (0,0,1) to (0,1,2). It was
-**not applied here**: it changes Task 3's shipped contract, and a measurement
-that disagrees with the plan is a finding to report, not an expectation to
-adjust. The defect is recorded in a comment on the effect itself.
+**Ruling: rank within a role.** `layer_numbers` now orders by role z and then
+by declaration order and assigns each layer its rank, so numbers are distinct
+per layer. Only `aberration` changes, `(0,0,1)` -> `(0,1,2)`; main-only effects
+still yield `(0,)` and `glow`/`sweep` still `(0,1)`, so fence 2 and the golden
+are untouched.
+
+**Verified on burned pixels, with each event also burned alone as its own
+control:**
+
+    SINGLE-EVENT CONTROLS (burned alone, cannot collide with anything):
+      cyan ghost alone        rows 538..591 (span 53)   cols 362..910
+      magenta ghost alone     rows 538..591 (span 53)   cols 370..919
+      main alone (any ink)    rows 540..589 (span 49)   cols 368..912
+
+    ALL THREE TOGETHER (the shipped case):
+      cyan ghost              rows 542..590
+      magenta ghost           rows 538..590
+      main (reference)        rows 540..589
+
+    max spread between the three bands: 4 px
+    VERDICT: SAME ROW (ghosts overlap the line)
+
+The +-4px horizontal displacement survives: burned alone, cyan spans cols
+362..910 and magenta 370..919, an 8px right-shift. Event counts unchanged
+(`aberration` still 52 x 3 = 156), reconciliation still green for all seven
+presets, and burn time unmoved (11.21s / 2.84x after, against 11.59s / 2.81x
+before -- less drift than the `pill` baseline itself showed between runs, so
+noise).
+
+**The fence was seen RED.** Reverting `layer_numbers` to the role-collapsing
+body fails both new tests, the general one naming `aberration` by subtest.
+
+**Three places had written the wrong contract down** -- the property docstring,
+a dedicated test, and an incidental assertion inside a `needs_layout` test --
+and all three agreed with each other. That agreement is exactly why tests
+agreeing with code is not evidence. The pixel measurement was the only thing
+that disagreed, and it was right. Any future rule about how events are
+numbered, stacked or positioned should be burned before it is written down as
+a contract.
