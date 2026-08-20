@@ -1,0 +1,7 @@
+[
+  [
+    "the clock: a non-main layer spends one extra centisecond",
+    "\\{karaoke}{duration_cs}}}{text}",
+    "\\{karaoke}{duration_cs if karaoke == 'kf' else duration_cs + 1}}}{text}"
+  ]
+]

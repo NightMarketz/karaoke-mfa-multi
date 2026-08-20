@@ -317,7 +317,13 @@ def _build_layout_events(
         line_height=ass_size,
     )
 
-    chosen = EFFECTS[effect] if effect in EFFECTS else EFFECTS[DEFAULT_EFFECT]
+    # No DEFAULT_EFFECT fallback here, deliberately. layer_index was chosen
+    # by the caller against THIS effect's layer list, so silently swapping in
+    # a different effect would index the wrong list -- a wrong layer drawn, or
+    # an IndexError far from the cause. build_line_events raises KeyError on an
+    # unknown name and s06 resolves through resolve_effect first, which is
+    # where a retired name like "fade_in" already becomes the sweep.
+    chosen = EFFECTS[effect]
     layer = chosen.layers[layer_index]
     karaoke = "kf" if layer.role == "main" else "k"
     dx, dy = layer.offset

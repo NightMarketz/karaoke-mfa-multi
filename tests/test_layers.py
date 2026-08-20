@@ -13,6 +13,7 @@ The three rules here are each a measurement, not a preference:
     layers existed.
 """
 
+import re
 import unittest
 
 from scripts.karaoke_styles.keyframes import (
@@ -203,16 +204,30 @@ class EmittedLayerTests(unittest.TestCase):
     def test_the_karaoke_clock_is_identical_on_every_layer(self):
         # The one invariant no effect may touch. Same clock on every copy, or
         # the layers drift apart against the audio.
+        #
+        # ponytail: every SHIPPED effect is main-only, so this loop compares a
+        # set built from ONE event and cannot fail on its own. It is a smoke
+        # pass, not the fence. The fence is TwoLayerClockTests below, which
+        # registers an effect that really has two layers. The counters here
+        # exist only so this loop cannot degrade into a pass over nothing.
         import re
+        compared = 0
         for name, effect in EFFECTS.items():
             if not hasattr(effect, "layers") or effect.needs_layout:
                 continue
             with self.subTest(effect=name):
+                events = _events(name)
                 clocks = {
                     sum(int(n) for n in re.findall(r"\\k[fo]?(\d+)", event))
-                    for event in _events(name)
+                    for event in events
                 }
                 self.assertEqual(1, len(clocks), (name, clocks))
+                # A clock of 0 means the regex matched nothing, which would
+                # make the line above true for the wrong reason.
+                self.assertNotIn(0, clocks, (name, clocks))
+                compared += len(events)
+        # Cardinality: six main-only effects ship today, one event each.
+        self.assertGreaterEqual(compared, 6, compared)
 
     def test_only_the_main_layer_carries_the_sweep(self):
         effect = EFFECTS["highlight"]
@@ -227,6 +242,130 @@ class SyllableLayerTests(unittest.TestCase):
     def test_an_out_of_range_layer_index_raises_rather_than_returning_nothing(self):
         with self.assertRaises(IndexError):
             syllable_ass("highlight", 40, "x", layer_index=1)
+
+
+class TwoLayerClockTests(unittest.TestCase):
+    r"""The karaoke clock, on an effect that actually HAS more than one layer.
+
+    Every shipped effect is main-only, so any loop over EFFECTS compares a set
+    of one and is green by construction. This registers a real two-layer effect
+    so the invariant has something to be wrong about.
+    """
+
+    PROBE = "_clockprobe"
+
+    def setUp(self):
+        EFFECTS[self.PROBE] = Effect(self.PROBE, (
+            Layer("under", (Track("blur", ((0, 6.0),)),)),
+            Layer("main"),
+        ))
+        # addCleanup, not try/finally: it runs even when the assertion below
+        # raises, so a red test cannot leave the registry poisoned for the rest
+        # of the session.
+        self.addCleanup(EFFECTS.pop, self.PROBE)
+
+    def _clocks(self, events):
+        return [
+            sum(int(n) for n in re.findall(r"\\k[fo]?(\d+)", event))
+            for event in events
+        ]
+
+    def test_both_layers_spend_exactly_the_same_karaoke_time(self):
+        events = _events(self.PROBE)
+        # Cardinality first, with the denominator: two layers, two events, two
+        # clocks compared. One event would make the equality below vacuous.
+        self.assertEqual(2, len(events), events)
+        clocks = self._clocks(events)
+        self.assertEqual(2, len(clocks))
+        self.assertNotIn(0, clocks, clocks)
+        self.assertEqual(clocks[0], clocks[1], clocks)
+
+    def test_only_the_main_layer_sweeps_but_the_under_layer_still_advances(self):
+        r"""\k draws no glyph, it only advances the clock.
+
+        That is the whole reason the fill-colour prohibition does not reach a
+        non-main layer: there is no sweep on it to kill.
+        """
+        under, main = _events(self.PROBE)
+        self.assertNotIn(r"\kf", under)
+        self.assertIn(r"\kf", main)
+        self.assertIn(r"\k", under)
+
+    def test_under_draws_first_and_main_draws_over_it(self):
+        under, main = _events(self.PROBE)
+        self.assertTrue(under.startswith("Dialogue: 0,"), under)
+        self.assertTrue(main.startswith("Dialogue: 1,"), main)
+
+
+class LayerOffsetTests(unittest.TestCase):
+    r"""Layer.offset end to end, on both emit paths.
+
+    Off the layout path the offset becomes the event's OWN MarginL/MarginR/
+    MarginV, because the syllable carries no \pos to move. On the layout path
+    it folds straight into the anchor, because it does.
+    """
+
+    OFFSET = (4.0, 2.0)
+
+    def _register(self, name, tracks=()):
+        EFFECTS[name] = Effect(name, (
+            Layer("under", tracks, offset=self.OFFSET),
+            Layer("main"),
+        ))
+        self.addCleanup(EFFECTS.pop, name)
+
+    def test_an_offset_layer_writes_margins_while_main_keeps_inheriting(self):
+        # Measured arithmetic, re-derived here rather than restated: with
+        # alignment 2 the text is centred between the event's own MarginL and
+        # MarginR, so centre_x = W/2 + (L - R)/2, and MarginV counts up from
+        # the bottom. margin_lr=96 and dx=4 give 100/92 -- a centre 4px right.
+        self._register("_ghostprobe")
+        under, main = _events("_ghostprobe")
+        style = get_preset("pill").styles["verse"]
+        mv = round(style.margin_v * 1.5 - self.OFFSET[1])
+        self.assertEqual(94, mv)                       # style margin_v 64 * 1.5 - 2
+        self.assertIn(",100,92,94,,", under)
+        self.assertIn(f",100,92,{mv},,", under)
+        # 0,0,0 means "inherit the style row" -- NOT zero margins.
+        self.assertIn(",0,0,0,,", main)
+
+    def test_the_offset_moves_the_centre_by_exactly_dx(self):
+        # (L - R)/2 = (100 - 92)/2 = 4. Stated as arithmetic on the emitted
+        # numbers so a sign flip in either margin is caught, not just a value.
+        self._register("_ghostcentre")
+        under, _ = _events("_ghostcentre")
+        ml, mr, mv = (int(n) for n in re.search(
+            r",(\d+),(\d+),(\d+),,", under).groups())
+        self.assertEqual(self.OFFSET[0], (ml - mr) / 2)
+        self.assertEqual(96, (ml + mr) / 2)            # the base margin, unmoved
+        self.assertEqual(94, mv)
+
+    def test_on_the_layout_path_the_offset_folds_into_the_anchor(self):
+        # scale is a LAYOUT_PROP, so this effect takes the \pos path. The track
+        # sits on the under layer only: needs_layout reads every layer, and it
+        # keeps main's anchor provably untouched.
+        self._register("_ghostmove", (Track("scale", ((0, 1.0), (120, 1.1))),))
+        events = _events("_ghostmove")
+        # 3 syllables x 2 layers, under first.
+        self.assertEqual(6, len(events), len(events))
+        pairs = list(zip(events[:3], events[3:]))
+        self.assertEqual(3, len(pairs))
+
+        def pos(event):
+            found = re.search(r"\\pos\(([\d.-]+),([\d.-]+)\)", event)
+            self.assertIsNotNone(found, event)
+            return float(found.group(1)), float(found.group(2))
+
+        for under, main in pairs:
+            with self.subTest(under=under):
+                ux, uy = pos(under)
+                mx, my = pos(main)
+                self.assertAlmostEqual(self.OFFSET[0], ux - mx, places=1)
+                self.assertAlmostEqual(self.OFFSET[1], uy - my, places=1)
+
+    def test_a_main_only_effect_still_emits_no_margins_of_its_own(self):
+        # The control for the two above: no offset anywhere, nothing written.
+        self.assertIn(",0,0,0,,", _events("highlight")[0])
 
 
 if __name__ == "__main__":
