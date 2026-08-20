@@ -41,14 +41,18 @@ from scripts.s06_generate_ass import style_row  # noqa: E402
 #   none       NO preset selects it. The style here is borrowed, so this block
 #              shows the effect faithfully and the pairing not at all.
 PRESET_FOR_EFFECT = {
+    "aberration": "aberration",
+    "flare": "flare",
     "flash": "cyberpunk",
     "fly-in": "fly-in",
     "focus": "focus-pull",
+    "glow": "glow",
     "highlight": "pill",
     "none": "bold-highlight",     # borrowed: bold-highlight itself selects highlight
     "pop": "word-pop",
     "punch": "punch",
     "reveal": "word-reveal",
+    "sweep": "sweep",
     "swing": "swing",
     "typewriter": "typewriter",
 }

@@ -259,6 +259,67 @@ EFFECTS: dict[str, Effect | TextEffect] = {
     "punch": Effect("punch", (Layer("main", (
         Track("scale", ((-80, 1.0), (0, 0.88), (110, 1.22), (280, 1.0)), accel=0.7),
     )),)),
+
+    # ── Layer effects. Colour, layers and a mask, all as data. ────────────
+    #
+    # Cost, in Dialogue events per line off the layout path: flare 1 (free),
+    # glow and sweep 2, aberration 3.
+    #
+    # Burn time is NOT a function of the layer count alone. MEASURED on this
+    # machine, 60s @1920x1080 over the 52-line publi-bet job, against a 4.12s
+    # pill baseline: flare 1.09x, sweep 1.20x, aberration 2.81x, glow 3.11x.
+    # glow has TWO layers and costs more than aberration's three, because what
+    # a layer DRAWS dominates: turning glow's \blur9 off drops it to 8.20s
+    # (2.0x baseline -- the plain 2-layer cost), and sweep's second layer is
+    # \clip-ped to a band so the rasteriser culls most of it. Plain layers are
+    # roughly linear; a blurred one is not. Budget by what the layer draws.
+
+    # A soft halo behind the line. Made of an under layer, NOT of the `glow`
+    # property -- that one stays reserved for a renderer that does real glow.
+    "glow": Effect("glow", (
+        glow_layer(color="#38E8FF", blur=9.0, spread=5.0, alpha=0.6),
+        Layer("main"),
+    )),
+    # Chromatic aberration, both sides: a cyan copy left and a magenta copy
+    # right, each one Dialogue, each displaced by the event's own margins off
+    # the layout path. The glitch preset's one-sided shadow trick is what this
+    # replaces.
+    #
+    # KNOWN DEFECT, measured on burned frames, not yet fixed. Both ghosts are
+    # `under`, and Effect.layer_numbers maps ROLE -> ASS Layer, so both land on
+    # Layer 0. libass then treats two same-layer unpositioned events that
+    # overlap in time and space as a collision and pushes the second onto its
+    # own row: the magenta copy renders 64px ABOVE the line instead of 4px to
+    # the right of it. Control: re-burning the identical three events with the
+    # second ghost moved to Layer 2 puts it back on the main row (magenta ink
+    # rows 474..527 -> 538..591). aberration is the first effect with two
+    # layers sharing a role, which is why nothing caught this before.
+    # Fix belongs in keyframes.layer_numbers (rank within a role, not just by
+    # role); it changes Task 3's contract, so it is reported, not done here.
+    "aberration": Effect("aberration", (
+        ghost_layer(-4.0, 0.0, "#00E5FF"),
+        ghost_layer(4.0, 0.0, "#FF006E"),
+        Layer("main"),
+    )),
+    # Colour flare on the attack -- and it costs no extra event at all, because
+    # \3c is one of the two registers the karaoke sweep does not read from.
+    # That is what the layer roles buy: the cheap answer stays available.
+    # Rests at the outline's own dark, winds to hot pink on the attack, settles
+    # back: the first key is the resting pose, so the unsung tail of the line
+    # is not left sitting in the flare.
+    "flare": Effect("flare", (Layer("main", (
+        Track("outline_color", ((-60, "#0A0A12"), (0, "#FF5CA8"), (260, "#0A0A12"))),
+        Track("outline", ((-60, 2.4), (0, 6.0), (260, 2.4))),
+    )),)),
+    # A light sweeping across the line once, as it appears. The band is an
+    # over layer masked to a swept rectangular \clip band, and it crosses the
+    # FRAME rather than the text, which is what keeps it off the positioned
+    # path. Axis-aligned, not diagonal: measured on this libass, only the
+    # four-number \clip interpolates under \t.
+    "sweep": Effect("sweep", (
+        Layer("main"),
+        shine_layer(color="#FFFFFF", start_ms=120, travel_ms=900, alpha=0.9),
+    )),
 }
 
 # Effects that used to live here and are gone: fade_in prefixed a per-syllable

@@ -39,7 +39,17 @@ MODERN_PRESET_IDS = [
     "fly-in",
     "swing",
     "punch",
+    # Layer presets: the four looks that could not exist before colour, layers
+    # and a mask. Only "aberration" and "glow" cost extra events; "flare" is a
+    # single main layer animating c, and "sweep" adds one over layer.
+    "glow",
+    "aberration",
+    "flare",
+    "sweep",
 ]
+
+# The four presets built out of the layer/colour/mask vocabulary.
+LAYER_PRESET_IDS = ["glow", "aberration", "flare", "sweep"]
 
 # The presets whose effects libass cannot draw in place, so s06 emits one
 # positioned Dialogue per syllable for them.
@@ -57,6 +67,10 @@ MODERN_PRESET_EFFECT = {
     "fly-in": "fly-in",
     "swing": "swing",
     "punch": "punch",
+    "glow": "glow",
+    "aberration": "aberration",
+    "flare": "flare",
+    "sweep": "sweep",
 }
 
 
@@ -147,7 +161,8 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
         from scripts.karaoke_styles.effects import EFFECTS
 
         others = [p for p in MODERN_PRESET_EFFECT if p not in MOTION_PRESET_IDS]
-        self.assertEqual(7, len(others))
+        # 7 before the layer presets, 11 with them: all four stay off layout.
+        self.assertEqual(11, len(others))
         for preset_id in others:
             with self.subTest(preset=preset_id):
                 effect = EFFECTS[MODERN_PRESET_EFFECT[preset_id]]
@@ -172,7 +187,7 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
     def test_every_modern_preset_covers_all_style_keys(self):
         # Cardinality guard: a preset missing a section key silently falls back
         # to "verse" at render time, which reads as "the preset did nothing".
-        self.assertEqual(10, len(MODERN_PRESET_IDS))
+        self.assertEqual(14, len(MODERN_PRESET_IDS))
         for preset_id in MODERN_PRESET_IDS:
             with self.subTest(preset=preset_id):
                 self.assertEqual(supported_style_keys(), set(get_preset(preset_id).styles))
@@ -442,6 +457,62 @@ class StyleLibraryEdgeCaseTests(unittest.TestCase):
         )
         errors = validate_preset(preset)
         self.assertTrue(any("version" in e for e in errors), errors)
+
+
+class LayerPresetTests(unittest.TestCase):
+    def test_every_layer_preset_selects_its_own_effect_on_every_style(self):
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        checked = 0
+        for preset_id in LAYER_PRESET_IDS:
+            styles = get_preset(preset_id).styles
+            # Count before verdict: an empty styles dict would pass the loop.
+            self.assertEqual(supported_style_keys(), set(styles))
+            for key, style in styles.items():
+                with self.subTest(preset=preset_id, style=key):
+                    self.assertEqual(preset_id, style.highlight_effect)
+                    self.assertIn(style.highlight_effect, EFFECTS)
+                    checked += 1
+        self.assertEqual(len(LAYER_PRESET_IDS) * len(supported_style_keys()), checked)
+
+    def test_no_layer_preset_exceeds_the_measured_ceiling(self):
+        from scripts.karaoke_styles.effects import EFFECTS
+        from scripts.karaoke_styles.keyframes import MAX_LAYERS
+
+        self.assertEqual(4, len(LAYER_PRESET_IDS))
+        for preset_id in LAYER_PRESET_IDS:
+            with self.subTest(preset=preset_id):
+                self.assertLessEqual(len(EFFECTS[preset_id].layers), MAX_LAYERS)
+
+    def test_only_aberration_and_glow_pay_for_extra_events(self):
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        self.assertEqual(1, len(EFFECTS["flare"].layers))
+        self.assertEqual(2, len(EFFECTS["sweep"].layers))
+        self.assertEqual(2, len(EFFECTS["glow"].layers))
+        self.assertEqual(3, len(EFFECTS["aberration"].layers))
+
+    def test_no_layer_preset_needs_the_positioned_path(self):
+        # The whole reason the T0 gate was run first: a ghost that forced
+        # needs_layout would multiply these presets by ten events per line.
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        for preset_id in LAYER_PRESET_IDS:
+            with self.subTest(preset=preset_id):
+                self.assertFalse(EFFECTS[preset_id].needs_layout)
+
+    def test_flare_rests_in_a_neutral_pose(self):
+        # A track's FIRST key is the resting pose, held from the Dialogue's
+        # first frame. An effect opening on its animated extreme leaves the
+        # whole unsung tail of the line sitting in that extreme -- measured on
+        # burned frames when punch rested at 0.86 and swing at -9 degrees.
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        tracks = EFFECTS["flare"].main.tracks
+        self.assertEqual(2, len(tracks))          # count before verdict
+        for track in tracks:
+            with self.subTest(prop=track.prop):
+                self.assertEqual(track.keys[0][1], track.keys[-1][1])
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ and on how they measure it. Not part of the pipeline; nothing imports them.
 | `probe_colour_kf.py` | whether animating a colour kills the \kf sweep. **Aborts if the control does not sweep** -- it reported a working fill as dead once by measuring the wrong edge |
 | `probe_layers.py` | burn cost of stacking N layers per syllable |
 | `sabotage.py` | negative-control harness: patch one anchor, run tests, restore. Treats "no tests ran" as a void verdict, not a pass |
-| `reconcile.py` | visible-text reconciliation of generated .ass against a baseline |
+| `reconcile.py` | visible-text reconciliation of generated .ass against the 52-line / 1401-char pill baseline, across all seven motion **and** layer presets. A multi-layer preset repeats the line once per layer, so it checks EVERY layer's own text separately (11 layers, 1401 chars each) **and** that the total is exactly `L x 1401` -- either alone would pass a file the other rejects. First draft sliced off the leading `len/L` characters expecting L whole copies of the file; measured, `ass_emit` interleaves a line's layers instead (event `j` is layer `j % L`), so that draft called three working presets DIFFERS |
 | `strip.py` | contact sheet across one syllable's animation window |
 | `peak.py` | pixel excursion an effect actually delivers |
 | `rowbands.py` | ink row bands in a burned frame (line spacing) |

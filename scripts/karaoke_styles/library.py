@@ -2168,6 +2168,51 @@ GLITCH_STYLES: dict[str, KaraokeStyle] = _modern_variants(
     _GLITCH_BASE, loud_fontsize=64
 )
 
+# ── Layer presets ────────────────────────────────────────────────
+# The four looks that needed colour, layers and a mask to exist as data. Same
+# face and geometry as word-pop, so the LAYER work is the only variable you are
+# comparing and not a second one.
+
+_GLOW_BASE = replace(
+    _WORD_POP_BASE,
+    primary_color=_c(150, 165, 190),     # waiting: cool slate, so the halo reads
+    secondary_color=_c(255, 255, 255),   # sung: white inside a cyan halo
+    outline_color=_c(6, 10, 18),
+    highlight_effect="glow",
+)
+GLOW_STYLES: dict[str, KaraokeStyle] = _modern_variants(_GLOW_BASE, loud_fontsize=64)
+
+_ABERRATION_BASE = replace(
+    _WORD_POP_BASE,
+    primary_color=_c(122, 134, 166),     # waiting: muted slate, so the sweep reads
+    secondary_color=_c(255, 255, 255),
+    outline_color=_c(8, 8, 12),
+    highlight_effect="aberration",
+)
+ABERRATION_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _ABERRATION_BASE, loud_fontsize=64
+)
+
+_FLARE_BASE = replace(
+    _WORD_POP_BASE,
+    primary_color=_c(214, 214, 224),
+    secondary_color=_c(255, 236, 245),
+    # The flare ANIMATES this register, so the style value is only the resting
+    # pose; effects.py's first key is what actually holds between attacks.
+    outline_color=_c(10, 10, 18),
+    highlight_effect="flare",
+)
+FLARE_STYLES: dict[str, KaraokeStyle] = _modern_variants(_FLARE_BASE, loud_fontsize=64)
+
+_SWEEP_BASE = replace(
+    _WORD_POP_BASE,
+    primary_color=_c(158, 160, 172),
+    secondary_color=_c(255, 214, 120),   # sung: warm gold under a white light
+    outline_color=_c(10, 8, 6),
+    highlight_effect="sweep",
+)
+SWEEP_STYLES: dict[str, KaraokeStyle] = _modern_variants(_SWEEP_BASE, loud_fontsize=64)
+
 
 # The syllable effect each style key sings with. Two values on purpose: the
 # sweep for lyrics, an instant fill for ad-libs. The old table also carried a
@@ -2361,6 +2406,34 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Uniform overshoot on every attack — the bounce word-pop could not do.",
         styles=PUNCH_STYLES,
+    ),
+    "glow": StylePreset(
+        id="glow",
+        label="Glow",
+        version=1,
+        description="A soft cyan halo behind every line, drawn as its own layer.",
+        styles=GLOW_STYLES,
+    ),
+    "aberration": StylePreset(
+        id="aberration",
+        label="Aberration",
+        version=1,
+        description="Two-sided chromatic aberration: a cyan copy left, a magenta copy right.",
+        styles=ABERRATION_STYLES,
+    ),
+    "flare": StylePreset(
+        id="flare",
+        label="Flare",
+        version=1,
+        description="The rim flares hot pink on every attack and settles back — no extra events.",
+        styles=FLARE_STYLES,
+    ),
+    "sweep": StylePreset(
+        id="sweep",
+        label="Sweep",
+        version=1,
+        description="A soft light sweeps across the line once as it appears.",
+        styles=SWEEP_STYLES,
     ),
 }
 
