@@ -26,7 +26,7 @@ from scripts.review_wizard.timing_layers import (
     gap_should_be_absorbed,
 )
 from scripts.karaoke_styles.library import KaraokeStyle
-from scripts.karaoke_styles.ass_compile import compile_syllable, unsupported_props
+from scripts.karaoke_styles.ass_compile import compile_layer, unsupported_props
 from scripts.karaoke_styles.effects import (
     DEFAULT_EFFECT,
     EFFECTS,
@@ -86,6 +86,9 @@ def _build_karaoke_text(
     effect: str,
     style_effect: str = "highlight",
     line_style: str | None = None,
+    *,
+    layer_index: int = 0,
+    frame: tuple[int, int] | None = None,
 ) -> str:
     r"""
     Build the \kf tagged text for one karaoke line.
@@ -132,6 +135,8 @@ def _build_karaoke_text(
                 visible_segment,
                 offset_ms=offset_cs * 10,
                 style_effect=style_effect,
+                layer_index=layer_index,
+                frame=frame,
             )
         )
 
@@ -245,6 +250,8 @@ def _build_layout_events(
     end_ts: str,
     start_ms: int,
     effect: str,
+    layer_index: int = 0,
+    layer_no: int = 0,
 ) -> list[str]:
     r"""One Dialogue per syllable, each positioned with \pos.
 
@@ -311,15 +318,22 @@ def _build_layout_events(
     )
 
     chosen = EFFECTS[effect] if effect in EFFECTS else EFFECTS[DEFAULT_EFFECT]
+    layer = chosen.layers[layer_index]
+    karaoke = "kf" if layer.role == "main" else "k"
+    dx, dy = layer.offset
     events = []
     for spot, attack_ms, duration_cs in zip(placed, attacks, durations):
-        anchor = (spot.x + spot.width / 2, spot.y)
-        token = compile_syllable(
-            chosen,
+        # On this path the offset is free: the syllable already carries \pos,
+        # so a ghost is the same event drawn a few pixels over.
+        anchor = (spot.x + spot.width / 2 + dx, spot.y + dy)
+        token = compile_layer(
+            layer,
             text=spot.text,
             duration_cs=duration_cs,
             attack_ms=attack_ms,
             anchor=anchor,
+            frame=(width_px, height_px),
+            karaoke=karaoke,
         )
         # An effect that animates offset compiles to \move, which already
         # carries the destination. Emitting \pos as well leaves libass with two
@@ -329,8 +343,82 @@ def _build_layout_events(
         lead_cs = attack_ms // 10
         lead = f"{{\\k{lead_cs}}}" if lead_cs > 0 else ""
         events.append(
-            f"Dialogue: 0,{start_ts},{end_ts},{style.name},,0,0,0,,"
+            f"Dialogue: {layer_no},{start_ts},{end_ts},{style.name},,0,0,0,,"
             f"{fade_tag}{{\\an2{placement}}}{lead}{token}"
+        )
+    return events
+
+
+def build_line_events(
+    line: dict,
+    style: KaraokeStyle,
+    *,
+    effect: str,
+    style_effect: str,
+    style_key: str,
+    scale: float,
+    play_res: tuple[int, int],
+    margin_lr: int,
+    fade_tag: str,
+    start_ts: str,
+    end_ts: str,
+    start_ms: int,
+    line_start_ms: int,
+) -> list[str]:
+    r"""Every Dialogue this line emits: one per layer, or one per (layer, syllable).
+
+    A layer is one more Dialogue on the path that already exists, so layers are
+    cheap on a non-layout preset (L x 52 on the reference job) and expensive on
+    a layout one (L x 538). The ceiling of 4 is set by the worse case.
+
+    `start_ms` is the DIALOGUE's start -- one preroll before line["start"] --
+    because \k, \t and \move all run on that clock. `line_start_ms` is
+    line["start"], which is what the non-layout builder measures word gaps
+    against.
+    """
+    chosen = EFFECTS[effect]
+    if isinstance(chosen, TextEffect):
+        layers: tuple = (None,)
+        numbers: tuple[int, ...] = (0,)
+    else:
+        layers, numbers = chosen.layers, chosen.layer_numbers
+
+    events: list[str] = []
+    for index, (layer, number) in enumerate(zip(layers, numbers)):
+        if chosen.needs_layout:
+            events += _build_layout_events(
+                line, style,
+                scale=scale, play_res=play_res, fade_tag=fade_tag,
+                start_ts=start_ts, end_ts=end_ts, start_ms=start_ms,
+                effect=effect, layer_index=index, layer_no=number,
+            )
+            continue
+        text = _build_karaoke_text(
+            line["words"], line_start_ms, effect,
+            style_effect=style_effect, line_style=style_key,
+            layer_index=index, frame=play_res,
+        )
+        dx, dy = layer.offset if layer is not None else (0.0, 0.0)
+        if dx or dy:
+            # Measured (T0 gate, scratch/probes/probe_margins.py): with
+            # alignment 2 the text is centred between the event's OWN MarginL
+            # and MarginR, so centre_x = W/2 + (L - R)/2, and MarginV is the
+            # distance from the bottom of the frame. Both verified against a
+            # \pos control that moved by exactly the amount it was handed.
+            #
+            # The clamp is not cosmetic: an event margin of 0 means "inherit
+            # the style's", NOT zero, so a ghost whose dx reached the base
+            # margin would silently halve its own displacement.
+            ml = max(1, round(margin_lr + dx))
+            mr = max(1, round(margin_lr - dx))
+            mv = max(1, round(style.margin_v * scale - dy))
+        else:
+            # 0,0,0 = inherit the style row, byte for byte what every shipped
+            # line has carried since before layers existed.
+            ml = mr = mv = 0
+        events.append(
+            f"Dialogue: {number},{start_ts},{end_ts},{style.name},,"
+            f"{ml},{mr},{mv},,{fade_tag}{text}"
         )
     return events
 

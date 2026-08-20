@@ -55,10 +55,108 @@ class Track:
             )
 
 
+# Draw order, and the only axis the compiler needs in order to REFUSE. glow and
+# ghost are constructors (see effects.py), not roles: role is engine, the rest
+# is authoring convenience and convenience should not become an engine concept.
+ROLE_Z = {"under": -1, "main": 0, "over": 1}
+
+# Measured, 60s of 1920x1080 @30 from a real 538-event file: 1 layer 4.5s,
+# 2 layers 7.4s, 4 layers 13.4s, 8 layers 25.7s, 16 layers 49.4s. No knee --
+# cost is linear -- so the ceiling is a budget decision, not a cliff. 4 keeps a
+# 3-minute song at roughly 40s of burn; 16 is where "seconds, not minutes"
+# breaks.
+MAX_LAYERS = 4
+
+# \kf sweeps SecondaryColour -> PrimaryColour, so a track writing the FILL
+# register writes the register the sweep reads from. Measured on a burned
+# frame by locating the sweep front: animating \1c, setting \1c statically and
+# animating \1a all kill the fill; \3c and \2c leave it alone. Refused by NAME
+# on a main layer -- never silently dropped.
+#
+# ponytail: the generic `alpha` prop also touches \1a, and `reveal` ships on
+# it. It stays allowed because it is golden-pinned shipped behaviour; refusing
+# it would be a behaviour change wearing a fence's clothes.
+MAIN_REFUSED = frozenset({"fill_color", "fill_alpha"})
+
+
+@dataclass(frozen=True)
+class Layer:
+    r"""One drawn copy of the line: one more Dialogue on the path that exists.
+
+    `offset` is a STATIC displacement in pixels, (dx, dy), positive dy = down.
+    Static on purpose: off the layout path it becomes the event's own
+    MarginL/MarginR/MarginV (measured -- centre_x = W/2 + (L - R)/2, and
+    MarginV is the distance from the bottom), which is what keeps a ghost cheap
+    on a preset that never measures its line. An ANIMATED offset is still
+    offset_x/offset_y, still a LAYOUT_PROP, and still needs \pos.
+    """
+
+    role: str
+    tracks: tuple[Track, ...] = ()
+    offset: tuple[float, float] = (0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        if self.role not in ROLE_Z:
+            raise ValueError(
+                f"unknown layer role: {self.role!r} "
+                f"(known: {', '.join(sorted(ROLE_Z))})"
+            )
+        if self.role != "main":
+            return
+        refused = sorted({track.prop for track in self.tracks} & MAIN_REFUSED)
+        if refused:
+            raise ValueError(
+                f"a main layer may not animate {', '.join(refused)}: \\kf sweeps "
+                "SecondaryColour -> PrimaryColour, so writing the fill register "
+                "kills the karaoke sweep. Put it on an under or over layer, "
+                "which carry \\k and have no sweep to kill."
+            )
+        if self.offset != (0.0, 0.0):
+            raise ValueError(
+                "a main layer may not be offset: it is where the line is"
+            )
+
+
 @dataclass(frozen=True)
 class Effect:
     id: str
-    tracks: tuple[Track, ...]
+    layers: tuple[Layer, ...]
+
+    def __post_init__(self) -> None:
+        mains = sum(1 for layer in self.layers if layer.role == "main")
+        if mains != 1:
+            raise ValueError(
+                f"effect {self.id!r} has {mains} main layers, needs exactly 1: "
+                "the main layer is the one that carries \\kf"
+            )
+        if len(self.layers) > MAX_LAYERS:
+            raise ValueError(
+                f"effect {self.id!r} has {len(self.layers)} layers; the ceiling "
+                f"is {MAX_LAYERS}. Layer cost is linear in burn time and 4 keeps "
+                "a 3-minute song at roughly 40s."
+            )
+
+    @property
+    def main(self) -> Layer:
+        return next(layer for layer in self.layers if layer.role == "main")
+
+    @property
+    def tracks(self) -> tuple[Track, ...]:
+        """Every track on every layer. What capability reporting asks about."""
+        return tuple(track for layer in self.layers for track in layer.tracks)
+
+    @property
+    def layer_numbers(self) -> tuple[int, ...]:
+        r"""The ASS Layer field per layer, in self.layers order.
+
+        Roles carry offsets under=-1, main=0, over=+1 and the whole set is
+        translated so its minimum is 0. A main-only effect therefore yields
+        (0,) -- byte for byte what ships today, so the golden needs no
+        hand-written exception.
+        """
+        zs = [ROLE_Z[layer.role] for layer in self.layers]
+        base = min(zs)
+        return tuple(z - base for z in zs)
 
     @property
     def needs_layout(self) -> bool:

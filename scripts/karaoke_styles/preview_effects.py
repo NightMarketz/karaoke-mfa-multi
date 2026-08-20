@@ -30,11 +30,7 @@ from dataclasses import replace  # noqa: E402
 
 from scripts.karaoke_styles.effects import EFFECTS  # noqa: E402
 from scripts.karaoke_styles.library import KaraokeStyle, get_preset  # noqa: E402
-from scripts.ass_emit import (  # noqa: E402
-    SIDE_MARGIN_RATIO,
-    _build_karaoke_text,
-    _build_layout_events,
-)
+from scripts.ass_emit import SIDE_MARGIN_RATIO, build_line_events  # noqa: E402
 from scripts.s06_generate_ass import style_row  # noqa: E402
 
 # Which preset's LOOK each effect is shown in. Eight of the ten are the preset
@@ -275,30 +271,21 @@ def build_ass(
             style = _style_for(
                 name, str(line.get("style") or "verse"), one_style=one_style
             )
-            if EFFECTS[name].needs_layout:
-                events += _build_layout_events(
-                    line, style,
-                    scale=scale,
-                    play_res=(WIDTH, HEIGHT),
-                    fade_tag=fade,
-                    start_ts=_ts(win_start), end_ts=_ts(win_end),
-                    start_ms=win_start * 10,
-                    effect=name,
-                )
-            else:
-                # s06's own builder, not a second copy of it: this is what
-                # burns, gap absorption and \kf quantisation included.
-                text = _build_karaoke_text(
-                    line["words"],
-                    round(float(line["start"]) * 1000),
-                    name,
-                    style_effect=name,
-                    line_style=line.get("style"),
-                )
-                events.append(
-                    f"Dialogue: 0,{_ts(win_start)},{_ts(win_end)},{style.name},"
-                    f",0,0,0,,{fade}{text}"
-                )
+            # s06's own builder, not a second copy of it: this is what burns,
+            # gap absorption, \kf quantisation and every layer included.
+            events += build_line_events(
+                line, style,
+                effect=name,
+                style_effect=name,
+                style_key=str(line.get("style") or "verse"),
+                scale=scale,
+                play_res=(WIDTH, HEIGHT),
+                margin_lr=MARGIN_LR,
+                fade_tag=fade,
+                start_ts=_ts(win_start), end_ts=_ts(win_end),
+                start_ms=win_start * 10,
+                line_start_ms=round(float(line["start"]) * 1000),
+            )
 
         events.append(
             f"Dialogue: 0,{_ts(block_start)},{_ts(block_end)},Label,,0,0,0,,{fade}{name}"

@@ -11,7 +11,7 @@ through unsupported_props(), never silently ignored.
 
 from __future__ import annotations
 
-from .keyframes import IN_PLACE_PROPS, Effect, resolve
+from .keyframes import IN_PLACE_PROPS, Effect, Layer, resolve
 
 
 def _fmt(value: float) -> str:
@@ -86,7 +86,7 @@ def unsupported_props(effect: Effect, *, anchored: bool = False) -> set[str]:
 
 
 def _move_tag(
-    effect: Effect,
+    layer: Layer,
     anchor: tuple[float, float],
     *,
     attack_ms: int,
@@ -101,7 +101,7 @@ def _move_tag(
     the GPU compiler's job, not another tag here.
     """
     tracks = {
-        prop: next((t for t in effect.tracks if t.prop == prop), None)
+        prop: next((t for t in layer.tracks if t.prop == prop), None)
         for prop in MOVE_PROPS
     }
     if not any(tracks.values()):
@@ -126,24 +126,34 @@ def _move_tag(
     return f"\\move({_fmt(x0)},{_fmt(y0)},{_fmt(x1)},{_fmt(y1)},{t0},{t1})"
 
 
-def compile_syllable(
-    effect: Effect,
+def compile_layer(
+    layer: Layer,
     *,
     text: str,
     duration_cs: int,
     attack_ms: int,
     anchor: tuple[float, float] | None = None,
+    frame: tuple[int, int] | None = None,
+    karaoke: str = "kf",
 ) -> str:
-    r"""Render one syllable as "{tags}text".
+    r"""Render one layer of one syllable as "{tags}text".
 
-    duration_cs is the syllable's karaoke time and is emitted verbatim as \kf:
-    the sum of these across a line is the line's clock and must not change.
+    `karaoke` is "kf" for the main layer and "k" for every other one: karaoke
+    tags draw no glyph, they only advance the clock, so a non-main layer needs
+    the same clock and no sweep. That is exactly why the fill-colour
+    prohibition does not reach them -- the two rules compose instead of
+    fighting.
+
+    duration_cs is the syllable's karaoke time and is emitted verbatim: the sum
+    of these across a line is the line's clock and must not change, on ANY
+    layer.
 
     `anchor` is the (x, y) the caller placed this syllable at. Passing it
     unlocks LAYOUT_PROPS; without it those tracks are silently absent from the
     output and loudly present in unsupported_props(). When the returned token
     contains a \move, the caller must NOT also emit its own \pos -- libass
     keeps whichever positioning tag it parses first and drops the other.
+    `frame` is the (width, height) a mask sweeps across.
     """
     duration_cs = max(1, int(duration_cs))
     duration_ms = duration_cs * 10
@@ -154,7 +164,7 @@ def compile_syllable(
     if anchor is not None:
         usable.update(LAYOUT_TAG)
 
-    for track in effect.tracks:
+    for track in layer.tracks:
         if track.prop in MOVE_PROPS or track.prop not in usable:
             continue
         tag = usable[track.prop]
@@ -178,8 +188,29 @@ def compile_syllable(
             transforms.append(f"\\t({t0},{t1},{accel}{tag(v1)})")
 
     if anchor is not None:
-        move = _move_tag(effect, anchor, attack_ms=attack_ms, duration_ms=duration_ms)
+        move = _move_tag(layer, anchor, attack_ms=attack_ms, duration_ms=duration_ms)
         if move:
             statics.append(move)
 
-    return f"{{{''.join(statics)}{''.join(transforms)}\\kf{duration_cs}}}{text}"
+    return f"{{{''.join(statics)}{''.join(transforms)}\\{karaoke}{duration_cs}}}{text}"
+
+
+def compile_syllable(
+    effect: Effect,
+    *,
+    text: str,
+    duration_cs: int,
+    attack_ms: int,
+    anchor: tuple[float, float] | None = None,
+    frame: tuple[int, int] | None = None,
+) -> str:
+    r"""The effect's MAIN layer, which is the one that carries \kf."""
+    return compile_layer(
+        effect.main,
+        text=text,
+        duration_cs=duration_cs,
+        attack_ms=attack_ms,
+        anchor=anchor,
+        frame=frame,
+        karaoke="kf",
+    )

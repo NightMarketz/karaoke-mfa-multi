@@ -102,11 +102,11 @@ class LayoutEventTests(unittest.TestCase):
         placement does, depending on emission order.
         """
         from scripts.karaoke_styles.effects import EFFECTS
-        from scripts.karaoke_styles.keyframes import Effect, Track
+        from scripts.karaoke_styles.keyframes import Effect, Layer, Track
 
-        EFFECTS["_probe_move"] = Effect("_probe_move", (
+        EFFECTS["_probe_move"] = Effect("_probe_move", (Layer("main", (
             Track("offset_y", ((-260, 80.0), (0, 0.0))),
-        ))
+        )),))
         try:
             events = self._events("_probe_move")
             self.assertEqual(2, len(events))

@@ -5,6 +5,7 @@ import unittest
 from scripts.karaoke_styles.keyframes import (
     FUTURE_PROPS,
     Effect,
+    Layer,
     Track,
     resolve,
 )
@@ -82,8 +83,8 @@ class VocabularyTests(unittest.TestCase):
 
 class EffectTests(unittest.TestCase):
     def test_effect_needs_layout_only_for_layout_properties(self):
-        in_place = Effect("a", (Track("scale_y", ((0, 1.0), (90, 1.2))),))
-        moving = Effect("b", (Track("offset_x", ((0, -40.0), (120, 0.0))),))
+        in_place = Effect("a", (Layer("main", (Track("scale_y", ((0, 1.0), (90, 1.2))),)),))
+        moving = Effect("b", (Layer("main", (Track("offset_x", ((0, -40.0), (120, 0.0))),)),))
         self.assertFalse(in_place.needs_layout)
         self.assertTrue(moving.needs_layout)
 

@@ -92,6 +92,7 @@ from scripts.ass_emit import (  # noqa: F401
     _effect_capability_gaps,
     _escape_ass_text,
     _quantize_kf_durations_to_centiseconds,
+    build_line_events,
 )
 
 
@@ -230,31 +231,23 @@ YCbCr Matrix: TV.601
         start_ts      = _ms_to_ass(display_start_ms)
         end_ts        = _ms_to_ass(display_end_ms)
         fade_tag      = f"{{\\fad({fade_in_ms},{fade_out_ms})}}"
-        kf_text = _build_karaoke_text(
-            line["words"],
-            start_ms,
-            line.get("effect", "highlight"),
-            style_effect=s.highlight_effect,
-            line_style=style_key,
-        )
-
-        # Single visible karaoke layer. The \kf text itself keeps the
-        # not-yet-sung text visible and applies the progressive fill.
-        #
-        # Unless the effect animates something libass cannot do in place, in
-        # which case the line becomes one positioned Dialogue per syllable.
         chosen_effect = resolve_effect(line.get("effect", DEFAULT_EFFECT), s.highlight_effect)
-        if EFFECTS[chosen_effect].needs_layout:
-            event_lines.extend(_build_layout_events(
-                line, s, scale=scale, play_res=(int(width), int(height)),
-                fade_tag=fade_tag, start_ts=start_ts, end_ts=end_ts,
-                start_ms=display_start_ms, effect=chosen_effect,
-            ))
-        else:
-            event_lines.append(
-                f"Dialogue: 0,{start_ts},{end_ts},{s.name},,0,0,0,,"
-                f"{fade_tag}{kf_text}"
-            )
+        # One Dialogue per layer off the layout path, one per (layer, syllable)
+        # on it. A main-only effect is a single Layer 0 event, unchanged.
+        event_lines.extend(build_line_events(
+            line, s,
+            effect=chosen_effect,
+            style_effect=s.highlight_effect,
+            style_key=style_key,
+            scale=scale,
+            play_res=(int(width), int(height)),
+            margin_lr=margin_lr,
+            fade_tag=fade_tag,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            start_ms=display_start_ms,
+            line_start_ms=start_ms,
+        ))
 
     events_section = "\n".join(event_lines)
 

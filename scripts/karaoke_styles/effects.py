@@ -17,8 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from .ass_compile import compile_syllable, unsupported_props  # noqa: F401
-from .keyframes import Effect, Track
+from .ass_compile import compile_layer, compile_syllable, unsupported_props  # noqa: F401
+from .keyframes import Effect, Layer, Track
 
 DEFAULT_EFFECT = "highlight"
 
@@ -33,13 +33,15 @@ POP_SCALE_Y = 1.24
 TYPE_FADE_MS = 60
 
 
-def _in_place(effect: Effect, d: int, t: str, off: int) -> str:
-    """Compile an effect and splice the soft edge in just before the karaoke tag."""
-    token = compile_syllable(effect, text=t, duration_cs=d, attack_ms=off)
-    return token.replace("\\kf", f"{SOFT_EDGE}\\kf", 1)
+def _in_place(layer, d: int, t: str, off: int, *, karaoke: str, frame=None) -> str:
+    """Compile a layer and splice the soft edge in just before the karaoke tag."""
+    token = compile_layer(
+        layer, text=t, duration_cs=d, attack_ms=off, frame=frame, karaoke=karaoke
+    )
+    return token.replace(f"\\{karaoke}", f"{SOFT_EDGE}\\{karaoke}", 1)
 
 
-REVEAL = Effect("reveal", (Track("alpha", ((0, 0.0), (REVEAL_FADE_MS, 1.0))),))
+REVEAL = Effect("reveal", (Layer("main", (Track("alpha", ((0, 0.0), (REVEAL_FADE_MS, 1.0))),)),))
 
 
 @dataclass(frozen=True)
@@ -68,7 +70,7 @@ def _typewriter(d: int, t: str, off: int) -> str:
     # so a rounding leak here drifts the whole line against the audio.
     chars = list(t)
     if len(chars) <= 1:
-        return _in_place(REVEAL, d, t, off)
+        return _in_place(REVEAL.main, d, t, off, karaoke="kf")
     per, extra = divmod(d, len(chars))
     durations = [per + (1 if i < extra else 0) for i in range(len(chars))]
     parts = []
@@ -90,22 +92,22 @@ def _typewriter(d: int, t: str, off: int) -> str:
 
 EFFECTS: dict[str, Effect | TextEffect] = {
     # No tracks: the plain left-to-right fill, softened edge, nothing animated.
-    "highlight": Effect("highlight", ()),
+    "highlight": Effect("highlight", (Layer("main"),)),
     # Also no tracks; syllable_ass downgrades its \kf to \k for the hard switch.
-    "none": Effect("none", ()),
+    "none": Effect("none", (Layer("main"),)),
     # Glitch pop: thick border snaps down to normal on this syllable's attack.
-    "flash": Effect("flash", (Track("outline", ((0, 8.0), (200, 2.0))),)),
+    "flash": Effect("flash", (Layer("main", (Track("outline", ((0, 8.0), (200, 2.0))),)),)),
     # Focus pull: each syllable sharpens across its OWN sung window, so the key
     # times are fractions of the duration rather than fixed milliseconds.
-    "focus": Effect("focus", (Track("blur", ((0.0, 3.0), (1.0, 0.0)), time="frac"),)),
+    "focus": Effect("focus", (Layer("main", (Track("blur", ((0.0, 3.0), (1.0, 0.0)), time="frac"),)),)),
     # Bounce on the attack — the "word pop" caption look.
     # scale_y ONLY, deliberately: vertical scale leaves the glyph's horizontal
     # advance untouched, so the line never reflows under the bounce. Uniform
     # scale is the "punch" effect, which can afford it because it owns its \pos.
-    "pop": Effect("pop", (
+    "pop": Effect("pop", (Layer("main", (
         Track("scale_y", ((0, 1.0), (POP_RISE_MS, POP_SCALE_Y),
                           (POP_RISE_MS + POP_FALL_MS, 1.0))),
-    )),
+    )),)),
     # Word-by-word appear — nothing exists ahead of the voice. A lyric-video
     # look, not a sing-along one: pair it with a preset, never default to it.
     "reveal": REVEAL,
@@ -127,10 +129,10 @@ EFFECTS: dict[str, Effect | TextEffect] = {
     # already in flight while the one before it was still being sung: the word
     # visibly tore in half for the duration ("mun" seated, "do" still below).
     # Keeping the flight shorter than a syllable's own gap keeps a word whole.
-    "fly-in": Effect("fly-in", (
+    "fly-in": Effect("fly-in", (Layer("main", (
         Track("offset_y", ((-160, 80.0), (0, 0.0)), accel=0.6),
         Track("alpha", ((-160, 0.0), (-40, 1.0))),
-    )),
+    )),)),
     # Tips in from -9 degrees and settles level. \org keeps the pivot on the
     # syllable, so a word at the frame edge does not swing off screen.
     # The leading 0.0 is the RESTING pose (see below) -- without it the whole
@@ -138,9 +140,9 @@ EFFECTS: dict[str, Effect | TextEffect] = {
     # -14, not the -9 of the first draft: measured on a burned frame, -9 moved
     # the glyph's top corner 2px on a 44px cap height and read as a rendering
     # artefact rather than as motion.
-    "swing": Effect("swing", (
+    "swing": Effect("swing", (Layer("main", (
         Track("rotate", ((-200, 0.0), (-110, -14.0), (0, 0.0)), accel=0.5),
-    )),
+    )),)),
     # Uniform overshoot — the scale the old \fscy pop could not do without
     # reflowing, now safe because each syllable owns its position.
     # Rests at 1.0 for the same reason, and one sharper than swing's: a
@@ -149,9 +151,9 @@ EFFECTS: dict[str, Effect | TextEffect] = {
     # 0.88 -> 1.22, not the first draft's 0.92 -> 1.12: that delivered 6px of
     # excursion on a 43px cap height, measured off a burned frame. Present, but
     # small enough to pass for a compression artefact.
-    "punch": Effect("punch", (
+    "punch": Effect("punch", (Layer("main", (
         Track("scale", ((-80, 1.0), (0, 0.88), (110, 1.22), (280, 1.0)), accel=0.7),
-    )),
+    )),)),
 }
 
 # Effects that used to live here and are gone: fade_in prefixed a per-syllable
@@ -186,21 +188,30 @@ def syllable_ass(
     *,
     offset_ms: int = 0,
     style_effect: str = DEFAULT_EFFECT,
+    layer_index: int = 0,
+    frame: tuple[int, int] | None = None,
 ) -> str:
-    r"""Render one syllable token. Unknown effect falls back to the sweep.
+    r"""Render one LAYER of one syllable. Unknown effect falls back to the sweep.
 
-    offset_ms anchors any \t this effect emits (see SyllableEffect).
+    offset_ms anchors any \t this effect emits.
 
     style_effect is the animation the STYLE asks for, which a plain "highlight"
-    line upgrades to — cyberpunk's \bord8 glitch pulse, focus-pull's blur ramp.
-    A line that explicitly picked something else keeps its own choice.
+    line upgrades to. A line that explicitly picked something else keeps it.
+
+    layer_index selects which of the effect's layers to draw; the caller emits
+    one Dialogue per layer. Only the main layer gets \kf -- the others carry
+    \k, so they advance the same clock without a sweep of their own.
     """
     name = resolve_effect(effect, style_effect)
     chosen = EFFECTS[name]
     attack_ms = max(0, int(offset_ms))
     if isinstance(chosen, TextEffect):
+        if layer_index:
+            raise IndexError(f"{name!r} is a TextEffect and has one layer only")
         return chosen.render(max(1, int(duration_cs)), text, attack_ms)
-    token = _in_place(chosen, duration_cs, text, attack_ms)
+    layer = chosen.layers[layer_index]
+    karaoke = "kf" if layer.role == "main" else "k"
+    token = _in_place(layer, duration_cs, text, attack_ms, karaoke=karaoke, frame=frame)
     if name == "none":
         # The hard switch: no sweep, and no soft edge either.
         return token.replace(SOFT_EDGE + "\\kf", "\\k", 1)
@@ -214,17 +225,24 @@ def available_effects() -> list[str]:
 if __name__ == "__main__":
     import re
 
-    # Self-check: every effect emits balanced brace groups, preserves the
-    # visible text, carries a karaoke tag, and — most important — spends
-    # exactly the karaoke time it was given. No renderer needed.
-    for _name in EFFECTS:
-        out = syllable_ass(_name, 42, "lá")
-        assert out.count("{") == out.count("}") >= 1, (_name, out)
-        assert out.endswith("á"), (_name, out)          # typewriter splits "lá"
-        assert "".join(re.sub(r"\{[^}]*\}", "", out)) == "lá", (_name, out)
-        assert ("\\kf" in out) or ("\\k" in out), (_name, out)
-        # The karaoke clock must survive any effect, however many groups it emits.
-        assert sum(int(n) for n in re.findall(r"\\k[fo]?(\d+)", out)) == 42, (_name, out)
+    # Self-check: every LAYER of every effect emits balanced brace groups,
+    # preserves the visible text, carries a karaoke tag, and -- most important
+    # -- spends exactly the karaoke time it was given.
+    _layers_checked = 0
+    for _name, _fx in EFFECTS.items():
+        _count = 1 if isinstance(_fx, TextEffect) else len(_fx.layers)
+        for _li in range(_count):
+            out = syllable_ass(_name, 42, "lá", layer_index=_li, frame=(1280, 720))
+            assert out.count("{") == out.count("}") >= 1, (_name, _li, out)
+            assert out.endswith("á"), (_name, _li, out)      # typewriter splits "lá"
+            assert "".join(re.sub(r"\{[^}]*\}", "", out)) == "lá", (_name, _li, out)
+            assert ("\\kf" in out) or ("\\k" in out), (_name, _li, out)
+            # The karaoke clock must survive any effect, on any layer, however
+            # many groups it emits.
+            assert sum(int(n) for n in re.findall(r"\\k[fo]?(\d+)", out)) == 42, (_name, _li, out)
+            _layers_checked += 1
+    # Cardinality: at least one layer per effect, or the loop proved nothing.
+    assert _layers_checked >= len(EFFECTS) >= 10, (_layers_checked, len(EFFECTS))
     assert syllable_ass("nope", 10, "x") == syllable_ass("highlight", 10, "x")
     assert (syllable_ass("highlight", 10, "x", style_effect="flash")
             == syllable_ass("flash", 10, "x"))
@@ -257,4 +275,4 @@ if __name__ == "__main__":
     # Retired names must keep rendering, not vanish, on old analysis.json.
     for _retired in ("fade_in", "bounce", "scale_pop", "outline_pop", "glow_pulse", "soft_glow"):
         assert syllable_ass(_retired, 10, "x") == syllable_ass("highlight", 10, "x"), _retired
-    print(f"ok: {len(EFFECTS)} effects ->", available_effects())
+    print(f"ok: {len(EFFECTS)} effects, {_layers_checked} layers ->", available_effects())

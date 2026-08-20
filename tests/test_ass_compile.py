@@ -14,7 +14,17 @@ from scripts.karaoke_styles.ass_compile import (
     compile_syllable,
     unsupported_props,
 )
-from scripts.karaoke_styles.keyframes import Effect, Track
+from scripts.karaoke_styles.keyframes import Effect as _Effect, Layer, Track
+
+
+def Effect(id: str, tracks) -> _Effect:
+    r"""Task 3 reshaped Effect(id, tracks) into Effect(id, layers).
+
+    Every case below compiles the MAIN layer, which is exactly what
+    compile_syllable() does, so the tracks go there and not one assertion in
+    this file moves.
+    """
+    return _Effect(id, (Layer("main", tracks),))
 
 
 class CompileSyllableTests(unittest.TestCase):

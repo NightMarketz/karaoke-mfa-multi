@@ -8,7 +8,7 @@ import_or_skip("numpy")
 import_or_skip("pysubs2")
 
 from scripts.karaoke_styles.effects import EFFECTS
-from scripts.karaoke_styles.keyframes import Effect, Track
+from scripts.karaoke_styles.keyframes import Effect, Layer, Track
 from scripts.karaoke_styles.library import get_preset
 from scripts.s06_generate_ass import _effect_capability_gaps
 
@@ -21,10 +21,10 @@ class CapabilityReportTests(unittest.TestCase):
         self.assertEqual({}, _effect_capability_gaps(lines, {}))
 
     def test_a_gap_is_reported_with_the_property_named(self):
-        EFFECTS["_probe"] = Effect("_probe", (
+        EFFECTS["_probe"] = Effect("_probe", (Layer("main", (
             Track("scale_y", ((0, 1.0), (90, 1.2))),
             Track("glow", ((0, 0.0), (90, 1.0))),
-        ))
+        )),))
         try:
             gaps = _effect_capability_gaps([{"style": "verse", "effect": "_probe"}], {})
             self.assertEqual({"_probe": ["glow"]}, gaps)
@@ -40,9 +40,9 @@ class CapabilityReportTests(unittest.TestCase):
         line["effect"] alone reports nothing at all -- the loudest possible
         silence, on the exact case the report exists for.
         """
-        EFFECTS["_probe_style"] = Effect("_probe_style", (
+        EFFECTS["_probe_style"] = Effect("_probe_style", (Layer("main", (
             Track("gradient", ((0, 0.0), (90, 1.0))),
-        ))
+        )),))
         styles = dict(get_preset("word-pop").styles)
         styles["verse"] = styles["verse"].__class__(
             **{**styles["verse"].__dict__, "highlight_effect": "_probe_style"}

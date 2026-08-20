@@ -7,15 +7,22 @@ intermediate colour at all, which is what these tests pin.
 
 import unittest
 
-from scripts.karaoke_styles.ass_compile import _ass_colour, compile_syllable
-from scripts.karaoke_styles.keyframes import Effect, Track
+from scripts.karaoke_styles.ass_compile import _ass_colour, compile_layer
+from scripts.karaoke_styles.keyframes import Layer, Track
 
 
-def _tags(effect, **kw):
+def _tags(layer, **kw):
+    r"""Compile one layer's tags.
+
+    Task 3 made the layer, not the effect, the thing that compiles. These cases
+    run on an UNDER layer because \1c and \1a are refused on a main one -- they
+    write the register \kf sweeps -- and the emitted tag is identical either
+    way, which is what this file is about.
+    """
     kw.setdefault("text", "x")
     kw.setdefault("duration_cs", 40)
     kw.setdefault("attack_ms", 0)
-    return compile_syllable(effect, **kw)
+    return compile_layer(layer, **kw)
 
 
 class ColourConversionTests(unittest.TestCase):
@@ -47,7 +54,7 @@ class ColourTrackTests(unittest.TestCase):
         }
         for prop, tag in cases.items():
             with self.subTest(prop=prop):
-                out = _tags(Effect("e", (Track(prop, ((0, "#FF0000"),)),)))
+                out = _tags(Layer("under", (Track(prop, ((0, "#FF0000"),)),)))
                 self.assertIn(f"{tag}&H0000FF&", out)
 
     def test_each_alpha_prop_writes_its_own_register_and_inverts(self):
@@ -59,9 +66,9 @@ class ColourTrackTests(unittest.TestCase):
         }
         for prop, tag in cases.items():
             with self.subTest(prop=prop):
-                out = _tags(Effect("e", (Track(prop, ((0, 1.0),)),)))
+                out = _tags(Layer("under", (Track(prop, ((0, 1.0),)),)))
                 self.assertIn(f"{tag}&H00&", out)
-                out = _tags(Effect("e", (Track(prop, ((0, 0.0),)),)))
+                out = _tags(Layer("under", (Track(prop, ((0, 0.0),)),)))
                 self.assertIn(f"{tag}&HFF&", out)
 
     def test_only_the_endpoints_are_emitted_never_an_interpolated_colour(self):
@@ -69,7 +76,7 @@ class ColourTrackTests(unittest.TestCase):
         # colour that was AUTHORED. Nothing in between is computed here: libass
         # does the interpolation, and a Python-side midpoint would be a second,
         # differently-rounded answer to the same question.
-        effect = Effect("e", (
+        effect = Layer("under", (
             Track("outline_color", ((0, "#000000"), (100, "#FF00FF"), (300, "#000000"))),
         ))
         out = _tags(effect)
@@ -77,7 +84,7 @@ class ColourTrackTests(unittest.TestCase):
         self.assertIn("\\3c&H000000&\\t(0,100,\\3c&HFF00FF&)\\t(100,300,\\3c&H000000&)", out)
 
     def test_a_colour_track_is_anchored_on_the_attack_like_any_other(self):
-        effect = Effect("e", (Track("outline_color", ((0, "#000000"), (100, "#FFFFFF"))),))
+        effect = Layer("under", (Track("outline_color", ((0, "#000000"), (100, "#FFFFFF"))),))
         out = _tags(effect, attack_ms=1234)
         self.assertIn("\\t(1234,1334,", out)
 

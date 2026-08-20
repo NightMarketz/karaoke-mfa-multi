@@ -1,0 +1,7 @@
+[
+  ["fence 1: allow fill colour on main", "refused = sorted({track.prop for track in self.tracks} & MAIN_REFUSED)", "refused = []"],
+  ["fence 2: number layers from 1", "return tuple(z - base for z in zs)", "return tuple(z - base + 1 for z in zs)"],
+  ["fence 3: raise the ceiling to 5", "MAX_LAYERS = 4", "MAX_LAYERS = 5"],
+  ["main layer stops being unique", "if mains != 1:", "if False:"],
+  ["under stops sorting below main", "ROLE_Z = {\"under\": -1, \"main\": 0, \"over\": 1}", "ROLE_Z = {\"under\": 1, \"main\": 0, \"over\": -1}"]
+]
