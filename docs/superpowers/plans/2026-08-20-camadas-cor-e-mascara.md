@@ -1668,6 +1668,30 @@ git commit -m "feat(effects): glow_layer and ghost_layer constructors"
 
 ## Task 5: `shine` — an animated `\clip` band
 
+> **CORRECTION, measured during execution — read before this task's code.**
+> Everything below that describes the band as a **diagonal four-point vector
+> drawing** is wrong, and the spec's supporting claim is wrong with it. The
+> spec's 48-of-48 tag survey reported that `\clip` vector masks "animated by
+> `	`" render. Burned on this machine, three instants, with two controls:
+> an animated **rectangular** `\clip(x1,y1,x2,y2)` sweeps **581px**; the
+> **static** vector form draws, and its two endpoint shapes differ by
+> **407px**; the same vector band **animated through `	` produces no ink at
+> any instant**. libass interpolates the four-number rectangle and leaves a
+> vector drawing frozen at its resting shape. The survey confirmed that the
+> tag *renders*, not that the animation *runs* — the exact failure class the
+> spec itself warns about.
+>
+> **Ruling:** the band is an axis-aligned rectangle. `SHINE_SKEW` is deleted;
+> `SHINE_CLEARANCE = 1.0` is added so `v=0` and `v=1` put the band strictly
+> off the frame rather than exactly touching its edge (the coordinates are
+> rounded to ints, so touching can round the wrong way and light a one-pixel
+> stripe at an instant the design says is dark). The diagonal was never
+> load-bearing — the spec asks only that the band be "soft and wide". The
+> implemented geometry, the replacement `ShineBandTests`, and the six-row
+> sabotage batch are what shipped; the code blocks below are the superseded
+> first draft, kept because the reasoning around them still holds.
+> Independent re-measurement: `scratch/clipcheck/check.py`.
+
 **Files:**
 - Modify: `scripts/karaoke_styles/keyframes.py` (`MASK_PROPS`, `time="abs"`)
 - Modify: `scripts/karaoke_styles/ass_compile.py` (`_shine_clip`, the mask branch)
@@ -2212,7 +2236,7 @@ In `scripts/karaoke_styles/effects.py`, at the end of the `EFFECTS` dict:
         Track("outline", ((-60, 2.4), (0, 6.0), (260, 2.4))),
     )),)),
     # A light sweeping across the line once, as it appears. The band is an
-    # over layer masked to a diagonal \clip, and it crosses the FRAME rather
+    # over layer masked to a swept \clip band, and it crosses the FRAME rather
     # than the text, which is what keeps it off the positioned path.
     "sweep": Effect("sweep", (
         Layer("main"),
@@ -2300,7 +2324,7 @@ and four entries at the end of `PRESET_LIBRARY`, after `"punch"`:
         id="sweep",
         label="Sweep",
         version=1,
-        description="A diagonal light crosses the line once as it appears.",
+        description="A soft light sweeps across the line once as it appears.",
         styles=SWEEP_STYLES,
     ),
 ```
