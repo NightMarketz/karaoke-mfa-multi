@@ -157,14 +157,27 @@ class Effect:
     def layer_numbers(self) -> tuple[int, ...]:
         r"""The ASS Layer field per layer, in self.layers order.
 
-        Roles carry offsets under=-1, main=0, over=+1 and the whole set is
-        translated so its minimum is 0. A main-only effect therefore yields
-        (0,) -- byte for byte what ships today, so the golden needs no
-        hand-written exception.
+        DISTINCT per layer, ordered by role (under < main < over) and then by
+        the order they were declared. Distinct rather than one number per role,
+        and that is a measurement: libass runs collision avoidance between
+        events that share a Layer, so two ghost copies both numbered 0 do not
+        sit a few pixels apart -- the second is pushed onto a row of its own.
+        Burned, with a single-event control to pin the reference row: one event
+        alone occupies rows 258-292; two copies on Layer 0 occupy 194-228 AND
+        258-292, a full 64px row apart; the same two copies on Layer 0 and
+        Layer 1 occupy 258-292 together, which is the ghost the design asks for.
+
+        A main-only effect still yields (0,) -- byte for byte what ships today,
+        so the golden needs no hand-written exception.
         """
-        zs = [ROLE_Z[layer.role] for layer in self.layers]
-        base = min(zs)
-        return tuple(z - base for z in zs)
+        order = sorted(
+            range(len(self.layers)),
+            key=lambda index: (ROLE_Z[self.layers[index].role], index),
+        )
+        numbers = [0] * len(self.layers)
+        for rank, index in enumerate(order):
+            numbers[index] = rank
+        return tuple(numbers)
 
     @property
     def needs_layout(self) -> bool:

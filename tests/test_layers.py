@@ -124,11 +124,33 @@ class LayerNumberingTests(unittest.TestCase):
         self.assertEqual((0, 1, 2), Effect("e", (Layer("under"), Layer("main"), Layer("over"))).layer_numbers)
         self.assertEqual((0, 1), Effect("f", (Layer("main"), Layer("over"))).layer_numbers)
 
-    def test_two_layers_in_the_same_role_share_a_number(self):
-        # Chromatic aberration is two ghosts; both sit under, both draw before
-        # main, and their order between themselves is file order.
+    def test_two_layers_in_the_same_role_get_DISTINCT_numbers(self):
+        # Chromatic aberration is two ghosts, both under, both drawn before
+        # main. They must not share a Layer: libass runs collision avoidance
+        # between events on the same Layer, so two copies numbered 0 do not sit
+        # a few pixels apart -- the second is pushed onto a row of its own.
+        # Burned, with a single-event control pinning the reference row: one
+        # event alone occupies rows 258-292; two copies on Layer 0 occupy
+        # 194-228 AND 258-292, a full row apart; the same two on Layer 0 and
+        # Layer 1 share 258-292, which is the ghost the design asks for.
         effect = Effect("e", (Layer("under"), Layer("under"), Layer("main")))
-        self.assertEqual((0, 0, 1), effect.layer_numbers)
+        self.assertEqual((0, 1, 2), effect.layer_numbers)
+        self.assertEqual(3, len(set(effect.layer_numbers)))
+
+    def test_no_two_layers_of_any_shipped_effect_share_a_number(self):
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        checked = 0
+        for name, effect in EFFECTS.items():
+            if not hasattr(effect, "layers"):
+                continue                      # TextEffect: one layer, no numbering
+            with self.subTest(effect=name):
+                numbers = effect.layer_numbers
+                self.assertEqual(len(effect.layers), len(numbers))
+                self.assertEqual(len(numbers), len(set(numbers)), (name, numbers))
+                checked += 1
+        # Cardinality: an EFFECTS with no layered effects would pass the loop.
+        self.assertGreaterEqual(checked, 10)
 
     def test_under_always_numbers_below_main(self):
         # ASS draws lower Layer first, so this ordering IS the z-order.
@@ -407,7 +429,9 @@ class LayerConstructorTests(unittest.TestCase):
             Layer("main"),
         ))
         self.assertFalse(effect.needs_layout)
-        self.assertEqual((0, 0, 1), effect.layer_numbers)
+        # Distinct, not (0, 0, 1): two ghosts sharing a Layer collide and the
+        # second is pushed onto its own row. See the DISTINCT test above.
+        self.assertEqual((0, 1, 2), effect.layer_numbers)
 
 
 class GhostDisplacementTests(unittest.TestCase):
