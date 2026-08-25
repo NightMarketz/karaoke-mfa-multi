@@ -96,11 +96,31 @@ primeira execução.
 > primeira validação. Tudo que existe hoje são testes unitários com HTTP
 > dublado.
 
-#### Exportando seu workflow do ComfyUI: o export cru **não** funciona
+#### O workflow que vem no repo, e de onde ele saiu
 
-`config/comfy_workflow.json` é um **template com marcadores**, não um export
-puro. Depois de montar o grafo na GUI e salvar em **Workflow → Export (API)**,
-edite o arquivo e troque dois valores por marcadores literais:
+`config/comfy_workflow.json` **já existe**, derivado do template canônico
+`image_z_image_turbo.json` que o próprio ComfyUI instala em
+`.venv/Lib/site-packages/comfyui_workflow_templates_json/templates/`. Não foi
+escrito de memória: o template é um subgraph em formato UI, e o grafo abaixo
+saiu de expandir `definitions.subgraphs` e ler os 18 links um a um.
+
+| nó | valor | por quê |
+|---|---|---|
+| `UNETLoader` | `z_image_turbo_bf16.safetensors` | Apache-2.0, 8 passos |
+| `CLIPLoader` | `qwen_3_4b.safetensors`, tipo **`lumina2`** | o tipo não é adivinhável; vem do template |
+| `VAELoader` | `ae.safetensors` | idem |
+| `EmptySD3LatentImage` | 1024×576 | 16:9, lado maior ≤ 1024 |
+| `KSampler` | 8 passos, cfg 1, `res_multistep`/`simple` | valores do template turbo |
+| `ConditioningZeroOut` | negativo | o template não usa prompt negativo |
+
+Verificado: os três arquivos de modelo existem em `C:/ComfyUI/models/`, todo
+link aponta para nó existente, o template parseia depois da substituição e o
+`_bust_cache` encontra o `filename_prefix`. **Não verificado:** nunca foi
+submetido a um ComfyUI de verdade — a primeira execução é a primeira validação.
+
+Se você trocar por um workflow seu, o export cru da GUI **não** funciona.
+Depois de **Workflow → Export (API)**, edite o arquivo e troque dois valores
+por marcadores literais:
 
 | no export | vira | onde |
 |---|---|---|
@@ -145,9 +165,10 @@ que o `/history` reclamou (o `status` e as `messages`), não só "sem imagem".
 Além dos requisitos gerais de instalação, um job completo (que passa pelo
 Estágio 11 gerando ilustração de verdade, em vez de cair no fundo chapado
 `#08090f`) precisa de:
-1. ComfyUI Desktop aberto, com `config/comfy_workflow.json` exportado em
-   formato API **e marcado** com `%prompt%`/`%seed%` (ver acima). Porta
-   qualquer: é descoberta, ou fixada em `COMFYUI_URL`.
+1. ComfyUI Desktop aberto. O `config/comfy_workflow.json` já vem no repo,
+   derivado do template canônico (ver acima); só troque se quiser outro
+   modelo, e aí marque com `%prompt%`/`%seed%`. Porta qualquer: é
+   descoberta, ou fixada em `COMFYUI_URL`.
 2. Ollama de pé, com `llama3.2:3b` puxado.
 3. `GEMINI_API_KEY` no ambiente.
 4. Entrada em `input/jobs/{id}/` com `song.mp3` e `lyrics.txt` — ou
