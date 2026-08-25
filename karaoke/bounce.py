@@ -20,6 +20,13 @@ ENERGY_MIN = 0.02
 WINDOW_MS = 25
 HOP_MS = 10
 
+# Deriva (Ken Burns): fracao do quadro reservada para a varredura de x/y, e de
+# quanto em quanto tempo um novo par x/y e comandado. 1s da ~210 comandos numa
+# musica de 3m30 — barato, e o movimento fica imperceptivel passo a passo, que
+# e exatamente o ponto de uma deriva lenta.
+DRIFT_MARGIN = 0.04
+DRIFT_STEP_SECONDS = 1.0
+
 
 def _par(n: float) -> int:
     """Arredonda para baixo ate um inteiro par (libx264 rejeita impar)."""
@@ -27,33 +34,62 @@ def _par(n: float) -> int:
 
 
 def build_sendcmd(onsets, base_w: int, base_h: int,
-                  pulse: float = 0.03, decay: float = 0.18) -> str:
+                  pulse: float = 0.03, decay: float = 0.18,
+                  duration: float = None) -> str:
     """
-    Texto do arquivo sendcmd: um pulso por onset, com retorno ao tamanho cheio.
+    Texto do arquivo sendcmd: um pulso por onset, com retorno ao tamanho cheio,
+    mais — se `duration` vier — uma deriva lenta de `crop x`/`crop y`.
 
-    pulse: fracao de encolhimento do crop no onset (0.03 = 3%).
-    decay: segundos ate voltar ao tamanho cheio.
+    pulse:    fracao de encolhimento do crop no onset (0.03 = 3%).
+    decay:    segundos ate voltar ao tamanho cheio.
+    duration: duracao total do video, em segundos. None = sem deriva; o crop
+              fica centralizado pelo default do filtro, igual a antes.
+
+    Deriva e pulso saem do MESMO crop de proposito — empilhar zoompan poria
+    dois zooms concorrentes na cadeia. Com deriva ligada o crop de repouso
+    encolhe DRIFT_MARGIN para abrir a folga que x/y varrem; sem essa folga x
+    teria de ficar preso em 0, porque o crop de repouso ja seria a fonte
+    inteira (base_w x base_h == WORK_W x WORK_H).
     """
     if len(onsets) == 0:
         raise ValueError(
             "nenhum onset detectado — sendcmd vazio nao produz movimento nenhum"
         )
 
-    pw, ph = _par(base_w * (1 - pulse)), _par(base_h * (1 - pulse))
-    fw, fh = _par(base_w), _par(base_h)
+    deriva = duration is not None and duration > 0
+    if deriva:
+        fw, fh = _par(base_w * (1 - DRIFT_MARGIN)), _par(base_h * (1 - DRIFT_MARGIN))
+    else:
+        fw, fh = _par(base_w), _par(base_h)
+    pw, ph = _par(fw * (1 - pulse)), _par(fh * (1 - pulse))
 
-    eventos = []
+    eventos = []   # (tempo, [(propriedade, valor), ...])
     ordenados = sorted(float(t) for t in onsets)
     for i, t in enumerate(ordenados):
-        eventos.append((t, pw, ph))
+        eventos.append((t, [("w", pw), ("h", ph)]))
         volta = t + decay
         # ponytail: se o proximo onset chega antes do retorno, o retorno e
         # descartado — o proximo pulso ja reassume. Mantem os comandos em ordem
         # crescente, que e o que o sendcmd exige.
         if i + 1 >= len(ordenados) or volta < ordenados[i + 1]:
-            eventos.append((volta, fw, fh))
+            eventos.append((volta, [("w", fw), ("h", fh)]))
 
-    return "".join(f"{t:.3f} crop w {w}, crop h {h};\n" for t, w, h in eventos)
+    if deriva:
+        # Folga medida contra o crop de REPOUSO, que e o maior comandado; o
+        # crop do pulso e menor, entao cabe por consequencia.
+        max_x, max_y = base_w - fw, base_h - fh
+        passos = max(1, int(duration / DRIFT_STEP_SECONDS))
+        for k in range(passos + 1):
+            t = min(k * DRIFT_STEP_SECONDS, float(duration))
+            frac = t / duration
+            eventos.append((t, [("x", min(_par(max_x * frac), max_x)),
+                                ("y", min(_par(max_y * frac), max_y))]))
+
+    eventos.sort(key=lambda e: e[0])
+    return "".join(
+        f"{t:.3f} " + ", ".join(f"crop {prop} {v}" for prop, v in cmds) + ";\n"
+        for t, cmds in eventos
+    )
 
 
 def onsets_from_wav(wav_path: Path) -> list:

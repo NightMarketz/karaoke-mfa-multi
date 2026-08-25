@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from karaoke.bounce import build_sendcmd, onsets_from_wav
+from karaoke.render_cmd import WORK_H, WORK_W
 
 
 def test_uma_dupla_de_comandos_por_onset():
@@ -90,3 +91,49 @@ def test_onsets_from_wav_acha_os_cliques_no_tempo_certo(tmp_path, canais):
             f"{canais} canal(is): clique em {esperado}s detectado em "
             f"{medido:.3f}s (erro {medido - esperado:+.3f}s)"
         )
+
+
+def test_deriva_move_x_e_y_e_respeita_o_limite_da_fonte():
+    """F5: sem duration nao ha deriva; com duration, x/y varrem e nunca
+    estouram a fonte — nem com o crop ja encolhido pelo pulso."""
+    dur = 60.0
+    txt = build_sendcmd([1.0, 2.0, 3.0], WORK_W, WORK_H, duration=dur)
+    def _prop(nome):
+        out = []
+        for linha in txt.splitlines():
+            m = re.search(rf"crop {nome} (\d+)", linha)
+            if m:
+                out.append((float(linha.split(" ", 1)[0]), int(m.group(1))))
+        return out
+
+    xs, ys = _prop("x"), _prop("y")
+    assert len(xs) > 1 and len(ys) > 1, (
+        f"deriva ausente: {len(xs)} comandos de x, {len(ys)} de y"
+    )
+    assert xs[0][1] != xs[-1][1], f"x nao se moveu em {len(xs)} comandos: {xs[0]} -> {xs[-1]}"
+    assert ys[0][1] != ys[-1][1], f"y nao se moveu em {len(ys)} comandos: {ys[0]} -> {ys[-1]}"
+
+    # Clamp nas duas pontas E em todos os passos, contra a MAIOR largura
+    # comandada (a de repouso; a do pulso e menor e cabe por consequencia).
+    ws = [int(w) for w in re.findall(r"crop w (\d+)", txt)]
+    hs = [int(h) for h in re.findall(r"crop h (\d+)", txt)]
+    assert ws and hs, "nenhum comando de w/h — teste inutil"
+    w_max, h_max = max(ws), max(hs)
+    for _, x in xs:
+        assert 0 <= x and x + w_max <= WORK_W, f"x={x} + w={w_max} estoura {WORK_W}"
+    for _, y in ys:
+        assert 0 <= y and y + h_max <= WORK_H, f"y={y} + h={h_max} estoura {WORK_H}"
+    assert xs[-1][0] <= dur, f"comando de deriva depois do fim: {xs[-1][0]} > {dur}"
+
+
+def test_sem_duration_nao_emite_deriva():
+    # Callers antigos (duration=None) tem de continuar identicos: so w/h.
+    txt = build_sendcmd([1.0, 2.0], WORK_W, WORK_H)
+    assert "crop x" not in txt and "crop y" not in txt, txt
+
+
+def test_comandos_em_ordem_crescente_com_deriva():
+    txt = build_sendcmd([1.0, 2.0, 3.0], WORK_W, WORK_H, duration=10.0)
+    tempos = [float(l.split(" ", 1)[0]) for l in txt.splitlines() if l.strip()]
+    assert len(tempos) > 3, f"so {len(tempos)} comandos"
+    assert tempos == sorted(tempos), f"comandos fora de ordem: {tempos}"

@@ -559,7 +559,8 @@ def main():
             os.close(fd)  # sem isso, unlink() falha no Windows (WinError 32)
             tmp_sendcmd = Path(name)
             tmp_sendcmd.write_text(
-                build_sendcmd(onsets, WORK_W, WORK_H), encoding="utf-8")
+                build_sendcmd(onsets, WORK_W, WORK_H, duration=duration),
+                encoding="utf-8")
             sendcmd_path = tmp_sendcmd  # so vira o valor "de verdade" apos escrever
             print(f"  Bounce: {len(onsets)} onsets -> {sendcmd_path.name}")
         except Exception as e:
