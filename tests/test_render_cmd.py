@@ -48,18 +48,20 @@ def test_yuv420p_sempre_presente():
             build_render_cmd(bg, [INST, VOX], ASS, OUT, 210.0, sc))
 
 
-def test_caminho_do_windows_tem_dois_pontos_escapado_com_barra_simples():
+def test_caminho_do_windows_tem_dois_pontos_escapado():
     # Medido de fato contra o binario ffmpeg 8.1-full_build-www.gyan.dev via
-    # subprocess.run (sem shell, sem traducao de path do MSYS): dentro do
-    # filtergraph "C:/x" precisa virar 'C\:/x' (UMA barra invertida, entre
-    # aspas simples). Duas barras invertidas falham com "Error parsing a
-    # filter description... Invalid argument" (rc != 0) e sem escape falha
-    # com "Error applying option 'original_size'" — so a barra simples roda
-    # de verdade (rc=0). Os demais testes deste arquivo usam caminhos /tmp/
-    # sem dois-pontos — nao pegariam isso.
+    # subprocess.run com lista de args (sem shell): dentro do filtergraph
+    # "C:/x" precisa virar 'C\:/x' (barra invertida, entre aspas simples).
+    # Sem escape falha ("Error applying option 'original_size'" / "Invalid
+    # argument"). Uma barra invertida e duas barras invertidas rodam as
+    # duas (rc=0); usamos uma por ser a mais simples que ja funciona — nao
+    # e a unica opcao que funciona, entao nao afirmamos isso aqui. Medir
+    # isso pela linha de comando do bash da resultado errado (o shell come
+    # um nivel de barra); so subprocess.run com lista de args conta. Os
+    # demais testes deste arquivo usam caminhos /tmp/ sem dois-pontos — nao
+    # pegariam isso.
     win_ass = Path(r"C:\jobs\k.ass")
     win_sc = Path(r"C:\jobs\bounce.txt")
     fc = _fc(build_render_cmd(BG, [INST, VOX], win_ass, OUT, 210.0, win_sc))
     assert "subtitles='C\\:/jobs/k.ass'" in fc, fc
     assert "sendcmd=f='C\\:/jobs/bounce.txt'" in fc, fc
-    assert "\\\\" not in fc, f"sobrou barra invertida dupla: {fc}"

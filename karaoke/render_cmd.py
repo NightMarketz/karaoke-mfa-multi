@@ -10,14 +10,19 @@ OUT_W, OUT_H = 1280, 720
 def _escape(p) -> str:
     """Caminho seguro dentro de um filtergraph do ffmpeg.
 
-    Barra normal, e dois-pontos virando UMA barra invertida. O valor tem de
-    ir entre aspas simples no filtro. Medido de fato contra o binario real
-    (ffmpeg 8.1-full_build-www.gyan.dev) com um caminho absoluto do Windows
-    via subprocess.run (sem shell, sem tradução de path do MSYS): sem escape
-    falha ("Error applying option 'original_size'"), e com DUAS barras
-    invertidas falha ("Error parsing a filter description... Invalid
-    argument") — so a UNICA barra invertida realmente roda (rc=0, arquivo de
-    saida gerado). Vale igual para sendcmd=f= e subtitles=.
+    Barra normal, e dois-pontos virando barra invertida. O valor tem de ir
+    entre aspas simples no filtro. Medido de fato contra o binario real
+    (ffmpeg 8.1-full_build-www.gyan.dev) via subprocess.run com lista de
+    args (sem shell), caminho absoluto do Windows, com e sem espaco no
+    caminho: sem escape falha ("Error applying option 'original_size'" /
+    "Invalid argument"). UMA barra invertida e DUAS barras invertidas rodam
+    as duas (rc=0, arquivo valido gerado) — usamos uma por ser a mais
+    simples que ja funciona. Vale igual para sendcmd=f= e subtitles=.
+
+    Aviso: medir isso numa linha de comando do bash da resultado ERRADO — o
+    quoting do shell come um nivel de barra antes do ffmpeg ver a string. So
+    conta medicao via subprocess.run com lista de args (o caminho real de
+    producao).
     """
     return str(p).replace("\\", "/").replace(":", "\\:")
 
