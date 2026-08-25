@@ -85,6 +85,8 @@ def _referenced(script_rel):
 
 @pytest.mark.parametrize("script_rel", SCRIPTS)
 def test_todo_acessor_citado_existe(script_rel):
+    if not (ROOT / script_rel).exists():
+        pytest.skip(f"{script_rel} ainda nao existe — criado na Task 4")
     names = _referenced(script_rel)
     assert names, f"nenhum kpaths.X encontrado em {script_rel} — teste inutil"
     missing = [n for n in names if not hasattr(kpaths, n)]
@@ -108,7 +110,7 @@ def test_acessores_novos_devolvem_path_absoluto():
 - [ ] **Step 2: Rodar e ver falhar**
 
 Run: `python -m pytest tests/test_paths_contract.py -v`
-Expected: FAIL. O caso de `09_video_rendering.py` acusa 6 ausentes de 12; o segundo teste falha com `AttributeError`. O caso de `08b` falha ao abrir arquivo inexistente — normal, some na Task 4.
+Expected: FAIL. O caso de `09_video_rendering.py` acusa 6 ausentes de 12; o segundo teste falha com `AttributeError`. O caso de `08b` sai como SKIP — o arquivo só nasce na Task 4, e a Task 4 Step 7 exige que ele deixe de ser pulado.
 
 - [ ] **Step 3: Repontar o que já tem equivalente**
 
@@ -727,7 +729,7 @@ if __name__ == "__main__":
 - [ ] **Step 7: Verificar o contrato de paths**
 
 Run: `python -m pytest tests/test_paths_contract.py -v`
-Expected: PASS nos dois scripts agora — `08b_background_image.py` existe e só cita acessores que existem.
+Expected: PASS nos dois scripts, **0 skipped**. O caso de `08b` era SKIP desde a Task 1; agora que o arquivo existe ele tem de rodar de verdade. Se continuar SKIP, o caminho em `SCRIPTS` não bate com o arquivo criado — corrigir antes de seguir.
 
 - [ ] **Step 8: Commit**
 
