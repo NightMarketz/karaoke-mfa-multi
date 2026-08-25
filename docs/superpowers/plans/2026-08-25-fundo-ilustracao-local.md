@@ -1058,6 +1058,108 @@ git commit -m "feat: registra o estagio de fundo e remove o renderizador orfao"
 
 ---
 
+### Task 5B: Reparar os 3 estágios vivos que o `run_pipeline` executa
+
+Tarefa acrescentada depois que a medição mostrou que o defeito da Task 1 não era
+isolado. Sem ela, a Task 6 Step 4 não tem como rodar: o `run_pipeline` morre no
+terceiro estágio, muito antes do vídeo. Escopo aprovado pelo usuário.
+
+**Files:**
+- Modify: `karaoke/paths.py`
+- Modify: `scripts/07_gemini_alignment.py:463`, `scripts/03c_gemini_transcribe.py:463`
+- Test: `tests/test_paths_contract.py`
+
+**Interfaces:**
+- Consumes: o teste de contrato da Task 1.
+- Produces: `kpaths.corpus_dir(job_id) -> Path`, `kpaths.char_timing_json(job_id) -> Path`.
+
+**Medido antes de escrever esta tarefa** — 17 acessores `kpaths` ausentes em 11 de
+28 arquivos que citam `kpaths`. Destes, só 3 estão em estágios que o
+`run_pipeline.py` de fato executa, e são o escopo desta tarefa:
+
+| estágio vivo | ausente |
+|---|---|
+| `03_prepare_corpus.py:129` | `corpus_dir` |
+| `06_alignment_rescue.py:181,183` | `char_timing_json`, `corpus_dir` |
+| `07_gemini_alignment.py:463` | `lyrics_txt` |
+
+Os outros 14 ficam fora: estão em scripts que o `run_pipeline` não chama.
+
+- [ ] **Step 1: Alargar o teste de contrato para pegar isto**
+
+`tests/test_paths_contract.py` hoje examina 6 scripts escolhidos a dedo. Trocar
+essa lista pelos scripts que o `run_pipeline.py` realmente executa, derivados do
+próprio `run_pipeline.py` em vez de escritos à mão — lista escrita à mão foi
+exatamente como estes três passaram.
+
+```python
+def _scripts_vivos():
+    """Scripts que run_pipeline.py de fato executa, lidos dele mesmo."""
+    src = io.open(ROOT / "run_pipeline.py", encoding="utf-8").read()
+    nomes = sorted(set(re.findall(r'"scripts",\s*"([0-9a-zA-Z_]+\.py)"', src)))
+    assert nomes, "nenhum script encontrado em run_pipeline.py — teste inutil"
+    return [f"scripts/{n}" for n in nomes]
+```
+
+Usar isso como fonte de `SCRIPTS`, mantendo o `pytest.skip` para arquivo que
+ainda não exista. O `assert nomes` é a cardinalidade: lista vazia aqui seria
+verde universal.
+
+- [ ] **Step 2: Rodar e ver falhar**
+
+Run: `python -m pytest tests/test_paths_contract.py -v`
+Expected: FAIL, acusando `corpus_dir`, `char_timing_json` e `lyrics_txt` com o
+denominador de quantos acessores foram examinados em cada script.
+
+- [ ] **Step 3: Confirmar onde o corpus vive de verdade**
+
+`corpus_dir` é usado como `corpus_dir(job_id) / "song.lab"`, e `mfa_corpus_dir`
+já existe apontando para `04_mfa_corpus`. Antes de criar alias, confirmar que
+quem **grava** (`03_prepare_corpus.py`) e quem **lê** (`04_mfa_alignment.py`,
+que aponta o MFA para o corpus) usam o mesmo diretório. Se divergirem, o alias
+está errado e o acessor deve seguir o que o MFA realmente lê.
+
+Run: `grep -nE "corpus|\.lab|mfa_corpus_dir" scripts/03_prepare_corpus.py scripts/04_mfa_alignment.py`
+
+- [ ] **Step 4: Repontar `lyrics_txt`**
+
+`kpaths.lyrics_path` já existe e é a mesma letra. Trocar nos dois call sites
+(`07_gemini_alignment.py:463` e `03c_gemini_transcribe.py:463`) e **não** criar
+um acessor `lyrics_txt`. Um nome por conceito — mesma decisão da Task 1.
+
+- [ ] **Step 5: Acrescentar os dois acessores**
+
+```python
+def corpus_dir(job_id: str) -> Path:
+    """Corpus .lab que o MFA consome. Alias de mfa_corpus_dir."""
+    return mfa_corpus_dir(job_id)
+
+def char_timing_json(job_id: str) -> Path:
+    """Timing por caractere do CTC. Gravado por 03_forced_align.py:138."""
+    return alignment_dir(job_id) / "char_timing.json"
+```
+
+Se o Step 3 mostrar que o corpus não é `04_mfa_corpus`, ajustar e anotar no commit.
+
+- [ ] **Step 6: Rodar e ver passar**
+
+Run: `python -m pytest tests/test_paths_contract.py -v`
+Expected: PASS, **0 skipped**, e o teste agora cobre todos os estágios vivos.
+
+- [ ] **Step 7: Controle negativo**
+
+Renomear `char_timing_json` para `char_timing_json_x` e rodar de novo.
+Expected: **FAIL** nomeando o acessor e o total examinado. Desfazer.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add karaoke/paths.py scripts/07_gemini_alignment.py scripts/03c_gemini_transcribe.py tests/test_paths_contract.py
+git commit -m "fix: repara os acessores kpaths dos estagios vivos do pipeline"
+```
+
+---
+
 ## Self-review
 
 Cobertura do spec, requisito por requisito:
