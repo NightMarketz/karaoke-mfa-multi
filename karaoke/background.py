@@ -10,6 +10,7 @@ import json
 import random
 import shutil
 import time
+import uuid
 import urllib.request
 from pathlib import Path
 
@@ -108,11 +109,54 @@ def _inject_prompt(workflow_text: str, prompt: str) -> dict:
     return json.loads(texto)
 
 
+def _bust_cache(workflow: dict) -> int:
+    """Sufixa um nonce unico em TODO filename_prefix. Devolve quantos mudou.
+
+    Reenviar um grafo identico faz o ComfyUI responder `execution_cached` com
+    `outputs: {}` — e o 08b cai no fundo chapado em silencio, para sempre
+    naquela musica (renderizar a mesma cancao duas vezes perdia a ilustracao
+    sem nenhuma pista). Sujar o prefixo na raiz e o que o ComfyUI de fato
+    considera na chave de cache.
+
+    Varre TODOS os nos: um grafo pode ter mais de um SaveImage, e supor um so
+    deixaria os outros cacheados.
+    """
+    nonce = uuid.uuid4().hex[:8]
+    mudados = 0
+    for node in workflow.values():
+        inputs = node.get("inputs") if isinstance(node, dict) else None
+        if isinstance(inputs, dict) and isinstance(inputs.get("filename_prefix"), str):
+            inputs["filename_prefix"] = f"{inputs['filename_prefix']}_{nonce}"
+            mudados += 1
+    # ponytail: grafo sem nenhum filename_prefix devolve 0 e segue — nao da
+    # para quebrar o cache do que nao salva arquivo. Quem chama nao trata:
+    # o sintoma vira outputs vazio, e ai o _diagnostico abaixo e que fala.
+    return mudados
+
+
+def _diagnostico(entry: dict) -> str:
+    """O que o ComfyUI reclamou, em uma linha legivel.
+
+    `status=success` com outputs vazio e comum: um no que falha validacao
+    derruba as saidas em cascata e o /history segue reportando sucesso. O
+    diagnostico util esta no objeto `status`, nao no status_str. Tudo por
+    .get(): mudanca de esquema tem de degradar para mensagem pobre, nunca
+    para KeyError dentro do caminho de erro.
+    """
+    status = entry.get("status") or {}
+    partes = [str(status.get("status_str") or "")]
+    for m in status.get("messages") or []:
+        partes.append(str(m))
+    texto = " | ".join(p for p in partes if p)
+    return (texto[:600] if texto else "sem diagnostico no /history")
+
+
 def generate_image(prompt: str, out_path: Path, workflow_path: Path,
                    host: str = COMFY_HOST) -> Path:
     """Enfileira no ComfyUI, espera terminar e copia o PNG para out_path."""
     workflow = _inject_prompt(
         Path(workflow_path).read_text(encoding="utf-8"), prompt)
+    _bust_cache(workflow)
     body = _post_json(f"{host}/prompt", {"prompt": workflow}, timeout=30)
     prompt_id = body["prompt_id"]
 
@@ -121,13 +165,16 @@ def generate_image(prompt: str, out_path: Path, workflow_path: Path,
         with urllib.request.urlopen(f"{host}/history/{prompt_id}", timeout=30) as r:
             hist = json.loads(r.read())
         if prompt_id in hist:
+            entry = hist[prompt_id] or {}
             imgs = [
                 img
-                for node in hist[prompt_id]["outputs"].values()
-                for img in node.get("images", [])
+                for node in (entry.get("outputs") or {}).values()
+                for img in (node or {}).get("images", [])
             ]
             if not imgs:
-                raise RuntimeError("ComfyUI terminou sem produzir imagem")
+                raise RuntimeError(
+                    "ComfyUI terminou sem produzir imagem — "
+                    + _diagnostico(entry))
             img = imgs[0]
             # subfolder vem preenchido quando o filename_prefix do SaveImage
             # tem "/" (ex.: "karaoke/bg"); ignora-lo faz a copia errar o alvo.

@@ -9,8 +9,9 @@ from unittest.mock import patch
 
 import pytest
 
-from karaoke.background import (IMAGE_RULES, _inject_prompt, build_brief,
-                                generate_image, image_prompt)
+from karaoke.background import (IMAGE_RULES, _bust_cache, _diagnostico,
+                                _inject_prompt, build_brief, generate_image,
+                                image_prompt)
 import karaoke.paths as kpaths
 
 # Host explicito em todo teste: `generate_image(host=...)` pula a resolucao,
@@ -92,6 +93,11 @@ def test_letra_crua_nao_vaza_para_o_no_do_comfyui(tmp_path):
 
     injetado = capturado["prompt"]["6"]["inputs"]["text"]
     assert "%prompt%" not in injetado, "o marcador sobreviveu — nada foi injetado"
+    # Fiacao do H1: o nonce tem de estar no payload que SAI, nao so na funcao.
+    prefixo = capturado["prompt"]["9"]["inputs"]["filename_prefix"]
+    assert prefixo != "karaoke/bg" and prefixo.startswith("karaoke/bg_"), (
+        f"generate_image submeteu o prefixo cru (cache do ComfyUI): {prefixo!r}"
+    )
 
     palavras = [w for w in re.findall(r"\w+", letra.lower()) if len(w) >= 4]
     assert len(palavras) >= 5, f"so {len(palavras)} palavras testaveis na letra"
@@ -141,6 +147,14 @@ def test_template_sem_marcador_de_prompt_e_erro():
         _inject_prompt(cru, "um mar escuro")
 
 
+def _escreve_template():
+    """Template marcado num arquivo temporario (generate_image le do disco)."""
+    import tempfile
+    f = Path(tempfile.mkdtemp()) / "wf.json"
+    f.write_text(TEMPLATE_MARCADO, encoding="utf-8")
+    return f
+
+
 def _load_cli_module():
     """Importa scripts/08b_background_image.py como modulo (nome numerico)."""
     spec_path = Path(__file__).parent.parent / "scripts" / "08b_background_image.py"
@@ -181,3 +195,108 @@ def test_falha_na_geracao_nao_derruba_o_job():
         if wrapped_stderr is not orig_stderr:
             wrapped_stderr.detach()
         shutil.rmtree(job_dir, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# H1: cache do ComfyUI. Grafo identico -> execution_cached, outputs vazio.
+# --------------------------------------------------------------------------
+
+def _prefixos(grafo):
+    return [n["inputs"]["filename_prefix"]
+            for n in grafo.values() if "filename_prefix" in n.get("inputs", {})]
+
+
+def test_duas_submissoes_identicas_geram_prefixos_diferentes():
+    """Sem nonce, o segundo render da MESMA musica volta cacheado e sem imagem
+    — o 08b avisa e cai no fundo chapado, em silencio, para sempre."""
+    a = _inject_prompt(TEMPLATE_MARCADO, "um mar escuro")
+    b = _inject_prompt(TEMPLATE_MARCADO, "um mar escuro")
+    assert _bust_cache(a) == 1 and _bust_cache(b) == 1
+    pa, pb = _prefixos(a), _prefixos(b)
+    assert len(pa) == len(pb) == 1, f"{len(pa)} e {len(pb)} prefixos — teste inutil"
+    assert pa[0] != pb[0], f"prefixo repetido nas duas submissoes: {pa[0]!r}"
+    assert pa[0].startswith("karaoke/bg_"), f"prefixo original perdido: {pa[0]!r}"
+
+
+def test_todos_os_nos_que_salvam_arquivo_recebem_o_nonce():
+    """Varredura completa: supor um unico SaveImage deixaria os outros
+    cacheados. A contagem examinada e a alterada tem de fechar."""
+    grafo = {
+        "1": {"class_type": "KSampler", "inputs": {"seed": 7}},
+        "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "a"}},
+        "10": {"class_type": "SaveImage", "inputs": {"filename_prefix": "b/c"}},
+        "11": {"class_type": "SaveAnimatedWEBP", "inputs": {"filename_prefix": "d"}},
+        "12": {"class_type": "PreviewImage", "inputs": {}},
+    }
+    examinados = len(grafo)
+    com_prefixo = len(_prefixos(grafo))
+    assert examinados == 5 and com_prefixo == 3, (
+        f"fixture drift: {examinados} nos, {com_prefixo} com filename_prefix"
+    )
+    mudados = _bust_cache(grafo)
+    assert mudados == com_prefixo, (
+        f"{mudados} de {com_prefixo} nos com filename_prefix (em {examinados} "
+        f"nos no total) receberam nonce"
+    )
+    novos = _prefixos(grafo)
+    assert len(novos) == com_prefixo
+    sufixos = {p.rsplit("_", 1)[1] for p in novos}
+    assert len(sufixos) == 1, f"nonce diferente por no: {sufixos}"
+    assert [p.rsplit("_", 1)[0] for p in novos] == ["a", "b/c", "d"], novos
+
+
+def test_grafo_sem_filename_prefix_nao_conta_como_cache_quebrado():
+    """Caso explicito: zero campos == zero alteracoes, NAO 'tudo pronto'.
+
+    Um grafo assim nao salva arquivo nenhum, entao nao ha cache a sujar — e o
+    sintoma vira outputs vazio, capturado pelo _diagnostico (H2). O retorno 0
+    existe para que isso nunca passe por sucesso."""
+    grafo = {"1": {"class_type": "KSampler", "inputs": {"seed": 7}},
+             "2": {"class_type": "PreviewImage", "inputs": {}}}
+    assert _bust_cache(grafo) == 0, "contou alteracao onde nao ha filename_prefix"
+
+
+# --------------------------------------------------------------------------
+# H2: status=success com outputs vazio. Ler o log, nao o status.
+# --------------------------------------------------------------------------
+
+def _history_vazio(entry):
+    """urlopen dublado: /prompt via _post_json, /history via urlopen."""
+    return _FakeResp({"pid": entry})
+
+
+def test_outputs_vazio_leva_a_reclamacao_do_comfyui_para_a_excecao():
+    entry = {
+        "outputs": {},
+        "status": {
+            "status_str": "success",
+            "messages": [["execution_error",
+                          {"exception_message": "CheckpointLoaderSimple: modelo z_image ausente"}]],
+        },
+    }
+    with patch("karaoke.background._post_json", return_value={"prompt_id": "pid"}):
+        with patch("urllib.request.urlopen", return_value=_history_vazio(entry)):
+            with pytest.raises(RuntimeError) as exc:
+                generate_image("um mar escuro", Path("nao_usado.png"),
+                               _escreve_template(), host=HOST_FAKE)
+    texto = str(exc.value)
+    for esperado in ("sem produzir imagem", "success", "z_image ausente"):
+        assert esperado in texto, f"{esperado!r} ausente da excecao: {texto!r}"
+
+
+@pytest.mark.parametrize("entry,esperado", [
+    ({"outputs": {}}, "sem diagnostico"),                       # sem status
+    ({"outputs": {}, "status": None}, "sem diagnostico"),       # status nulo
+    ({"outputs": {}, "status": {"status_str": "error"}}, "error"),   # sem messages
+    ({"outputs": {}, "status": {"messages": []}}, "sem diagnostico"),
+    ({"status": {"messages": [["x", {"y": 1}]]}}, "'y': 1"),    # sem outputs
+])
+def test_diagnostico_degrada_em_vez_de_estourar(entry, esperado):
+    """Mudanca de esquema tem de virar mensagem pobre, nunca KeyError dentro
+    do proprio caminho de erro."""
+    assert esperado in _diagnostico(entry)
+
+
+def test_diagnostico_e_truncado():
+    entry = {"status": {"status_str": "e", "messages": ["x" * 5000]}}
+    assert len(_diagnostico(entry)) <= 600
