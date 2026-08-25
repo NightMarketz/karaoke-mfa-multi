@@ -46,11 +46,25 @@ SCRIPTS = _scripts_vivos()
 
 def test_o_fence_cobre_os_dois_entry_points():
     """Cardinalidade do proprio fence: se a extracao quebrar em um dos entry
-    points, o parametrize encolhe e todo o resto fica verde por vacuidade."""
-    entries = {e for _, e in SCRIPTS}
-    assert entries == set(ENTRY_POINTS), (
-        f"{len(SCRIPTS)} scripts vindos de {sorted(entries)}; "
-        f"esperado contribuicao dos {len(ENTRY_POINTS)} entry points"
+    points, o parametrize encolhe e todo o resto fica verde por vacuidade.
+
+    Medido SO sobre as linhas que o regex de fato produziu (as prefixadas com
+    `scripts/`). A versao anterior comparava o conjunto inteiro de SCRIPTS, que
+    ja inclui `[(e, e) for e in ENTRY_POINTS]` incondicionalmente — a igualdade
+    valia por construcao. Com o regex quebrado dentro do server.py o fence
+    encolhia e este guard seguia verde, que e exatamente o que ele existe para
+    impedir.
+    """
+    extraidos = [(s, e) for s, e in SCRIPTS if s.startswith("scripts/")]
+    por_entry = {e: sum(1 for _, x in extraidos if x == e) for e in ENTRY_POINTS}
+    assert {e for _, e in extraidos} == set(ENTRY_POINTS), (
+        f"{len(extraidos)} scripts extraidos por entry point: {por_entry}; "
+        f"esperado contribuicao dos {len(ENTRY_POINTS)} entry points {ENTRY_POINTS}"
+    )
+    mudos = [e for e, n in por_entry.items() if n == 0]
+    assert not mudos, (
+        f"{len(mudos)} de {len(ENTRY_POINTS)} entry points nao contribuiram "
+        f"nenhum script: {mudos} — contagem por entry point: {por_entry}"
     )
 
 
