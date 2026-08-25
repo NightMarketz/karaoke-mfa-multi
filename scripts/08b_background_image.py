@@ -58,6 +58,11 @@ def main():
         print(f"OK Fundo salvo em: {out}")
     except Exception as e:
         # Fundo e enfeite. Sem ele o Step 09 usa #08090f e o job segue.
+        # Apagar o parcial e obrigatorio: shutil.copy2 pode deixar um PNG
+        # truncado/zerado, e o cache no topo desta funcao so olha exists() —
+        # um parcial sobrevivente seria reusado para sempre e derrubaria o
+        # ffmpeg do Step 09 em toda execucao seguinte.
+        out.unlink(missing_ok=True)
         print(f"  AVISO: fundo nao gerado ({type(e).__name__}: {e})")
         print("  O video sera renderizado com fundo chapado.")
         _progress(100, "Sem fundo — seguindo com fundo chapado.")

@@ -577,8 +577,24 @@ def main():
         subprocess.run(cmd_video, check=True, capture_output=True)
         print(f"OK Vídeo final gerado: {out_mp4.name}")
     except subprocess.CalledProcessError as e:
-        print(f"ERRO ao renderizar vídeo: {e.stderr.decode(errors='replace')[-2000:]}")
-        sys.exit(1)
+        erro = e.stderr.decode(errors="replace")[-2000:]
+        if bg_png is None:
+            print(f"ERRO ao renderizar vídeo: {erro}")
+            sys.exit(1)
+        # O fundo e enfeite: PNG corrompido/truncado ou sendcmd invalido nao
+        # pode custar o MP4. Uma única retentativa no caminho chapado, que
+        # nao depende de nenhum dos dois.
+        print("  AVISO: render com ilustracao falhou — refazendo com fundo chapado.")
+        print(f"  Motivo (ffmpeg): {erro}")
+        cmd_flat = build_render_cmd(None, [instrumental, vocals],
+                                    out_ass, out_mp4, duration, None)
+        try:
+            subprocess.run(cmd_flat, check=True, capture_output=True)
+            print(f"OK Vídeo final gerado com fundo chapado: {out_mp4.name}")
+        except subprocess.CalledProcessError as e2:
+            print("ERRO ao renderizar vídeo (fundo chapado tambem falhou): "
+                  f"{e2.stderr.decode(errors='replace')[-2000:]}")
+            sys.exit(1)
     finally:
         if sendcmd_path is not None:
             sendcmd_path.unlink(missing_ok=True)
