@@ -96,19 +96,49 @@ primeira execução.
 > primeira validação. Tudo que existe hoje são testes unitários com HTTP
 > dublado.
 
-#### Exportou seu próprio workflow do ComfyUI? Confira dois valores
+#### Exportando seu workflow do ComfyUI: o export cru **não** funciona
 
-Ao substituir `config/comfy_workflow.json` por um export próprio (formato
-**API**), dois valores em `karaoke/background.py` têm de bater com a sua
-instância — os dois estão lá como constante no topo do arquivo:
+`config/comfy_workflow.json` é um **template com marcadores**, não um export
+puro. Depois de montar o grafo na GUI e salvar em **Workflow → Export (API)**,
+edite o arquivo e troque dois valores por marcadores literais:
 
-| constante | valor hoje | o que acontece se estiver errado |
+| no export | vira | onde |
 |---|---|---|
-| `COMFY_PROMPT_NODE` | `"6"` | id do nó `CLIPTextEncode` **positivo** no seu export. Outro id → `KeyError` a cada job, capturado pelo `except` do estágio: fallback silencioso e permanente para o fundo chapado. |
-| porta em `COMFY_HOST` | `8188` | porta HTTP do ComfyUI. **Não verificada** contra o ComfyUI Desktop desta máquina. Porta errada → conexão recusada, mesmo fallback silencioso. |
+| `"text": "beautiful scenery"` | `"text": "%prompt%"` | o nó `CLIPTextEncode` **positivo** |
+| `"seed": 123456789` | `"seed": %seed%` | o `KSampler` |
 
-Nos dois casos o job termina normalmente e o vídeo sai — sem ilustração. O
-único sinal é a linha `AVISO: fundo nao gerado (...)` no log do estágio 11.
+Repare que `%prompt%` fica **entre aspas** (o código escapa o brief e o insere
+no lugar do marcador) e `%seed%` fica **sem aspas** — é um número cru, e por
+isso o arquivo com marcadores não é JSON válido até a substituição. É o
+esperado.
+
+O código nunca adivinha o id de um nó: os ids mudam a cada reexport da GUI, e
+foi exatamente esse chute que o marcador substitui. Um export cru, sem editar,
+levanta `o template do workflow tem de conter o marcador %prompt%` — falha
+explícita, de propósito: renderizar o texto de placeholder em silêncio geraria
+uma imagem errada sem nenhum aviso.
+
+Uma seed nova é sorteada a cada chamada, e todo `filename_prefix` do grafo
+recebe um sufixo único antes do envio. Sem isso o ComfyUI responde
+`execution_cached` com `outputs: {}` ao reenviar um grafo idêntico — a mesma
+música renderizada duas vezes perderia a ilustração, em silêncio e para sempre.
+
+#### Porta do ComfyUI: descoberta, não fixa
+
+A porta não é confiável — o app já subiu em `8000`, `8001` e `8188` em sessões
+diferentes. `karaoke/background.py` resolve o endereço na hora da chamada:
+
+1. `COMFYUI_URL` no ambiente, se setada → usada literal, sem sondagem
+   (ex.: `set COMFYUI_URL=http://127.0.0.1:8000`);
+2. senão, sonda `8188`, `8000`, `8001` nessa ordem contra `/system_stats`
+   (1,5 s cada) e usa a primeira que responder;
+3. nenhuma responde → erro nomeando as três, e o log do estágio 11 diz onde
+   procurou em vez de exibir um "conexão recusada" apontando só a primeira.
+
+Em qualquer falha o job termina normalmente e o vídeo sai — sem ilustração. O
+único sinal é a linha `AVISO: fundo nao gerado (...)` no log do estágio 11;
+quando o ComfyUI responde sucesso mas sem imagem, essa linha agora carrega o
+que o `/history` reclamou (o `status` e as `messages`), não só "sem imagem".
 
 ### 🖼️ Pré-requisitos para rodar um job real ponta a ponta
 
@@ -116,7 +146,8 @@ Além dos requisitos gerais de instalação, um job completo (que passa pelo
 Estágio 11 gerando ilustração de verdade, em vez de cair no fundo chapado
 `#08090f`) precisa de:
 1. ComfyUI Desktop aberto, com `config/comfy_workflow.json` exportado em
-   formato API.
+   formato API **e marcado** com `%prompt%`/`%seed%` (ver acima). Porta
+   qualquer: é descoberta, ou fixada em `COMFYUI_URL`.
 2. Ollama de pé, com `llama3.2:3b` puxado.
 3. `GEMINI_API_KEY` no ambiente.
 4. Entrada em `input/jobs/{id}/` com `song.mp3` e `lyrics.txt` — ou
