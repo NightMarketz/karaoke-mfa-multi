@@ -9,34 +9,22 @@ import karaoke.paths as kpaths
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Todo script que referencia kpaths.input_job_dir ou kpaths.demucs_out_dir —
-# os dois acessores no centro do defeito corrigido no fix round 1 (um nome,
-# dois significados incompativeis: diretorio real de input vs. subpasta que
-# o Demucs cria em htdemucs/). Isso e a "blast radius" real do bug, resolvida
-# via grep de todos os call sites de input_job_dir no repo, um a um — nao um
-# glob sobre scripts/*.py.
-#
-# Por que nao "todo scripts/*.py"? Um scan completo (rodado manualmente
-# durante este fix) mostra ~10 acessores ausentes adicionais em scripts sem
-# relacao com input_job_dir/demucs_out_dir — alguns em scripts efetivamente
-# mortos (02b_trim_preview.py, 03_forced_align.py, 03b_whisperx_rescue.py,
-# 03c_gemini_transcribe.py, 07_qc_report.py, 08_render_video.py,
-# 09_audio_mixing.py — nao chamados por run_pipeline.py nem server.py) e
-# outros em scripts que run_pipeline.py/server.py chamam de fato
-# (03_prepare_corpus.py, 06_alignment_rescue.py, 07_gemini_alignment.py —
-# `corpus_dir`, `char_timing_json`, `lyrics_txt` ausentes). Esses ultimos sao
-# um defeito real, mas de uma familia diferente (nomes nunca criados, nao
-# nomes com dois significados) e exigiriam a mesma investigacao rigorosa
-# feita aqui para cada acessor — fora do escopo deste fix round. Registrado
-# para decisao do coordenador, nao corrigido silenciosamente.
-SCRIPTS = [
-    "scripts/09_video_rendering.py",
-    "scripts/08b_background_image.py",
-    "scripts/01_media_prep.py",
-    "scripts/02_vocal_isolation.py",
-    "scripts/11_system_cleanup.py",
-    "scripts/13_process_conclusion.py",
-]
+# Lista escrita a mao (os 6 scripts do fix round 1) deixou passar 3 acessores
+# ausentes em estagios que o run_pipeline.py de fato executa (Task 5B). Em vez
+# de mais uma lista a mao, a fonte agora e o proprio run_pipeline.py: todo
+# script que ele invoca via `_p("scripts", "nome.py")`. Script morto (nao
+# chamado pelo run_pipeline.py) fica fora do fence de proposito — o mesmo
+# raciocinio de "blast radius real" do fix round 1, so que auditavel por
+# grep em vez de mantido a mao.
+def _scripts_vivos():
+    """Scripts que run_pipeline.py de fato executa, lidos dele mesmo."""
+    src = io.open(ROOT / "run_pipeline.py", encoding="utf-8").read()
+    nomes = sorted(set(re.findall(r'"scripts",\s*"([0-9a-zA-Z_]+\.py)"', src)))
+    assert nomes, "nenhum script encontrado em run_pipeline.py — teste inutil"
+    return [f"scripts/{n}" for n in nomes]
+
+
+SCRIPTS = _scripts_vivos()
 
 # Nome do arquivo -> tarefa do plano que o cria, para o motivo do skip.
 CRIADO_NA_TASK = {
@@ -45,8 +33,18 @@ CRIADO_NA_TASK = {
 
 
 def _referenced(script_rel):
+    """Acessores kpaths.X citados no script.
+
+    A maioria dos scripts importa `import karaoke.paths as kpaths`, mas tres
+    dos estagios vivos (03_forced_align_sofa.py, 03b_rosvot_inference.py,
+    05_mfa_to_json.py) usam `from karaoke import paths` — mesmo modulo, alias
+    diferente. Um regex so em "kpaths\\." examina esses tres arquivos com
+    lista vazia (falso vazio, nao falta real) e cai no proprio guard de
+    cardinalidade abaixo. Os dois aliases usados de fato no repo, confirmado
+    por grep — nao um padrao especulativo.
+    """
     src = io.open(ROOT / script_rel, encoding="utf-8").read()
-    return sorted(set(re.findall(r"kpaths\.([a-zA-Z_0-9]+)", src)))
+    return sorted(set(re.findall(r"\b(?:kpaths|paths)\.([a-zA-Z_0-9]+)", src)))
 
 
 @pytest.mark.parametrize("script_rel", SCRIPTS)
