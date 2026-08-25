@@ -515,6 +515,7 @@ def main():
     # ── Renderiza Vídeo Final ────────────────────────────────────────────────
     _progress(90, "Renderizando vídeo final (FFmpeg)...")
 
+    import os
     import subprocess
     import tempfile
 
@@ -527,26 +528,41 @@ def main():
     instrumental = kpaths.demucs_out_dir(job_id) / "no_vocals.wav"
     vocals = kpaths.vocals_listen(job_id)
 
-    duration = float(subprocess.run(
+    if not instrumental.exists():
+        print(f"ERRO: Instrumental não encontrado: {instrumental}")
+        sys.exit(1)
+
+    probe = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(instrumental)],
-        capture_output=True, text=True, timeout=30).stdout.strip())
+        capture_output=True, text=True, timeout=30)
+    try:
+        duration = float(probe.stdout.strip())
+    except ValueError:
+        print(f"ERRO: não consegui ler a duração de {instrumental} "
+              f"(ffprobe: {probe.stderr.strip()[:500]})")
+        sys.exit(1)
 
     bg_png = kpaths.background_png(job_id)
     bg_png = bg_png if bg_png.exists() else None
 
     sendcmd_path = None
     if bg_png is not None:
+        tmp_sendcmd = None
         try:
             onsets = onsets_from_wav(instrumental)
-            sendcmd_path = Path(tempfile.mkstemp(suffix=".txt", prefix="bounce_")[1])
-            sendcmd_path.write_text(
+            fd, name = tempfile.mkstemp(suffix=".txt", prefix="bounce_")
+            os.close(fd)  # sem isso, unlink() falha no Windows (WinError 32)
+            tmp_sendcmd = Path(name)
+            tmp_sendcmd.write_text(
                 build_sendcmd(onsets, WORK_W, WORK_H), encoding="utf-8")
+            sendcmd_path = tmp_sendcmd  # so vira o valor "de verdade" apos escrever
             print(f"  Bounce: {len(onsets)} onsets -> {sendcmd_path.name}")
         except Exception as e:
             # Sem bounce o fundo fica parado; ainda e melhor que preto chapado.
             print(f"  AVISO: bounce desativado ({type(e).__name__}: {e})")
-            sendcmd_path = None
+            if tmp_sendcmd is not None:
+                tmp_sendcmd.unlink(missing_ok=True)
 
     print(f"  Fundo: {'ilustracao' if bg_png else 'chapado #08090f'}")
     cmd_video = build_render_cmd(bg_png, [instrumental, vocals],

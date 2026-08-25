@@ -2,7 +2,7 @@
 """Contrato do comando ffmpeg. Monta a lista de args, nao roda o encoder."""
 from pathlib import Path
 
-from karaoke.render_cmd import build_render_cmd
+from karaoke.render_cmd import WORK_H, WORK_W, build_render_cmd
 
 ASS = Path("/tmp/karaoke.ass")
 OUT = Path("/tmp/out.mp4")
@@ -26,6 +26,23 @@ def test_scale_vem_depois_do_crop():
     # Verificado empiricamente: sem scale apos o crop o sendcmd nao tem efeito.
     fc = _fc(build_render_cmd(BG, [INST, VOX], ASS, OUT, 210.0, SC))
     assert fc.index("crop=") < fc.index("scale=1280:720"), f"ordem errada: {fc}"
+
+
+def test_sendcmd_vem_antes_do_crop():
+    # Mesma logica do test_scale_vem_depois_do_crop: se o sendcmd for
+    # comandado DEPOIS do crop, o pulso nao tem mais o que encolher —
+    # o encolhimento ja passou pelo filtro. Precisa vir antes.
+    fc = _fc(build_render_cmd(BG, [INST, VOX], ASS, OUT, 210.0, SC))
+    assert fc.index("sendcmd=f=") < fc.index("crop="), f"ordem errada: {fc}"
+
+
+def test_crop_usa_work_w_work_h():
+    # crop= no filtergraph tem que casar com as MESMAS constantes que o
+    # script passa para build_sendcmd (WORK_W/WORK_H). Se elas driftarem
+    # uma da outra, o sendcmd fica comandando um crop com dimensao errada
+    # e nada acusa isso — so este teste.
+    fc = _fc(build_render_cmd(BG, [INST, VOX], ASS, OUT, 210.0, SC))
+    assert f"crop={WORK_W}:{WORK_H}" in fc, fc
 
 
 def test_sem_fundo_cai_no_chapado_e_sem_sendcmd():
