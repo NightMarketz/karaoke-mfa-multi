@@ -392,7 +392,7 @@ def main():
     adlibs_path          = kpaths.adlibs_json(job_id)
     tg_corrected         = kpaths.alignment_dir(job_id) / "song.corrected.TextGrid"
     tg_original          = kpaths.alignment_dir(job_id) / "song.TextGrid"
-    lyrics_txt           = kpaths.lyrics_txt(job_id)
+    lyrics_txt           = kpaths.lyrics_path(job_id)
     out_ass              = kpaths.final_ass(job_id)
 
     # ── Valida letra ──────────────────────────────────────────────────────────

@@ -128,3 +128,32 @@ def word_timing_json(job_id: str) -> Path:
 
 def unmapped_regions_json(job_id: str) -> Path:
     return alignment_dir(job_id) / "unmapped_regions.json"
+
+# --- Render / fundo ---
+
+def adlibs_json(job_id: str) -> Path:
+    """Timings de adlibs gerados pelo Step 03c/07."""
+    return alignment_dir(job_id) / "adlibs_timing.json"
+
+def input_job_dir(job_id: str) -> Path:
+    """Nome da subpasta que o Demucs cria em htdemucs/ (deriva do stem de
+    song.wav — Demucs nomeia a subpasta pelo stem do arquivo de audio de
+    entrada, nao pelo diretorio; ver scripts/02_vocal_isolation.py). Este
+    Path e usado apenas via .name pelos call sites, nao como diretorio real."""
+    return input_dir(job_id) / "song"
+
+def input_video(job_id: str) -> Path:
+    """Video de fundo fornecido pelo usuario (opcional)."""
+    return input_dir(job_id) / "background.mp4"
+
+def input_thumb(job_id: str) -> Path:
+    """Imagem de fundo fornecida pelo usuario (opcional)."""
+    return input_dir(job_id) / "background.png"
+
+def background_png(job_id: str) -> Path:
+    """Ilustracao gerada pelo Step 08b."""
+    return step_output(job_id, "08_background") / "background.png"
+
+def output_video(job_id: str) -> Path:
+    """MP4 final. Alias do final_video ja existente."""
+    return final_video(job_id)
