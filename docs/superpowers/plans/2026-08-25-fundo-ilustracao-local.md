@@ -1010,21 +1010,45 @@ Expected: nenhum resultado. Se aparecer algum, repontar antes de seguir.
 Run: `python -m pytest tests/ -v --ignore=tests/integration`
 Expected: PASS. Anotar o número **com denominador** (ex.: "48 passed, 2 skipped"). Se algo que já estava vermelho antes continuar vermelho, dizer isso explicitamente em vez de deixar passar por novo.
 
-- [ ] **Step 4: Job real, ponta a ponta**
+- [ ] **Step 4: Verificar a amarração sem disparar o pipeline inteiro**
 
-Com o ComfyUI Desktop **aberto** e o Ollama de pé:
+O plano original mandava rodar um job real aqui. Medido antes de despachar: `work/jobs`
+está **vazio** — nenhum job jamais completou neste repositório — e não há
+`config/comfy_workflow.json`. Um job real do zero significa Demucs, MFA, WhisperX e
+Gemini numa máquina **sem CUDA**, consumindo cota de API, por horas. Isso não é passo
+de subagente; é execução que o dono da máquina inicia sabendo o custo.
+
+O que esta tarefa verifica, e que é verificável agora:
 
 ```bash
-python run_pipeline.py --audio "input/exemplo.mp3" --lyrics "input/exemplo.txt" --lang "pt"
+python -c "import run_pipeline, inspect, re; src=inspect.getsource(run_pipeline); \
+nomes=re.findall(r'\"scripts\", \"([0-9a-zA-Z_]+\.py)\"', src); \
+print(len(nomes), 'estagios'); print(nomes.index('08b_background_image.py'), \
+'<', nomes.index('09_video_rendering.py'))"
 ```
 
-Conferir, nesta ordem:
-1. `work/jobs/{id}/08_background/background.png` existe e **não tem texto na imagem**;
-2. o log do Step 09 diz `Fundo: ilustracao` e `Bounce: N onsets` com **N > 0**;
-3. o MP4 existe no destino de `final_video`;
-4. abrir o MP4: a letra está legível sobre o fundo, e o fundo pulsa na batida.
+Conferir: o `08b` aparece na lista, e o índice dele é **menor** que o do
+`09_video_rendering.py` — o fundo precisa existir antes do render.
 
-Medir e anotar o tempo do Step 08b. A playbook da AMD alega <30 s — é alegação, não medição. O número real vai para o README.
+Rodar também o `08b` isolado contra um job inexistente e confirmar exit 0 com aviso
+(o fallback), que é o comportamento que não pode regredir.
+
+- [ ] **Step 4b: Receita entregue ao usuário, não executada aqui**
+
+Documentar no README, como pré-requisitos explícitos do job real:
+1. ComfyUI Desktop aberto, com `config/comfy_workflow.json` exportado em formato API;
+2. Ollama de pé (`llama3.2:3b` puxado);
+3. `GEMINI_API_KEY` no ambiente;
+4. entrada em `input/jobs/{id}/` com `song.mp3` e `lyrics.txt` — ou `input/test_1min/`
+   para um snippet de 1 minuto, que é o caminho barato para a primeira validação.
+
+E o que conferir quando rodar: `08_background/background.png` existe e **não tem texto
+na imagem**; o log do Step 09 diz `Fundo: ilustracao` e `Bounce: N onsets` com **N > 0**;
+o MP4 sai; e, abrindo, a letra está legível sobre o fundo e o fundo pulsa na batida.
+
+O tempo do Step 08b fica como `~Xs` no README até alguém medir. A playbook da AMD alega
+<30 s — é alegação de terceiro sobre outro hardware, não medição desta máquina, e o
+README deve dizer isso enquanto o número real não existir.
 
 - [ ] **Step 5: Controle negativo ponta a ponta**
 
