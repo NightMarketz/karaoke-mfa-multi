@@ -802,6 +802,19 @@ def test_yuv420p_sempre_presente():
     for bg, sc in ((BG, SC), (None, None)):
         assert "format=yuv420p" in _fc(
             build_render_cmd(bg, [INST, VOX], ASS, OUT, 210.0, sc))
+
+
+def test_caminho_do_windows_tem_dois_pontos_escapado_com_barra_dupla():
+    # Medido no ffmpeg 8.1: dentro do filtergraph, "C:/x" precisa virar
+    # 'C\\:/x' (duas barras invertidas, entre aspas simples). Uma barra so
+    # falha com "No option name near ...", e os demais testes deste arquivo
+    # usam caminhos /tmp/ sem dois-pontos — nao pegariam isso.
+    win_ass = Path(r"C:\jobs\k.ass")
+    win_sc = Path(r"C:\jobs\bounce.txt")
+    fc = _fc(build_render_cmd(BG, [INST, VOX], win_ass, OUT, 210.0, win_sc))
+    assert "subtitles='C\\\\:/jobs/k.ass'" in fc, fc
+    assert "sendcmd=f='C\\\\:/jobs/bounce.txt'" in fc, fc
+    assert "\\" not in fc.replace("\\\\:", ""), f"sobrou barra invertida solta: {fc}"
 ```
 
 - [ ] **Step 2: Rodar e ver falhar**
@@ -822,8 +835,14 @@ OUT_W, OUT_H = 1280, 720
 
 
 def _escape(p) -> str:
-    """O filtro subtitles= exige barra normal e dois-pontos escapado."""
-    return str(p).replace("\\", "/").replace(":", "\\:")
+    """Caminho seguro dentro de um filtergraph do ffmpeg.
+
+    Barra normal, e dois-pontos virando DUAS barras invertidas. O valor tem
+    de ir entre aspas simples no filtro. Medido no ffmpeg 8.1 com caminho
+    absoluto do Windows: uma barra so falha ("No option name near ..."), sem
+    escape falha, e sem aspas falha. Vale igual para sendcmd=f= e subtitles=.
+    """
+    return str(p).replace("\\", "/").replace(":", "\\\\:")
 
 
 def build_render_cmd(bg_png, audio_inputs, ass_path: Path, out_mp4: Path,
