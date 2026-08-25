@@ -1,6 +1,7 @@
 """Unit tests para karaoke.background. HTTP dublado, sem rede."""
 import importlib.util
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -8,7 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
-from karaoke.background import IMAGE_RULES, build_brief, image_prompt
+from karaoke.background import (IMAGE_RULES, build_brief, generate_image,
+                                image_prompt)
 import karaoke.paths as kpaths
 
 
@@ -47,12 +49,46 @@ def test_prompt_de_imagem_carrega_as_regras_fixas():
         assert exigido.lower() in p.lower(), f"regra ausente do prompt: {exigido}"
 
 
-def test_letra_crua_nao_vaza_para_o_prompt_de_imagem():
-    letra = "Andei por caminhos tortos, vi o sol nascer no mar"
-    with patch("urllib.request.urlopen", return_value=_ollama_resposta("dark ocean dawn")):
+def test_letra_crua_nao_vaza_para_o_no_do_comfyui(tmp_path):
+    """A fronteira real: o texto que generate_image injeta no no do workflow.
+
+    A versao anterior deste teste passava o brief como constante fixa e
+    afirmava que a letra nao estava nela — verdadeiro por construcao,
+    independente do codigo. Aqui o brief atravessa build_brief, image_prompt e
+    _inject_prompt, e a assercao e sobre o que de fato sai no payload do
+    ComfyUI.
+    """
+    letra = "Andei por caminhos tortos, vi o sol nascer no mar de Ipanema"
+    with patch("urllib.request.urlopen",
+               return_value=_ollama_resposta("A dark ocean at dawn, muted teal")):
         brief = build_brief(letra)
-    p = image_prompt(brief)
-    assert "caminhos tortos" not in p
+
+    wf_path = tmp_path / "wf.json"
+    wf_path.write_text(json.dumps({
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "PLACEHOLDER"}},
+        "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "kstudio"}},
+    }), encoding="utf-8")
+
+    capturado = {}
+
+    def _captura(url, payload, timeout):
+        capturado["prompt"] = payload["prompt"]
+        raise RuntimeError("parada proposital antes do poll")
+
+    with patch("karaoke.background._post_json", side_effect=_captura):
+        with pytest.raises(RuntimeError, match="parada proposital"):
+            generate_image(image_prompt(brief), tmp_path / "bg.png", wf_path)
+
+    injetado = capturado["prompt"]["6"]["inputs"]["text"]
+    assert injetado != "PLACEHOLDER", "nada foi injetado no no positivo"
+
+    palavras = [w for w in re.findall(r"\w+", letra.lower()) if len(w) >= 4]
+    assert len(palavras) >= 5, f"so {len(palavras)} palavras testaveis na letra"
+    vazadas = [w for w in palavras if w in injetado.lower()]
+    assert not vazadas, (
+        f"{len(vazadas)} de {len(palavras)} palavras da letra crua chegaram ao "
+        f"gerador de imagem: {vazadas} — texto injetado: {injetado!r}"
+    )
 
 
 def test_prompt_e_injetado_no_no_positivo():
