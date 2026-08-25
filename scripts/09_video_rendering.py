@@ -514,41 +514,53 @@ def main():
     _progress(100, f"karaoke.ass gerado — {len(events)} linhas totais")
     # ── Renderiza Vídeo Final ────────────────────────────────────────────────
     _progress(90, "Renderizando vídeo final (FFmpeg)...")
-    
-    input_video = kpaths.input_video(job_id)
-    if not input_video.exists():
-        # Fallback para imagem estática se vídeo não existir
-        input_video = kpaths.input_thumb(job_id)
-        
+
+    import subprocess
+    import tempfile
+
+    from karaoke.bounce import build_sendcmd, onsets_from_wav
+    from karaoke.render_cmd import WORK_H, WORK_W, build_render_cmd
+
     out_mp4 = kpaths.output_video(job_id)
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Audio sources
+
     instrumental = kpaths.demucs_out_dir(job_id) / "no_vocals.wav"
     vocals = kpaths.vocals_listen(job_id)
 
-    # Command: Mix instrumental + vocals + subtitiles
-    # This is a complex ffmpeg filter chain
-    cmd_video = [
-        "ffmpeg", "-y",
-        "-i", str(input_video),
-        "-i", str(instrumental),
-        "-i", str(vocals),
-        "-filter_complex", 
-        f"[1:a][2:a]amix=inputs=2:duration=first[a];[0:v]subtitles='{str(out_ass).replace('\\', '/')}'[v]",
-        "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-        "-c:a", "aac", "-b:a", "192k",
-        str(out_mp4)
-    ]
-    
-    print(f"  Encoding video to {out_mp4}...")
+    duration = float(subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(instrumental)],
+        capture_output=True, text=True, timeout=30).stdout.strip())
+
+    bg_png = kpaths.background_png(job_id)
+    bg_png = bg_png if bg_png.exists() else None
+
+    sendcmd_path = None
+    if bg_png is not None:
+        try:
+            onsets = onsets_from_wav(instrumental)
+            sendcmd_path = Path(tempfile.mkstemp(suffix=".txt", prefix="bounce_")[1])
+            sendcmd_path.write_text(
+                build_sendcmd(onsets, WORK_W, WORK_H), encoding="utf-8")
+            print(f"  Bounce: {len(onsets)} onsets -> {sendcmd_path.name}")
+        except Exception as e:
+            # Sem bounce o fundo fica parado; ainda e melhor que preto chapado.
+            print(f"  AVISO: bounce desativado ({type(e).__name__}: {e})")
+            sendcmd_path = None
+
+    print(f"  Fundo: {'ilustracao' if bg_png else 'chapado #08090f'}")
+    cmd_video = build_render_cmd(bg_png, [instrumental, vocals],
+                                 out_ass, out_mp4, duration, sendcmd_path)
+
     try:
         subprocess.run(cmd_video, check=True, capture_output=True)
-        print(f"✓ Vídeo final gerado: {out_mp4.name}")
+        print(f"OK Vídeo final gerado: {out_mp4.name}")
     except subprocess.CalledProcessError as e:
-        print(f"ERRO ao renderizar vídeo: {e.stderr.decode()}")
+        print(f"ERRO ao renderizar vídeo: {e.stderr.decode(errors='replace')[-2000:]}")
         sys.exit(1)
+    finally:
+        if sendcmd_path is not None:
+            sendcmd_path.unlink(missing_ok=True)
 
     _progress(100, "Video Rendering concluído.")
 

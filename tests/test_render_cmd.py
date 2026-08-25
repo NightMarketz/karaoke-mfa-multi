@@ -1,0 +1,65 @@
+# tests/test_render_cmd.py
+"""Contrato do comando ffmpeg. Monta a lista de args, nao roda o encoder."""
+from pathlib import Path
+
+from karaoke.render_cmd import build_render_cmd
+
+ASS = Path("/tmp/karaoke.ass")
+OUT = Path("/tmp/out.mp4")
+INST = Path("/tmp/no_vocals.wav")
+VOX = Path("/tmp/vocals.wav")
+BG = Path("/tmp/bg.png")
+SC = Path("/tmp/bounce.txt")
+
+
+def _fc(cmd):
+    return cmd[cmd.index("-filter_complex") + 1]
+
+
+def test_com_fundo_usa_loop_e_sendcmd():
+    cmd = build_render_cmd(BG, [INST, VOX], ASS, OUT, 210.0, SC)
+    assert "-loop" in cmd and cmd[cmd.index("-loop") + 1] == "1"
+    assert "sendcmd" in _fc(cmd)
+
+
+def test_scale_vem_depois_do_crop():
+    # Verificado empiricamente: sem scale apos o crop o sendcmd nao tem efeito.
+    fc = _fc(build_render_cmd(BG, [INST, VOX], ASS, OUT, 210.0, SC))
+    assert fc.index("crop=") < fc.index("scale=1280:720"), f"ordem errada: {fc}"
+
+
+def test_sem_fundo_cai_no_chapado_e_sem_sendcmd():
+    cmd = build_render_cmd(None, [INST, VOX], ASS, OUT, 210.0, None)
+    assert any("color=c=#08090f" in a for a in cmd)
+    assert "sendcmd" not in _fc(cmd)
+    assert "-loop" not in cmd
+
+
+def test_duracao_sempre_presente():
+    # Sem -t, imagem estatica com -loop 1 gera video infinito.
+    for bg, sc in ((BG, SC), (None, None)):
+        cmd = build_render_cmd(bg, [INST, VOX], ASS, OUT, 210.0, sc)
+        assert "-t" in cmd and cmd[cmd.index("-t") + 1] == "210.0"
+
+
+def test_yuv420p_sempre_presente():
+    for bg, sc in ((BG, SC), (None, None)):
+        assert "format=yuv420p" in _fc(
+            build_render_cmd(bg, [INST, VOX], ASS, OUT, 210.0, sc))
+
+
+def test_caminho_do_windows_tem_dois_pontos_escapado_com_barra_simples():
+    # Medido de fato contra o binario ffmpeg 8.1-full_build-www.gyan.dev via
+    # subprocess.run (sem shell, sem traducao de path do MSYS): dentro do
+    # filtergraph "C:/x" precisa virar 'C\:/x' (UMA barra invertida, entre
+    # aspas simples). Duas barras invertidas falham com "Error parsing a
+    # filter description... Invalid argument" (rc != 0) e sem escape falha
+    # com "Error applying option 'original_size'" — so a barra simples roda
+    # de verdade (rc=0). Os demais testes deste arquivo usam caminhos /tmp/
+    # sem dois-pontos — nao pegariam isso.
+    win_ass = Path(r"C:\jobs\k.ass")
+    win_sc = Path(r"C:\jobs\bounce.txt")
+    fc = _fc(build_render_cmd(BG, [INST, VOX], win_ass, OUT, 210.0, win_sc))
+    assert "subtitles='C\\:/jobs/k.ass'" in fc, fc
+    assert "sendcmd=f='C\\:/jobs/bounce.txt'" in fc, fc
+    assert "\\\\" not in fc, f"sobrou barra invertida dupla: {fc}"
