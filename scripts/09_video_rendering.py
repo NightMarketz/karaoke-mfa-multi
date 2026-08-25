@@ -524,7 +524,7 @@ def main():
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
     
     # Audio sources
-    instrumental = kpaths.separation_dir(job_id) / "htdemucs" / kpaths.input_job_dir(job_id).name / "no_vocals.wav"
+    instrumental = kpaths.demucs_out_dir(job_id) / "no_vocals.wav"
     vocals = kpaths.vocals_listen(job_id)
 
     # Command: Mix instrumental + vocals + subtitiles

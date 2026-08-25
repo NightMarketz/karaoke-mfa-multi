@@ -136,11 +136,16 @@ def adlibs_json(job_id: str) -> Path:
     return alignment_dir(job_id) / "adlibs_timing.json"
 
 def input_job_dir(job_id: str) -> Path:
-    """Nome da subpasta que o Demucs cria em htdemucs/ (deriva do stem de
-    song.wav — Demucs nomeia a subpasta pelo stem do arquivo de audio de
-    entrada, nao pelo diretorio; ver scripts/02_vocal_isolation.py). Este
-    Path e usado apenas via .name pelos call sites, nao como diretorio real."""
-    return input_dir(job_id) / "song"
+    """Diretorio de input real do job (onde song.wav e escrito por
+    01_media_prep.py e lido por 02_vocal_isolation.py/13_process_conclusion.py).
+    Alias de input_dir — nao confundir com demucs_out_dir."""
+    return input_dir(job_id)
+
+def demucs_out_dir(job_id: str) -> Path:
+    """Pasta que o Demucs cria para este job: htdemucs/<stem do audio>/.
+    O Demucs nomeia a subpasta pelo stem do arquivo de entrada (song.wav),
+    nao pelo diretorio de input — ver scripts/02_vocal_isolation.py."""
+    return separation_dir(job_id) / "htdemucs" / "song"
 
 def input_video(job_id: str) -> Path:
     """Video de fundo fornecido pelo usuario (opcional)."""
