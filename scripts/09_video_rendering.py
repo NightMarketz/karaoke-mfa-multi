@@ -532,10 +532,14 @@ def main():
         print(f"ERRO: Instrumental não encontrado: {instrumental}")
         sys.exit(1)
 
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(instrumental)],
-        capture_output=True, text=True, timeout=30)
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(instrumental)],
+            capture_output=True, text=True, timeout=30)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        print(f"ERRO: não consegui rodar o ffprobe ({type(e).__name__}: {e})")
+        sys.exit(1)
     try:
         duration = float(probe.stdout.strip())
     except ValueError:
