@@ -110,7 +110,10 @@ def generate_image(prompt: str, out_path: Path, workflow_path: Path,
             if not imgs:
                 raise RuntimeError("ComfyUI terminou sem produzir imagem")
             img = imgs[0]
-            src = COMFY_OUTPUT_ROOT / img.get("type", "output") / img["filename"]
+            # subfolder vem preenchido quando o filename_prefix do SaveImage
+            # tem "/" (ex.: "karaoke/bg"); ignora-lo faz a copia errar o alvo.
+            src = (COMFY_OUTPUT_ROOT / img.get("type", "output")
+                   / img.get("subfolder", "") / img["filename"])
             out_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, out_path)
             return out_path

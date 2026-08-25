@@ -2,9 +2,11 @@
 """Monta o comando ffmpeg do render final. Sem subprocess — so a lista de args."""
 from pathlib import Path
 
-FLAT_BG = "color=c=#08090f:s=1280x720"
-WORK_W, WORK_H = 1408, 792      # 10% acima de 1280x720: folga para o zoom
 OUT_W, OUT_H = 1280, 720
+WORK_W, WORK_H = 1408, 792      # 10% acima de 1280x720: folga para o zoom
+# Derivado das constantes de proposito: hardcodar 1280x720 aqui deixava o ramo
+# chapado driftar do ilustrado sem nada acusar.
+FLAT_BG = f"color=c=#08090f:s={OUT_W}x{OUT_H}"
 
 
 def _escape(p) -> str:

@@ -157,14 +157,6 @@ def demucs_out_dir(job_id: str) -> Path:
     nao pelo diretorio de input — ver scripts/02_vocal_isolation.py."""
     return separation_dir(job_id) / "htdemucs" / "song"
 
-def input_video(job_id: str) -> Path:
-    """Video de fundo fornecido pelo usuario (opcional)."""
-    return input_dir(job_id) / "background.mp4"
-
-def input_thumb(job_id: str) -> Path:
-    """Imagem de fundo fornecida pelo usuario (opcional)."""
-    return input_dir(job_id) / "background.png"
-
 def song_wav(job_id: str) -> Path:
     """WAV normalizado que 01_media_prep.py escreve (linha 49: input_job_dir /
     "song.wav"). Citado por server.py:95, que estourava AttributeError ali —
