@@ -75,6 +75,17 @@ def build_sendcmd(onsets, base_w: int, base_h: int,
             eventos.append((volta, [("w", fw), ("h", fh)]))
 
     if deriva:
+        # O filtergraph entra em crop=WORK_W:WORK_H (ver render_cmd.py), ou
+        # seja, a janela cheia. Sem este comando em t=0 a deriva comanda x/y
+        # contra ela ate o PRIMEIRO onset: medido em
+        # build_sendcmd([12,40,80], 1408, 792, duration=210), o primeiro w/h
+        # so caia no indice 12 e 4 dos 12 comandos anteriores estouravam
+        # x + w > WORK_W em 2px. O ffmpeg satura x/y por quadro em vez de
+        # falhar, entao o sintoma era deriva presa na intro, sem erro nenhum.
+        # insert(0): o sort abaixo e estavel, entao com onset em t=0.0 o pulso
+        # continua vindo depois e reassume, como antes.
+        eventos.insert(0, (0.0, [("w", fw), ("h", fh)]))
+
         # Folga medida contra o crop de REPOUSO, que e o maior comandado; o
         # crop do pulso e menor, entao cabe por consequencia.
         max_x, max_y = base_w - fw, base_h - fh

@@ -110,6 +110,17 @@ def test_deriva_move_x_e_y_e_respeita_o_limite_da_fonte():
     assert len(xs) > 1 and len(ys) > 1, (
         f"deriva ausente: {len(xs)} comandos de x, {len(ys)} de y"
     )
+
+    # O primeiro comando emitido tem de FIXAR a janela (w/h). Enquanto ele nao
+    # vem, o crop ainda e o WORK_W:WORK_H do filtergraph e qualquer x > 0 ja
+    # estoura a fonte.
+    primeira = [l for l in txt.splitlines() if l.strip()][0]
+    assert "crop w" in primeira and "crop h" in primeira, (
+        f"primeiro comando nao estabelece a janela: {primeira!r}"
+    )
+    assert primeira.startswith("0.000 "), (
+        f"a janela de repouso tem de ser comandada em t=0: {primeira!r}"
+    )
     assert xs[0][1] != xs[-1][1], f"x nao se moveu em {len(xs)} comandos: {xs[0]} -> {xs[-1]}"
     assert ys[0][1] != ys[-1][1], f"y nao se moveu em {len(ys)} comandos: {ys[0]} -> {ys[-1]}"
 
@@ -137,3 +148,51 @@ def test_comandos_em_ordem_crescente_com_deriva():
     tempos = [float(l.split(" ", 1)[0]) for l in txt.splitlines() if l.strip()]
     assert len(tempos) > 3, f"so {len(tempos)} comandos"
     assert tempos == sorted(tempos), f"comandos fora de ordem: {tempos}"
+
+
+def _varre_estado(txt):
+    """Reexecuta o script sendcmd comando a comando, como o ffmpeg faria.
+
+    Estado inicial = o que o filtergraph monta antes de qualquer comando:
+    `crop=WORK_W:WORK_H` (render_cmd.py), x/y em 0. Devolve
+    [(indice, tempo, w, h, x, y)] apos cada linha.
+    """
+    linhas = [l for l in txt.splitlines() if l.strip()]
+    w, h, x, y = WORK_W, WORK_H, 0, 0
+    estados = []
+    for i, linha in enumerate(linhas):
+        pares = re.findall(r"crop ([whxy]) (\d+)", linha)
+        assert pares, f"linha {i} sem nenhum comando de crop: {linha!r}"
+        for prop, val in pares:
+            w, h, x, y = {
+                "w": (int(val), h, x, y), "h": (w, int(val), x, y),
+                "x": (w, h, int(val), y), "y": (w, h, x, int(val)),
+            }[prop]
+        estados.append((i, float(linha.split(" ", 1)[0]), w, h, x, y))
+    return estados
+
+
+@pytest.mark.parametrize("onsets,dur", [
+    ([12.0, 40.0, 80.0], 210.0),   # intro longa: 12 comandos de deriva antes do 1o onset
+    ([0.5, 1.0, 90.0], 180.0),
+    ([1.0, 2.0, 3.0], 10.0),
+])
+def test_a_janela_do_crop_nunca_estoura_a_fonte_em_nenhum_comando(onsets, dur):
+    """A cerca que teria pego o defeito: o invariante em TODO ponto do script,
+    nao so nos extremos.
+
+    O teste anterior media x contra `max(crop w)` do arquivo inteiro, o que
+    supoe que o w ja foi comandado. Ate o primeiro onset ele NAO foi: o crop
+    valia WORK_W e a deriva ja mandava x. Medido antes da correcao com
+    onsets=[12,40,80], dur=210: 4 dos 217 comandos com x + w = 1410 > 1408.
+    """
+    estados = _varre_estado(build_sendcmd(onsets, WORK_W, WORK_H, duration=dur))
+    assert len(estados) > 10, f"so {len(estados)} comandos varridos — teste fraco"
+    estouros = [e for e in estados
+                if e[4] + e[2] > WORK_W or e[5] + e[3] > WORK_H or e[4] < 0 or e[5] < 0]
+    assert not estouros, (
+        f"{len(estouros)} de {len(estados)} comandos estouram a fonte "
+        f"{WORK_W}x{WORK_H}; primeiro: idx={estouros[0][0]} t={estouros[0][1]} "
+        f"w={estouros[0][2]} h={estouros[0][3]} x={estouros[0][4]} y={estouros[0][5]} "
+        f"(x+w={estouros[0][4] + estouros[0][2]}, y+h={estouros[0][5] + estouros[0][3]})"
+    )
