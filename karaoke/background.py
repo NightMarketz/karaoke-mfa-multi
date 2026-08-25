@@ -7,6 +7,7 @@ Imagem: ComfyUI (z_image_turbo, HTTP)
 Nada aqui pode derrubar o job: quem chama trata excecao e cai no fundo chapado.
 """
 import json
+import os
 import random
 import shutil
 import time
@@ -15,8 +16,14 @@ import urllib.request
 from pathlib import Path
 
 OLLAMA_HOST = "http://127.0.0.1:11434"
-COMFY_HOST = "http://127.0.0.1:8188"   # ponytail: confirmar com o app aberto
 BRIEF_MODEL = "llama3.2:3b"            # qwen3:4b devolve as proprias instrucoes
+
+# A porta do ComfyUI nao e fixa: o app ja subiu em 8000, 8001 e 8188 em
+# sessoes diferentes desta maquina. COMFYUI_URL (mesmo nome usado no outro
+# projeto) vence e vai literal; sem ela, sonda nesta ordem.
+COMFY_ENV_VAR = "COMFYUI_URL"
+COMFY_PORTS = (8188, 8000, 8001)
+COMFY_PROBE_SECONDS = 1.5
 
 COMFY_OUTPUT_ROOT = Path("C:/ComfyUI")
 COMFY_POLL_SECONDS = 2
@@ -151,12 +158,43 @@ def _diagnostico(entry: dict) -> str:
     return (texto[:600] if texto else "sem diagnostico no /history")
 
 
+def resolve_comfy_host() -> str:
+    """Descobre onde o ComfyUI esta ouvindo. Levanta nomeando o que tentou.
+
+    1. COMFYUI_URL, se setada — literal, sem sondar.
+    2. senao sonda COMFY_PORTS em ordem contra /system_stats.
+    3. nenhuma responde -> erro que nomeia TODAS as candidatas, para o aviso
+       do 08b dizer "nenhum ComfyUI em 8188/8000/8001" e nao um recusa de
+       conexao pelado apontando so a primeira.
+    """
+    url = os.environ.get(COMFY_ENV_VAR)
+    if url:
+        return url.rstrip("/")
+    for porta in COMFY_PORTS:
+        alvo = f"http://127.0.0.1:{porta}"
+        try:
+            with urllib.request.urlopen(f"{alvo}/system_stats",
+                                        timeout=COMFY_PROBE_SECONDS):
+                return alvo
+        except Exception:
+            continue
+    raise RuntimeError(
+        "nenhum ComfyUI respondeu em "
+        + "/".join(str(p) for p in COMFY_PORTS)
+        + f" — abra o app ou aponte {COMFY_ENV_VAR} para a URL dele"
+    )
+
+
 def generate_image(prompt: str, out_path: Path, workflow_path: Path,
-                   host: str = COMFY_HOST) -> Path:
-    """Enfileira no ComfyUI, espera terminar e copia o PNG para out_path."""
+                   host: str = None) -> Path:
+    """Enfileira no ComfyUI, espera terminar e copia o PNG para out_path.
+
+    host=None resolve por COMFYUI_URL/sondagem; um host explicito pula tudo."""
     workflow = _inject_prompt(
         Path(workflow_path).read_text(encoding="utf-8"), prompt)
     _bust_cache(workflow)
+    # Depois do inject: template sem marcador falha sem sondar porta nenhuma.
+    host = host or resolve_comfy_host()
     body = _post_json(f"{host}/prompt", {"prompt": workflow}, timeout=30)
     prompt_id = body["prompt_id"]
 

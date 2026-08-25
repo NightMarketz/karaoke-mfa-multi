@@ -9,9 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
-from karaoke.background import (IMAGE_RULES, _bust_cache, _diagnostico,
-                                _inject_prompt, build_brief, generate_image,
-                                image_prompt)
+from karaoke.background import (COMFY_ENV_VAR, COMFY_PORTS, IMAGE_RULES,
+                                _bust_cache, _diagnostico, _inject_prompt,
+                                build_brief, generate_image, image_prompt,
+                                resolve_comfy_host)
 import karaoke.paths as kpaths
 
 # Host explicito em todo teste: `generate_image(host=...)` pula a resolucao,
@@ -300,3 +301,83 @@ def test_diagnostico_degrada_em_vez_de_estourar(entry, esperado):
 def test_diagnostico_e_truncado():
     entry = {"status": {"status_str": "e", "messages": ["x" * 5000]}}
     assert len(_diagnostico(entry)) <= 600
+
+
+# --------------------------------------------------------------------------
+# H3: a porta do ComfyUI nao e fixa (8000/8001/8188 ja vistas nesta maquina).
+# Todo teste aqui dubla o urlopen — nenhum toca a rede.
+# --------------------------------------------------------------------------
+
+def _sonda(portas_vivas):
+    """urlopen que so responde nas portas listadas. Registra quem foi tentado."""
+    tentadas = []
+
+    def _fake(url, timeout=None):
+        tentadas.append(url)
+        porta = int(url.split(":")[2].split("/")[0])
+        if porta not in portas_vivas:
+            raise OSError(f"conexao recusada em {porta}")
+        return _FakeResp({"system": {}})
+
+    return _fake, tentadas
+
+
+def test_env_var_vence_e_nao_sonda(monkeypatch):
+    monkeypatch.setenv(COMFY_ENV_VAR, "http://10.0.0.5:9999/")
+    _fake, tentadas = _sonda(set(COMFY_PORTS))
+    with patch("urllib.request.urlopen", side_effect=_fake):
+        assert resolve_comfy_host() == "http://10.0.0.5:9999"
+    assert tentadas == [], f"sondou {len(tentadas)} porta(s) com {COMFY_ENV_VAR} setada"
+
+
+@pytest.mark.parametrize("vivas,esperada", [
+    ({8188, 8000, 8001}, 8188),   # todas de pe -> a primeira da ordem
+    ({8000, 8001}, 8000),         # 8188 morta -> cai para a proxima
+    ({8001}, 8001),               # so a ultima
+])
+def test_sondagem_pega_o_primeiro_que_responde(monkeypatch, vivas, esperada):
+    monkeypatch.delenv(COMFY_ENV_VAR, raising=False)
+    _fake, tentadas = _sonda(vivas)
+    with patch("urllib.request.urlopen", side_effect=_fake):
+        assert resolve_comfy_host() == f"http://127.0.0.1:{esperada}"
+    ordem = [int(u.split(":")[2].split("/")[0]) for u in tentadas]
+    assert ordem == list(COMFY_PORTS[:COMFY_PORTS.index(esperada) + 1]), (
+        f"sondou {ordem}, esperado parar em {esperada}"
+    )
+
+
+def test_nenhuma_porta_responde_nomeia_todas_as_candidatas(monkeypatch):
+    """O aviso do 08b tem de dizer ONDE procurou. Um ConnectionRefused pelado
+    aponta so a primeira porta e manda o usuario para o lugar errado."""
+    monkeypatch.delenv(COMFY_ENV_VAR, raising=False)
+    _fake, tentadas = _sonda(set())
+    with patch("urllib.request.urlopen", side_effect=_fake):
+        with pytest.raises(RuntimeError) as exc:
+            resolve_comfy_host()
+    texto = str(exc.value)
+    faltando = [p for p in COMFY_PORTS if str(p) not in texto]
+    assert not faltando, (
+        f"{len(faltando)} de {len(COMFY_PORTS)} candidatas ausentes da mensagem: "
+        f"{faltando} — mensagem: {texto!r}"
+    )
+    assert COMFY_ENV_VAR in texto, f"a saida de escape nao e citada: {texto!r}"
+    assert len(tentadas) == len(COMFY_PORTS), (
+        f"{len(tentadas)} de {len(COMFY_PORTS)} candidatas sondadas"
+    )
+
+
+def test_host_explicito_pula_a_resolucao_inteira(monkeypatch):
+    """As chamadas com host= nao podem sondar nada — e o que mantem os testes
+    (e um caller que sabe o endereco) fora da rede."""
+    monkeypatch.setenv(COMFY_ENV_VAR, "http://nao-deve-ser-usado:1")
+    urls = []
+
+    def _captura(url, payload, timeout):
+        urls.append(url)
+        raise RuntimeError("parada proposital")
+
+    with patch("karaoke.background._post_json", side_effect=_captura):
+        with pytest.raises(RuntimeError, match="parada proposital"):
+            generate_image("um mar escuro", Path("x.png"),
+                           _escreve_template(), host=HOST_FAKE)
+    assert urls == [f"{HOST_FAKE}/prompt"], urls
