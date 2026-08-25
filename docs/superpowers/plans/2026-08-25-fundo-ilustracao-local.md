@@ -804,17 +804,17 @@ def test_yuv420p_sempre_presente():
             build_render_cmd(bg, [INST, VOX], ASS, OUT, 210.0, sc))
 
 
-def test_caminho_do_windows_tem_dois_pontos_escapado_com_barra_dupla():
-    # Medido no ffmpeg 8.1: dentro do filtergraph, "C:/x" precisa virar
-    # 'C\\:/x' (duas barras invertidas, entre aspas simples). Uma barra so
-    # falha com "No option name near ...", e os demais testes deste arquivo
-    # usam caminhos /tmp/ sem dois-pontos — nao pegariam isso.
+def test_caminho_do_windows_tem_dois_pontos_escapado():
+    # Medido contra o ffmpeg 8.1 real via subprocess.run, caminho do Windows
+    # com e sem espaco: sem escape o encoder falha ("Invalid argument"); uma
+    # barra invertida funciona (rc=0) e e a forma que usamos. Os demais
+    # testes deste arquivo usam caminhos /tmp/ sem dois-pontos e nao
+    # pegariam uma regressao aqui.
     win_ass = Path(r"C:\jobs\k.ass")
     win_sc = Path(r"C:\jobs\bounce.txt")
     fc = _fc(build_render_cmd(BG, [INST, VOX], win_ass, OUT, 210.0, win_sc))
-    assert "subtitles='C\\\\:/jobs/k.ass'" in fc, fc
-    assert "sendcmd=f='C\\\\:/jobs/bounce.txt'" in fc, fc
-    assert "\\" not in fc.replace("\\\\:", ""), f"sobrou barra invertida solta: {fc}"
+    assert "subtitles='C\\:/jobs/k.ass'" in fc, fc
+    assert "sendcmd=f='C\\:/jobs/bounce.txt'" in fc, fc
 ```
 
 - [ ] **Step 2: Rodar e ver falhar**
@@ -837,12 +837,17 @@ OUT_W, OUT_H = 1280, 720
 def _escape(p) -> str:
     """Caminho seguro dentro de um filtergraph do ffmpeg.
 
-    Barra normal, e dois-pontos virando DUAS barras invertidas. O valor tem
-    de ir entre aspas simples no filtro. Medido no ffmpeg 8.1 com caminho
-    absoluto do Windows: uma barra so falha ("No option name near ..."), sem
-    escape falha, e sem aspas falha. Vale igual para sendcmd=f= e subtitles=.
+    Barra normal, dois-pontos escapado, e o valor entre aspas simples no
+    filtro. Medido contra o ffmpeg 8.1 real via subprocess.run (lista de
+    args, sem shell), com caminho do Windows com e sem espaco: SEM escape
+    falha ("Invalid argument"); uma barra invertida e duas funcionam as
+    duas (rc=0). Usamos uma.
+
+    Cuidado ao reverificar: medir isso pela linha de comando do bash da
+    resultado diferente — as aspas do shell comem um nivel de barra antes
+    do ffmpeg ver. So vale a medicao pelo caminho de producao.
     """
-    return str(p).replace("\\", "/").replace(":", "\\\\:")
+    return str(p).replace("\\", "/").replace(":", "\\:")
 
 
 def build_render_cmd(bg_png, audio_inputs, ass_path: Path, out_mp4: Path,
