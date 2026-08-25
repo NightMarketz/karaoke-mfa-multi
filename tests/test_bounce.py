@@ -51,25 +51,42 @@ def test_onsets_muito_proximos_nao_se_sobrepoem():
     assert tempos == sorted(tempos), f"comandos fora de ordem: {tempos}"
 
 
-def test_onsets_from_wav_detecta_cliques_plantados(tmp_path):
-    # 3 estouros de 100ms plantados em silencio; onsets_from_wav deve achar 1 por clique.
-    sr = 8000
-    audio = np.zeros(int(sr * 3.0), dtype=np.float32)
-    cliques = [0.5, 1.5, 2.5]
-    burst_len = int(sr * 0.1)
-    for t in cliques:
-        start = int(sr * t)
-        audio[start:start + burst_len] = 1.0
-    pcm = (audio * 32767).astype(np.int16)
+def _wav_com_cliques(path, cliques, canais, sr=8000, dur=4.0):
+    """WAV com estouros de 100ms plantados nos tempos pedidos.
 
-    wav_path = tmp_path / "cliques.wav"
-    with wave.open(str(wav_path), "wb") as wf:
-        wf.setnchannels(1)
+    `canais` sai literal no header: 2 e o que o pipeline de fato entrega
+    (01_media_prep.py grava com -ac 2, entao o no_vocals.wav do Demucs — a
+    UNICA entrada que onsets_from_wav recebe — e estereo).
+    """
+    audio = np.zeros(int(sr * dur), dtype=np.float32)
+    burst = int(sr * 0.1)
+    for t in cliques:
+        audio[int(sr * t):int(sr * t) + burst] = 1.0
+    pcm = (audio * 32767).astype(np.int16)
+    if canais > 1:
+        pcm = np.repeat(pcm, canais)      # intercalado L,R,L,R...
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(canais)
         wf.setsampwidth(2)
         wf.setframerate(sr)
         wf.writeframes(pcm.tobytes())
+    return path
 
-    onsets = onsets_from_wav(wav_path)
+
+@pytest.mark.parametrize("canais", [1, 2])
+def test_onsets_from_wav_acha_os_cliques_no_tempo_certo(tmp_path, canais):
+    """Contagem E tempo. So a contagem passava com o buffer estereo lido como
+    mono: os indices dobravam (0.5s virava ~1.0s) e nada acusava."""
+    cliques = [0.5, 1.5, 2.5, 3.5]
+    wav = _wav_com_cliques(tmp_path / f"cliques_{canais}ch.wav", cliques, canais)
+
+    onsets = onsets_from_wav(wav)
     assert len(onsets) == len(cliques), (
-        f"{len(onsets)} onsets detectados, {len(cliques)} cliques plantados"
+        f"{canais} canal(is): {len(onsets)} onsets detectados, "
+        f"{len(cliques)} cliques plantados -> {[round(t, 2) for t in onsets]}"
     )
+    for esperado, medido in zip(cliques, onsets):
+        assert abs(medido - esperado) < 0.05, (
+            f"{canais} canal(is): clique em {esperado}s detectado em "
+            f"{medido:.3f}s (erro {medido - esperado:+.3f}s)"
+        )

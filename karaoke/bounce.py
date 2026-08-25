@@ -60,8 +60,20 @@ def onsets_from_wav(wav_path: Path) -> list:
     """RMS frame a frame + derivada, igual ao 05c_onset_dtw_align.py."""
     with wave.open(str(wav_path), "rb") as wf:
         sr = wf.getframerate()
+        canais = wf.getnchannels()
         audio = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
     audio = audio.astype(np.float32)
+    if canais > 1:
+        # O buffer traz as amostras intercaladas (L,R,L,R...): sao
+        # nframes*canais valores, mas hop/win saem so do sample rate. Sem o
+        # downmix cada indice de frame vale `canais` vezes o tempo real. O
+        # no_vocals.wav do Demucs — a unica entrada que esta funcao recebe —
+        # e estereo (01_media_prep.py grava com -ac 2), entao TODO onset
+        # saia com o dobro do tempo certo.
+        sobra = len(audio) % canais
+        if sobra:
+            audio = audio[:-sobra]     # frame parcial no fim do buffer
+        audio = audio.reshape(-1, canais).mean(axis=1)
     audio /= np.abs(audio).max() + 1e-8
 
     hop = int(sr * HOP_MS / 1000)
