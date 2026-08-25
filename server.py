@@ -169,7 +169,13 @@ def _build_steps(audio_path, lang, job_id, preview_mode=False, aligner="mfa"):
             "timeout": 300,
         },
         {
-            "id": 11, "name": "Video Rendering",
+            "id": 11, "name": "Background Illustration",
+            "cmd": [python, _p("scripts", "08b_background_image.py"), "--job-id", job_id],
+            "outputs": {"background": str(kpaths.background_png(job_id).resolve())},
+            "timeout": 600,
+        },
+        {
+            "id": 12, "name": "Video Rendering",
             "cmd": [python, _p("scripts", "09_video_rendering.py"), "--job-id", job_id],
             "outputs": {"video": str(kpaths.final_video(job_id).resolve())},
             "timeout": 3600,
@@ -749,7 +755,11 @@ def _run_pipeline_thread(audio_path, lang, job_id, job_data, stems_preloaded=Fal
                 _emit(job_id, step["id"], step["name"], "done")
 
                 metrics = {}
-                if step["id"] == 10:
+                # Pelo nome, nao pelo indice: os ids sao renormalizados no
+                # fim de _build_steps, entao qualquer estagio inserido antes
+                # (08b) ou o caminho SOFA (3 etapas no lugar de 1) desloca o
+                # numero do Quality Assurance.
+                if step["name"] == "Quality Assurance":
                     qc_path = step["outputs"].get("qc")
                     if qc_path and os.path.exists(qc_path):
                         try:

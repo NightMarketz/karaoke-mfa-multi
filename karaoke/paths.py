@@ -165,6 +165,12 @@ def input_thumb(job_id: str) -> Path:
     """Imagem de fundo fornecida pelo usuario (opcional)."""
     return input_dir(job_id) / "background.png"
 
+def song_wav(job_id: str) -> Path:
+    """WAV normalizado que 01_media_prep.py escreve (linha 49: input_job_dir /
+    "song.wav"). Citado por server.py:95, que estourava AttributeError ali —
+    antes de qualquer estagio rodar."""
+    return input_job_dir(job_id) / "song.wav"
+
 def background_png(job_id: str) -> Path:
     """Ilustracao gerada pelo Step 08b."""
     return step_output(job_id, "08_background") / "background.png"
