@@ -9,9 +9,22 @@ from unittest.mock import patch
 
 import pytest
 
-from karaoke.background import (IMAGE_RULES, build_brief, generate_image,
-                                image_prompt)
+from karaoke.background import (IMAGE_RULES, _inject_prompt, build_brief,
+                                generate_image, image_prompt)
 import karaoke.paths as kpaths
+
+# Host explicito em todo teste: `generate_image(host=...)` pula a resolucao,
+# entao nenhum teste sonda porta nenhuma. Rede zero.
+HOST_FAKE = "http://127.0.0.1:65535"
+
+# Template como o README manda escrever: marcadores no lugar dos valores. O
+# `%seed%` sai sem aspas de proposito — o arquivo so vira JSON valido depois
+# da substituicao, que e justamente o que _inject_prompt tem de garantir.
+TEMPLATE_MARCADO = """{
+  "3": {"class_type": "KSampler", "inputs": {"seed": %seed%, "steps": 8}},
+  "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "%prompt%"}},
+  "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "karaoke/bg"}}
+}"""
 
 
 class _FakeResp:
@@ -64,10 +77,7 @@ def test_letra_crua_nao_vaza_para_o_no_do_comfyui(tmp_path):
         brief = build_brief(letra)
 
     wf_path = tmp_path / "wf.json"
-    wf_path.write_text(json.dumps({
-        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "PLACEHOLDER"}},
-        "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "kstudio"}},
-    }), encoding="utf-8")
+    wf_path.write_text(TEMPLATE_MARCADO, encoding="utf-8")
 
     capturado = {}
 
@@ -77,10 +87,11 @@ def test_letra_crua_nao_vaza_para_o_no_do_comfyui(tmp_path):
 
     with patch("karaoke.background._post_json", side_effect=_captura):
         with pytest.raises(RuntimeError, match="parada proposital"):
-            generate_image(image_prompt(brief), tmp_path / "bg.png", wf_path)
+            generate_image(image_prompt(brief), tmp_path / "bg.png", wf_path,
+                           host=HOST_FAKE)
 
     injetado = capturado["prompt"]["6"]["inputs"]["text"]
-    assert injetado != "PLACEHOLDER", "nada foi injetado no no positivo"
+    assert "%prompt%" not in injetado, "o marcador sobreviveu — nada foi injetado"
 
     palavras = [w for w in re.findall(r"\w+", letra.lower()) if len(w) >= 4]
     assert len(palavras) >= 5, f"so {len(palavras)} palavras testaveis na letra"
@@ -91,22 +102,43 @@ def test_letra_crua_nao_vaza_para_o_no_do_comfyui(tmp_path):
     )
 
 
-def test_prompt_e_injetado_no_no_positivo():
-    from karaoke.background import _inject_prompt
-    wf = {
-        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "PLACEHOLDER"}},
-        "7": {"class_type": "SaveImage", "inputs": {"filename_prefix": "kstudio"}},
-    }
-    out = _inject_prompt(wf, "um mar escuro", node_id="6")
-    assert out["6"]["inputs"]["text"] == "um mar escuro"
-    assert wf["6"]["inputs"]["text"] == "PLACEHOLDER", "mutou o workflow original"
+def test_prompt_hostil_sobrevive_intacto_ao_json():
+    """H4: o brief entra ESCAPADO dentro das aspas do template.
+
+    Aspas e barras invertidas no brief (o LLM escreve texto livre) sao o que
+    quebraria o JSON se o marcador fosse trocado cru. A assercao e sobre a
+    ESTRUTURA parseada, nao sobre substring do texto.
+    """
+    hostil = 'a \\ backslash and a "quote" and a %seed% look-alike'
+    grafo = _inject_prompt(TEMPLATE_MARCADO, hostil)   # nao levanta -> JSON valido
+    assert grafo["6"]["inputs"]["text"] == hostil, (
+        f"prompt corrompido na ida e volta: {grafo['6']['inputs']['text']!r}"
+    )
 
 
-def test_no_positivo_inexistente_e_erro():
-    from karaoke.background import _inject_prompt
-    with pytest.raises(KeyError, match="99"):
-        _inject_prompt({"6": {"class_type": "CLIPTextEncode", "inputs": {}}},
-                       "x", node_id="99")
+def test_seed_vira_inteiro_cru_e_o_grafo_parseia():
+    """%seed% e numero sem aspas no template: `"seed": %seed%` so vira JSON
+    valido DEPOIS da troca. Se sair como string, o ComfyUI rejeita o no."""
+    seeds = set()
+    for _ in range(5):
+        grafo = _inject_prompt(TEMPLATE_MARCADO, "um mar escuro")
+        seed = grafo["3"]["inputs"]["seed"]
+        assert isinstance(seed, int) and not isinstance(seed, bool), (
+            f"seed saiu como {type(seed).__name__}: {seed!r}"
+        )
+        assert 0 <= seed < 2 ** 32, f"seed fora da faixa: {seed}"
+        seeds.add(seed)
+    assert len(seeds) > 1, f"5 chamadas produziram {len(seeds)} seed(s) distintas"
+
+
+def test_template_sem_marcador_de_prompt_e_erro():
+    """Um export cru da GUI nao tem marcador. Renderizar o placeholder em
+    silencio seria pior que falhar: o job sai com a imagem errada e nada avisa.
+    """
+    cru = json.dumps({"6": {"class_type": "CLIPTextEncode",
+                            "inputs": {"text": "beautiful scenery"}}})
+    with pytest.raises(ValueError, match="%prompt%"):
+        _inject_prompt(cru, "um mar escuro")
 
 
 def _load_cli_module():

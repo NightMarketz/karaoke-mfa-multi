@@ -6,8 +6,8 @@ Imagem: ComfyUI (z_image_turbo, HTTP)
 
 Nada aqui pode derrubar o job: quem chama trata excecao e cai no fundo chapado.
 """
-import copy
 import json
+import random
 import shutil
 import time
 import urllib.request
@@ -17,7 +17,6 @@ OLLAMA_HOST = "http://127.0.0.1:11434"
 COMFY_HOST = "http://127.0.0.1:8188"   # ponytail: confirmar com o app aberto
 BRIEF_MODEL = "llama3.2:3b"            # qwen3:4b devolve as proprias instrucoes
 
-COMFY_PROMPT_NODE = "6"        # id do CLIPTextEncode positivo — ver Task 4 Step 1
 COMFY_OUTPUT_ROOT = Path("C:/ComfyUI")
 COMFY_POLL_SECONDS = 2
 COMFY_TIMEOUT_SECONDS = 300
@@ -80,21 +79,41 @@ def image_prompt(brief: str) -> str:
     return f"{brief.strip()}, {IMAGE_RULES}"
 
 
-def _inject_prompt(workflow: dict, prompt: str, node_id: str = COMFY_PROMPT_NODE) -> dict:
-    """Copia o workflow com o prompt no no positivo. Nao muta o original."""
-    if node_id not in workflow:
-        raise KeyError(f"no {node_id} ausente do workflow — reexportar em formato API")
-    wf = copy.deepcopy(workflow)
-    wf[node_id]["inputs"]["text"] = prompt
-    return wf
+def _inject_prompt(workflow_text: str, prompt: str) -> dict:
+    """Substitui os marcadores no TEXTO do template e devolve o grafo parseado.
+
+    Marcador, nunca id de no: o id do CLIPTextEncode positivo muda a cada
+    reexport da GUI, e errar o id derruba o estagio em silencio (KeyError
+    engolido pelo except do 08b -> fundo chapado permanente). O template diz
+    onde o prompt entra; o codigo nao adivinha.
+
+    %prompt% vem DENTRO de aspas no template, entao entra escapado e sem aspas
+    proprias — json.dumps(...)[1:-1]. Um brief com aspas ou barra invertida
+    corromperia o JSON de outro jeito.
+    %seed% e um numero CRU (sem aspas), por isso a substituicao e no texto e
+    nao no dict: `"seed": %seed%` nem parseia como JSON antes da troca.
+    """
+    if "%prompt%" not in workflow_text:
+        raise ValueError(
+            "o template do workflow tem de conter o marcador %prompt% no valor "
+            "do prompt positivo — um export cru da GUI do ComfyUI nao serve "
+            "sem marcar; ver README, secao Estagio 11"
+        )
+    # %seed% primeiro: o prompt e texto livre escrito por um LLM, e trocar o
+    # prompt antes deixaria um "%seed%" vindo do brief ser substituido por um
+    # numero. Na outra ordem o valor injetado do seed e so digitos, entao nao
+    # pode conter "%prompt%". Uma ordem e segura, a outra nao.
+    texto = workflow_text.replace("%seed%", str(random.randrange(0, 2 ** 32)))
+    texto = texto.replace("%prompt%", json.dumps(prompt)[1:-1])
+    return json.loads(texto)
 
 
 def generate_image(prompt: str, out_path: Path, workflow_path: Path,
                    host: str = COMFY_HOST) -> Path:
     """Enfileira no ComfyUI, espera terminar e copia o PNG para out_path."""
-    workflow = json.loads(Path(workflow_path).read_text(encoding="utf-8"))
-    body = _post_json(f"{host}/prompt",
-                      {"prompt": _inject_prompt(workflow, prompt)}, timeout=30)
+    workflow = _inject_prompt(
+        Path(workflow_path).read_text(encoding="utf-8"), prompt)
+    body = _post_json(f"{host}/prompt", {"prompt": workflow}, timeout=30)
     prompt_id = body["prompt_id"]
 
     deadline = time.monotonic() + COMFY_TIMEOUT_SECONDS
