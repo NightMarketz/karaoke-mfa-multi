@@ -81,7 +81,7 @@ existem no repositório.
 ### Estágio 11 — Background Illustration
 
 Ilustração de fundo gerada localmente a partir da letra (Ollama `llama3.2:3b`
-escreve o brief → ComfyUI `z_image_turbo` gera a imagem). Requer os dois
+escreve as tags → ComfyUI `anima-aesthetic` gera a imagem). Requer os dois
 serviços de pé; sem eles o estágio avisa, sai 0, e o vídeo sai com fundo
 chapado `#08090f`. A letra crua nunca vai para o gerador de imagem — só o
 brief escrito pelo LLM.
@@ -114,13 +114,39 @@ a frio não. O brief do Ollama são ~5 s desse total.
 > inglês. Duas melhorias óbvias e ainda não feitas: forçar o idioma do brief e
 > restringir a composição (ex.: exigir que o terço inferior fique escuro).
 
-#### O workflow que vem no repo, e de onde ele saiu
+#### Os dois workflows que vêm no repo
 
-`config/comfy_workflow.json` **já existe**, derivado do template canônico
-`image_z_image_turbo.json` que o próprio ComfyUI instala em
-`.venv/Lib/site-packages/comfyui_workflow_templates_json/templates/`. Não foi
-escrito de memória: o template é um subgraph em formato UI, e o grafo abaixo
-saiu de expandir `definitions.subgraphs` e ler os 18 links um a um.
+O default é o **Anima** (`config/comfy_workflow_anima.json`), modelo dedicado a
+anime. O **Z-Image Turbo** (`config/comfy_workflow.json`) fica como alternativa
+generalista; `KARAOKE_COMFY_WORKFLOW=comfy_workflow.json` troca sem tocar em
+código.
+
+Nenhum dos dois foi escrito de memória: ambos saíram dos templates canônicos que
+o próprio ComfyUI instala em
+`.venv/Lib/site-packages/comfyui_workflow_templates_json/templates/`, expandindo
+`definitions.subgraphs` e lendo os links um a um. O do Anima confere ainda com o
+workflow de produção do projeto irmão.
+
+**A fiação do Anima difere do Z-Image em todos os loaders** — é por isso que
+copiar um por cima do outro não funciona:
+
+| | Anima | Z-Image Turbo |
+|---|---|---|
+| `CLIPLoader` | `qwen_3_06b_base`, tipo `stable_diffusion` | `qwen_3_4b`, tipo `lumina2` |
+| VAE | `qwen_image_vae` | `ae` |
+| latente | `EmptyLatentImage` | `EmptySD3LatentImage` |
+| sampler | `er_sde`/`simple`, 32 passos, cfg 4.5 | `res_multistep`/`simple`, 8 passos, cfg 1 |
+| negativo | prompt de verdade | `ConditioningZeroOut` |
+
+**Como se prompta o Anima:** ele lê tags Danbooru em ordem de seção fixa, e o
+andaime do código põe qualidade e safety antes, composição depois. As tags
+`no humans` e `scenery` resolvem *estruturalmente* o problema de rosto no meio
+do quadro — é vocabulário que o modelo aprendeu, não um pedido em prosa que o
+conteúdo do brief pode atropelar. Peso precisa de multiplicador forte
+(`(dark:2)`, não `1.2`), e artista só surte efeito com `@` na frente.
+O card do Anima-Aesthetic recomenda **não** usar score tags no positivo.
+
+A tabela abaixo descreve o grafo do Z-Image:
 
 | nó | valor | por quê |
 |---|---|---|
