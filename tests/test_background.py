@@ -9,10 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
-from karaoke.background import (COMFY_ENV_VAR, COMFY_PORTS, IMAGE_RULES,
-                                _bust_cache, _diagnostico, _inject_prompt,
-                                build_brief, generate_image, image_prompt,
-                                resolve_comfy_host)
+from karaoke.background import (ANIMA_PREFIX, ANIMA_SUFFIX, COMFY_ENV_VAR,
+                                COMFY_PORTS, _bust_cache, _diagnostico,
+                                _inject_prompt, build_brief, generate_image,
+                                image_prompt, resolve_comfy_host)
 import karaoke.paths as kpaths
 
 # Host explicito em todo teste: `generate_image(host=...)` pula a resolucao,
@@ -40,13 +40,33 @@ class _FakeResp:
         return False
 
 
-def _ollama_resposta(brief):
-    return _FakeResp({"message": {"content": json.dumps({"brief": brief})}})
+def _ollama_resposta(*tags):
+    """Dubla a saida estruturada do Ollama: uma LISTA de tags, nao uma string.
+
+    O esquema virou array com minItems porque o modelo devolvia uma tag so e
+    a musica sumia do prompt. O duble segue o esquema real.
+    """
+    return _FakeResp({"message": {"content": json.dumps({"tags": list(tags)})}})
 
 
-def test_brief_extrai_o_campo_do_json_estruturado():
-    with patch("urllib.request.urlopen", return_value=_ollama_resposta("um mar escuro")):
-        assert build_brief("qualquer letra") == "um mar escuro"
+# 10 tags = MIN_TAGS, o piso que nao dispara retentativa.
+_TAGS_OK = ("cityscape", "night", "rain", "neon lights", "wet asphalt",
+            "reflection", "muted color", "wide shot", "horizon", "empty")
+
+
+def test_brief_junta_as_tags_em_lista_separada_por_virgula():
+    with patch("urllib.request.urlopen", return_value=_ollama_resposta(*_TAGS_OK)):
+        assert build_brief("qualquer letra") == ", ".join(_TAGS_OK)
+
+
+def test_brief_normaliza_caixa_e_underscore():
+    # Regra do Anima: minuscula, espaco no lugar de underscore.
+    sujas = ("Cityscape", "NIGHT_SKY", "neon_lights") + _TAGS_OK[3:]
+    with patch("urllib.request.urlopen", return_value=_ollama_resposta(*sujas)):
+        b = build_brief("qualquer letra")
+    assert "_" not in b, b
+    assert b == b.lower(), b
+    assert "night sky" in b
 
 
 def test_brief_vazio_e_erro():
@@ -55,13 +75,46 @@ def test_brief_vazio_e_erro():
             build_brief("qualquer letra")
 
 
-def test_prompt_de_imagem_carrega_as_regras_fixas():
-    # As regras nao podem depender do LLM obedecer — vao literais no prompt.
-    p = image_prompt("um mar escuro ao amanhecer")
-    assert "um mar escuro ao amanhecer" in p
-    assert IMAGE_RULES in p
-    for exigido in ("no text", "no letters", "dark", "16:9"):
-        assert exigido.lower() in p.lower(), f"regra ausente do prompt: {exigido}"
+def test_lista_curta_dispara_retentativa():
+    # Uma tag so significa que a musica nao chegou ao prompt: o andaime fixo
+    # geraria imagem bonita e generica, e nada denunciaria. Medido de verdade
+    # com o llama3.2:3b, que devolveu "cityscape" sozinha.
+    curta = _ollama_resposta("cityscape")
+    boa = _ollama_resposta(*_TAGS_OK)
+    with patch("urllib.request.urlopen", side_effect=[curta, boa]) as m:
+        b = build_brief("qualquer letra")
+    assert m.call_count == 2, "nao repetiu o pedido diante de lista curta"
+    assert b == ", ".join(_TAGS_OK)
+
+
+def test_prompt_de_imagem_monta_a_ordem_de_secao_do_anima():
+    # O Anima le tags Danbooru em ordem de secao fixa: qualidade e safety
+    # antes, conteudo no meio, composicao depois. O andaime nao pode depender
+    # do LLM obedecer — vai literal.
+    p = image_prompt("cityscape, night, rain, neon lights")
+    assert p.startswith(ANIMA_PREFIX), p
+    assert p.endswith(ANIMA_SUFFIX), p
+    assert "cityscape, night, rain, neon lights" in p
+
+    # "no humans" e "scenery" sao o conserto estrutural do rosto no centro:
+    # tag que o modelo aprendeu, em vez de pedido em prosa.
+    for exigido in ("no humans", "scenery", "empty foreground"):
+        assert exigido in p, f"tag ausente do andaime: {exigido}"
+
+    # Peso no Anima precisa de multiplicador forte (guia: (tag:2), nao (tag:1.1)).
+    assert "(dark:2)" in p, p
+
+    # O Anima-Aesthetic recomenda NAO usar score tags no positivo.
+    assert "score_" not in p, f"score tag vazou para o positivo: {p}"
+
+
+def test_conteudo_do_brief_fica_entre_o_prefixo_e_o_sufixo():
+    # Ordem importa para este modelo: conteudo depois de qualidade/safety e
+    # antes da composicao. Se o brief for parar fora dessa janela, a ordem
+    # de secao quebra sem nenhum erro visivel.
+    p = image_prompt("ocean, dusk")
+    meio = p[len(ANIMA_PREFIX):len(p) - len(ANIMA_SUFFIX)]
+    assert meio == "ocean, dusk", f"conteudo fora da janela: {meio!r}"
 
 
 def test_letra_crua_nao_vaza_para_o_no_do_comfyui(tmp_path):
@@ -75,7 +128,7 @@ def test_letra_crua_nao_vaza_para_o_no_do_comfyui(tmp_path):
     """
     letra = "Andei por caminhos tortos, vi o sol nascer no mar de Ipanema"
     with patch("urllib.request.urlopen",
-               return_value=_ollama_resposta("A dark ocean at dawn, muted teal")):
+               return_value=_ollama_resposta(*_TAGS_OK)):
         brief = build_brief(letra)
 
     wf_path = tmp_path / "wf.json"

@@ -29,18 +29,28 @@ COMFY_OUTPUT_ROOT = Path("C:/ComfyUI")
 COMFY_POLL_SECONDS = 2
 COMFY_TIMEOUT_SECONDS = 300
 
+# Lista, nao string. Medido: com {"brief": string} o llama3.2:3b devolveu a
+# palavra "cityscape" sozinha e a musica sumiu do prompt. Array com minItems
+# poe a exigencia na camada que valida — o modelo nao precisa contar direito,
+# a saida estruturada e que rejeita.
+MIN_TAGS = 10
 _BRIEF_SCHEMA = {
     "type": "object",
     "properties": {
-        "brief": {
-            "type": "string",
-            "description": (
-                "The visual brief, written in ENGLISH. Never in the language of "
-                "the lyrics."
-            ),
+        "tags": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "description": (
+                    "One lowercase Danbooru tag in ENGLISH, spaces not "
+                    "underscores. Never in the language of the lyrics."
+                ),
+            },
+            "minItems": MIN_TAGS,
+            "maxItems": 20,
         }
     },
-    "required": ["brief"],
+    "required": ["tags"],
 }
 
 # Medido com a letra da "Publi" (portugues): o modelo respondia em portugues e
@@ -52,17 +62,45 @@ _BRIEF_SCHEMA = {
 _BRIEF_SYSTEM = (
     "WRITE IN ENGLISH ONLY. The lyrics may be in any language; your answer is "
     "always English. Never answer in the language of the lyrics.\n\n"
-    "You write visual briefs for karaoke video background illustrations. Read "
-    "the lyrics for their mood and imagery, then write ONE English paragraph "
-    "(max 55 words) describing a background illustration.\n\n"
-    "The image is a BACKDROP behind song lyrics, not a poster:\n"
-    "- The lower third stays dark and empty — the lyrics are drawn over it.\n"
-    "- Nothing in the centre: no face, no figure, no focal object there.\n"
-    "- Favour wide scenery, atmosphere, texture and light over characters.\n"
-    "- Overall dark and low-contrast, so white text stays readable on top.\n"
-    "- No text, letters, words, numbers, logos or screens showing writing.\n"
-    "Describe only what should be visible. Never name something to exclude — "
-    "naming it makes the image model draw it."
+    "You turn song lyrics into a Danbooru tag list for an anime background "
+    "illustration. The image sits BEHIND karaoke lyrics, so it is scenery, "
+    "never a character shot.\n\n"
+    "Output ONLY a comma-separated list of lowercase tags. No sentences, no "
+    "explanation, no quality tags (those are added for you). 12 to 20 tags, "
+    "in this exact order:\n"
+    "  1. place       — cityscape, alley, ocean, highway, bedroom, forest...\n"
+    "  2. time        — night, dusk, sunset, dawn, midnight\n"
+    "  3. weather/air — rain, fog, mist, snow, smoke, clear sky\n"
+    "  4. lighting    — dim lighting, backlighting, neon lights, moonlight, "
+    "god rays, silhouette\n"
+    "  5. palette     — muted color, limited palette, monochrome, cold "
+    "colors, warm colors, desaturated\n"
+    "  6. detail      — 2 or 3 concrete objects that carry the song's mood\n"
+    "  7. composition — wide shot, horizon, empty, from below, scenery focus\n\n"
+    "Tag rules: lowercase, spaces not underscores, singular where booru uses "
+    "singular. Pick tags a Danbooru tagger would actually use — invented "
+    "phrases are ignored by the model.\n\n"
+    "Read the lyrics for mood and imagery, then choose tags that carry that "
+    "mood through place and light, not through people or writing."
+)
+
+# Andaime fixo do Anima. Fonte: card oficial do modelo (circlestone-labs/Anima)
+# e o guia de prompting — prefixo de qualidade primeiro, safety, depois conteudo.
+#
+# "no humans" e "scenery" sao o conserto estrutural do problema que a prosa nao
+# resolvia: em vez de PEDIR "nada no centro", usa-se a tag que o modelo aprendeu
+# de milhoes de imagens sem gente. Booru tem palavra exata para isso.
+#
+# Sem score_7 de proposito: o card do Anima-Aesthetic recomenda evitar score
+# tags (o Base e que os usa). O workflow de producao do usuario usa score_7 no
+# Aesthetic — divergencia conhecida, e o card do autor venceu aqui.
+#
+# (dark:2) e nao (dark:1.2): o guia avisa que peso no Anima precisa de
+# multiplicador bem mais forte que no SDXL para ter efeito.
+ANIMA_PREFIX = "masterpiece, best quality, safe, no humans, scenery, "
+ANIMA_SUFFIX = (
+    ", wide shot, empty foreground, (dark:2), (dim lighting:2), "
+    "muted color, low contrast, anime background, detailed background"
 )
 
 # Sinais baratos de que a resposta nao saiu em ingles. Nao e deteccao de idioma
@@ -130,7 +168,15 @@ def _pedir_brief(lyrics: str, model: str, host: str, reforco: str = "") -> str:
         },
         timeout=300,
     )
-    return json.loads(body["message"]["content"])["brief"].strip()
+    tags = json.loads(body["message"]["content"])["tags"]
+    # Normaliza aqui e nao no prompt: minuscula e sem underscore sao regra do
+    # Anima, e o modelo pequeno erra as duas de vez em quando.
+    limpas = []
+    for t in tags:
+        t = str(t).strip().lower().replace("_", " ")
+        if t and t not in limpas:
+            limpas.append(t)
+    return ", ".join(limpas)
 
 
 def build_brief(lyrics: str, model: str = BRIEF_MODEL, host: str = OLLAMA_HOST) -> str:
@@ -148,6 +194,17 @@ def build_brief(lyrics: str, model: str = BRIEF_MODEL, host: str = OLLAMA_HOST) 
     if brief and not _parece_ingles(brief):
         problemas.append("Your previous answer was NOT in English. "
                          "Answer again, in English only.")
+    # Cardinalidade explicita: lista curta demais significa que a musica nao
+    # chegou ao prompt — o andaime fixo geraria uma imagem bonita e generica,
+    # e nada denunciaria isso.
+    n_tags = len([t for t in brief.split(",") if t.strip()]) if brief else 0
+    if n_tags < MIN_TAGS:
+        problemas.append(
+            f"Your previous answer had only {n_tags} tags. Return at least "
+            f"{MIN_TAGS} tags covering place, time, weather, lighting, "
+            "palette, objects and composition."
+        )
+
     achados = _pede_escrita(brief) if brief else []
     if achados:
         problemas.append(
@@ -159,8 +216,11 @@ def build_brief(lyrics: str, model: str = BRIEF_MODEL, host: str = OLLAMA_HOST) 
     if problemas:
         segunda = _pedir_brief(lyrics, model, host,
                                reforco="\n\n" + " ".join(problemas))
-        # So aceita a segunda se ela for melhor: uma retentativa pior nao ajuda.
-        if segunda and not _pede_escrita(segunda) and _parece_ingles(segunda):
+        # So aceita a segunda se ela for melhor em TODOS os criterios: uma
+        # retentativa que conserta o idioma e perde as tags nao ajuda.
+        n2 = len([t for t in segunda.split(",") if t.strip()]) if segunda else 0
+        if (segunda and n2 >= max(n_tags, MIN_TAGS)
+                and not _pede_escrita(segunda) and _parece_ingles(segunda)):
             brief = segunda
 
     if not brief:
@@ -169,8 +229,14 @@ def build_brief(lyrics: str, model: str = BRIEF_MODEL, host: str = OLLAMA_HOST) 
 
 
 def image_prompt(brief: str) -> str:
-    """Brief + regras fixas. As regras vao literais, nao confiadas ao LLM."""
-    return f"{brief.strip()}, {IMAGE_RULES}"
+    """Monta o prompt final na ordem que o Anima espera.
+
+    O Anima le uma lista de tags Danbooru em ordem de secao fixa; o brief
+    entrega so as secoes de conteudo (lugar, hora, luz, paleta, objetos,
+    enquadramento) e este andaime poe qualidade/safety antes e composicao
+    depois. IMAGE_RULES fica para workflows que nao sejam Anima.
+    """
+    return f"{ANIMA_PREFIX}{brief.strip()}{ANIMA_SUFFIX}"
 
 
 def _inject_prompt(workflow_text: str, prompt: str) -> dict:

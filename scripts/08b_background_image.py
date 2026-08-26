@@ -11,6 +11,7 @@ Falha NUNCA derruba o job: sem PNG, o Step 09 usa fundo chapado.
 """
 import argparse
 import io
+import os
 import sys
 from pathlib import Path
 
@@ -22,7 +23,12 @@ from karaoke.background import build_brief, generate_image, image_prompt
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
-WORKFLOW = Path(__file__).resolve().parent.parent / "config" / "comfy_workflow.json"
+_CONFIG = Path(__file__).resolve().parent.parent / "config"
+# Anima e o default: modelo de anime dedicado, contra o Z-Image generalista.
+# KARAOKE_COMFY_WORKFLOW aponta para outro arquivo em config/ para comparar
+# sem editar codigo (ex.: comfy_workflow.json, que e o Z-Image Turbo).
+WORKFLOW = _CONFIG / os.environ.get("KARAOKE_COMFY_WORKFLOW",
+                                    "comfy_workflow_anima.json")
 
 
 def _progress(pct: int, msg: str = ""):
