@@ -131,10 +131,13 @@ saiu de expandir `definitions.subgraphs` e ler os 18 links um a um.
 | `KSampler` | 8 passos, cfg 1, `res_multistep`/`simple` | valores do template turbo |
 | `ConditioningZeroOut` | negativo | o template não usa prompt negativo |
 
-Verificado: os três arquivos de modelo existem em `C:/ComfyUI/models/`, todo
-link aponta para nó existente, o template parseia depois da substituição e o
-`_bust_cache` encontra o `filename_prefix`. **Não verificado:** nunca foi
-submetido a um ComfyUI de verdade — a primeira execução é a primeira validação.
+Verificado estaticamente: os três arquivos de modelo existem em
+`C:/ComfyUI/models/`, todo link aponta para nó existente, o template parseia
+depois da substituição e o `_bust_cache` encontra o `filename_prefix`.
+**E verificado em execução:** este grafo foi submetido ao ComfyUI 0.18.5 real e
+produziu imagem em 19 s com o modelo quente (ver medições acima). O tipo
+`lumina2` e o `EmptySD3LatentImage` — os dois valores que um chute erraria —
+foram confirmados na prática.
 
 Se você trocar por um workflow seu, o export cru da GUI **não** funciona.
 Depois de **Workflow → Export (API)**, edite o arquivo e troque dois valores
