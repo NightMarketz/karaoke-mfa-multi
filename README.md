@@ -164,6 +164,30 @@ recebe um sufixo único antes do envio. Sem isso o ComfyUI responde
 `execution_cached` com `outputs: {}` ao reenviar um grafo idêntico — a mesma
 música renderizada duas vezes perderia a ilustração, em silêncio e para sempre.
 
+#### Vídeo animado (WAN 2.2): medido e descartado
+
+Tentativa registrada para não ser repetida. O fundo animado em loop foi gerado
+com WAN 2.2 i2v pelo `WanFirstLastFrameToVideo`, alimentando a **mesma imagem**
+em `start_image` e `end_image` — a técnica que fecha o loop por construção.
+
+Medido nesta máquina, cena 1 da "Publi", 832×480, 81 frames, 4 passos com a
+LoRA LightX2V:
+
+| | |
+|---|---|
+| tempo | **23,5 min** (17,4 s por frame) |
+| emenda do loop | 2,39/255 contra 14,26/255 do controle — **fecha** |
+| movimento | rampa global de brilho, pico de 63/255 |
+
+**A técnica funciona; o custo e o resultado não compensam.** A LoRA de 4 passos
+quase não acelerou (a AMD alega ~27 min com 20 passos) porque o gargalo é o VAE
+sobre 81 frames, não a amostragem. E o movimento que saiu não é ambiente: o
+quarto clareia e escurece, o que faz a faixa da legenda "respirar" a cada 5 s.
+
+Para 6 cenas seriam ~2,35 h por música. O Ken Burns e o pulso nos onsets, que já
+existem no Estágio 12, dão movimento por **zero** segundo de geração e mexem só
+na posição, nunca no brilho.
+
 #### Porta do ComfyUI: descoberta, não fixa
 
 A porta não é confiável — o app já subiu em `8000`, `8001` e `8188` em sessões
