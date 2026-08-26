@@ -86,15 +86,33 @@ serviços de pé; sem eles o estágio avisa, sai 0, e o vídeo sai com fundo
 chapado `#08090f`. A letra crua nunca vai para o gerador de imagem — só o
 brief escrito pelo LLM.
 
-Tempo: `~Xs` — **ainda não medido nesta máquina**. A AMD divulga <30s para
-Z-Image Turbo nesta família de processador, mas isso é alegação de terceiro
-sobre outro hardware, não medição local. Substituir por um número real na
-primeira execução.
+Tempo **medido nesta máquina** (ROG Flow Z13, Radeon 8060S, ComfyUI 0.18.5 com
+ROCm reportando 99,7 GB de VRAM unificada), job real da música "Publi":
 
-> **Este caminho nunca foi executado contra um ComfyUI real.** Nenhum job
-> completou neste repositório até agora: a primeira execução é também a
-> primeira validação. Tudo que existe hoje são testes unitários com HTTP
-> dublado.
+| execução | tempo |
+|---|---|
+| 1ª (a frio, carregando o modelo de 6B) | **57 s** |
+| seguinte (modelo quente) | **19 s** |
+| com PNG já em cache | **0 s** |
+
+A AMD divulga <30 s para Z-Image Turbo nesta família; com o modelo quente bate,
+a frio não. O brief do Ollama são ~5 s desse total.
+
+> **Executado contra um ComfyUI real em 2026-08-25** (música "Publi"): gera,
+> salva, o cache pula e o nonce anti-cache funciona — a 2ª geração devolveu
+> imagem diferente, não `execution_cached` com saída vazia.
+>
+> **O elo fraco é o brief, não a imagem.** Em 2 gerações, 2 respeitaram "sem
+> texto na imagem" e **1 respeitou "centro escuro"** — medindo a luminância da
+> faixa onde a legenda cai: 36/255 na boa, 115/255 (pico 243) na ruim, onde
+> legenda branca briga com o fundo. As regras de `IMAGE_RULES` vão coladas no
+> fim do prompt, mas o conteúdo do brief vence: pedir "cidade iluminada por luz
+> branca" clareia o centro apesar da regra.
+>
+> Além disso o `llama3.2:3b` **responde em português** quando a letra é em
+> português, apesar do system prompt pedir inglês — e Z-Image é treinado em
+> inglês. Duas melhorias óbvias e ainda não feitas: forçar o idioma do brief e
+> restringir a composição (ex.: exigir que o terço inferior fique escuro).
 
 #### O workflow que vem no repo, e de onde ele saiu
 
