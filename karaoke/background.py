@@ -31,21 +31,76 @@ COMFY_TIMEOUT_SECONDS = 300
 
 _BRIEF_SCHEMA = {
     "type": "object",
-    "properties": {"brief": {"type": "string"}},
+    "properties": {
+        "brief": {
+            "type": "string",
+            "description": (
+                "The visual brief, written in ENGLISH. Never in the language of "
+                "the lyrics."
+            ),
+        }
+    },
     "required": ["brief"],
 }
 
+# Medido com a letra da "Publi" (portugues): o modelo respondia em portugues e
+# descrevia cenas de centro claro ("cidade iluminada por luz branca"), apesar
+# das regras. Duas licoes viraram texto aqui:
+#   1. a exigencia de idioma vem PRIMEIRO e sozinha — no fim da lista ela perde;
+#   2. restricao de composicao tem de estar no BRIEF, nao so no sufixo colado
+#      depois: o conteudo do brief vence o sufixo na atencao do modelo.
 _BRIEF_SYSTEM = (
-    "You write visual briefs for karaoke video background illustrations. "
-    "Read the lyrics and write ONE English paragraph (max 55 words) describing an "
-    "illustration: scene, palette, texture, mood. Hard rules: no text, letters or "
-    "words anywhere in the image; the centre of the composition stays dark and "
-    "uncluttered; 16:9."
+    "WRITE IN ENGLISH ONLY. The lyrics may be in any language; your answer is "
+    "always English. Never answer in the language of the lyrics.\n\n"
+    "You write visual briefs for karaoke video background illustrations. Read "
+    "the lyrics for their mood and imagery, then write ONE English paragraph "
+    "(max 55 words) describing a background illustration.\n\n"
+    "The image is a BACKDROP behind song lyrics, not a poster:\n"
+    "- The lower third stays dark and empty — the lyrics are drawn over it.\n"
+    "- Nothing in the centre: no face, no figure, no focal object there.\n"
+    "- Favour wide scenery, atmosphere, texture and light over characters.\n"
+    "- Overall dark and low-contrast, so white text stays readable on top.\n"
+    "- No text, letters, words, numbers, logos or screens showing writing.\n"
+    "Describe only what should be visible. Never name something to exclude — "
+    "naming it makes the image model draw it."
 )
 
+# Sinais baratos de que a resposta nao saiu em ingles. Nao e deteccao de idioma
+# de verdade: e uma cerca contra o caso medido (portugues/espanhol vazando),
+# e falso negativo aqui so custa uma imagem pior, nunca uma falha do job.
+_NAO_INGLES = ("ã", "õ", "ç", "á", "é", "í", "ó", "ú", "â", "ê", "ô", "ñ")
+
+
+def _parece_ingles(texto: str) -> bool:
+    return not any(c in texto.lower() for c in _NAO_INGLES)
+
+
+# Medido: o brief pediu "a giant screen displays a news headline" e o Z-Image
+# desenhou letras tortas no telhado e no telao. A regra "no text" no sufixo nao
+# salva quando o proprio brief PEDE escrita — o conteudo vence o sufixo. Entao
+# a cerca e no brief, antes da imagem existir.
+_PEDE_ESCRITA = (
+    "headline", "sign", "signage", "billboard", "banner", "poster",
+    "screen", "text", "letter", "word", "logo", "writing", "caption",
+    "label", "slogan", "marquee", "graffiti", "newspaper",
+)
+
+
+def _pede_escrita(texto: str) -> list:
+    """Termos no brief que puxam texto para dentro da imagem."""
+    baixo = texto.lower()
+    return [t for t in _PEDE_ESCRITA if t in baixo]
+
+# O workflow usa ConditioningZeroOut como negativo, entao TUDO vai no prompt
+# positivo. Por isso a composicao e descrita pelo que DEVE estar la ("empty
+# dark foreground") em vez do que nao deve: nomear o indesejado no positivo
+# tende a desenha-lo. As unicas negacoes que ficam sao as de texto, que foram
+# medidas funcionando (2 de 2 geracoes sem uma letra sequer).
 IMAGE_RULES = (
-    "illustration, painterly, no text, no letters, no words, no watermark, "
-    "dark uncluttered centre, cinematic lighting, 16:9"
+    "illustration, painterly, wide atmospheric background, "
+    "empty dark foreground, deep shadows across the lower third, "
+    "low contrast, muted palette, negative space in the centre, "
+    "no text, no letters, no words, no watermark, 16:9"
 )
 
 
@@ -59,14 +114,13 @@ def _post_json(url: str, payload: dict, timeout: int):
         return json.loads(r.read())
 
 
-def build_brief(lyrics: str, model: str = BRIEF_MODEL, host: str = OLLAMA_HOST) -> str:
-    """Letra -> um paragrafo de direcao visual. Levanta em caso de falha."""
+def _pedir_brief(lyrics: str, model: str, host: str, reforco: str = "") -> str:
     body = _post_json(
         f"{host}/api/chat",
         {
             "model": model,
             "messages": [
-                {"role": "system", "content": _BRIEF_SYSTEM},
+                {"role": "system", "content": _BRIEF_SYSTEM + reforco},
                 {"role": "user", "content": f"LYRICS:\n{lyrics}"},
             ],
             "stream": False,
@@ -76,7 +130,39 @@ def build_brief(lyrics: str, model: str = BRIEF_MODEL, host: str = OLLAMA_HOST) 
         },
         timeout=300,
     )
-    brief = json.loads(body["message"]["content"])["brief"].strip()
+    return json.loads(body["message"]["content"])["brief"].strip()
+
+
+def build_brief(lyrics: str, model: str = BRIEF_MODEL, host: str = OLLAMA_HOST) -> str:
+    """Letra -> um paragrafo de direcao visual, em ingles. Levanta se falhar.
+
+    O modelo pequeno responde no idioma da letra apesar da instrucao (medido
+    com a "Publi"). Pedir de novo custa ~5s e o Z-Image e treinado em ingles,
+    entao a segunda tentativa se paga. Se ainda assim vier em outro idioma,
+    seguimos com o que veio: brief torto gera imagem pior, brief nenhum nao
+    gera imagem alguma.
+    """
+    brief = _pedir_brief(lyrics, model, host)
+
+    problemas = []
+    if brief and not _parece_ingles(brief):
+        problemas.append("Your previous answer was NOT in English. "
+                         "Answer again, in English only.")
+    achados = _pede_escrita(brief) if brief else []
+    if achados:
+        problemas.append(
+            "Your previous answer asked for writing in the image "
+            f"({', '.join(achados)}). Describe a scene where nothing displays "
+            "writing of any kind. Replace those elements with light, texture "
+            "or landscape."
+        )
+    if problemas:
+        segunda = _pedir_brief(lyrics, model, host,
+                               reforco="\n\n" + " ".join(problemas))
+        # So aceita a segunda se ela for melhor: uma retentativa pior nao ajuda.
+        if segunda and not _pede_escrita(segunda) and _parece_ingles(segunda):
+            brief = segunda
+
     if not brief:
         raise ValueError("brief vazio devolvido pelo Ollama")
     return brief
