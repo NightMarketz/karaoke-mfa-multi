@@ -29,17 +29,27 @@ def _escape(p) -> str:
     return str(p).replace("\\", "/").replace(":", "\\:")
 
 
+# Fundo em video ja tem linha de tempo propria; "-loop 1" nele congelaria o
+# primeiro frame e as cenas nunca virariam — sem erro nenhum do ffmpeg. Fundo
+# em imagem PRECISA do loop, senao vira um frame so. Ha teste para as duas.
+_EXT_VIDEO = (".mp4", ".mov", ".mkv", ".webm")
+
+
 def build_render_cmd(bg_png, audio_inputs, ass_path: Path, out_mp4: Path,
                      duration: float, sendcmd_path) -> list:
     """
-    bg_png:       Path do PNG de fundo, ou None para o fundo chapado.
+    bg_png:       Path do fundo — PNG (entra em loop) ou video de cenas com
+                  crossfade (entra como esta), ou None para o fundo chapado.
     audio_inputs: [instrumental, vocais] — mixados com amix.
     sendcmd_path: Path do bounce.txt, ou None para nenhum movimento.
     """
     cmd = ["ffmpeg", "-y", "-hide_banner"]
 
     if bg_png is not None:
-        cmd += ["-loop", "1", "-i", str(bg_png)]
+        if Path(bg_png).suffix.lower() in _EXT_VIDEO:
+            cmd += ["-i", str(bg_png)]
+        else:
+            cmd += ["-loop", "1", "-i", str(bg_png)]
     else:
         cmd += ["-f", "lavfi", "-i", FLAT_BG]
 

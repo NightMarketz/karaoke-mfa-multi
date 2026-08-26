@@ -82,3 +82,18 @@ def test_caminho_do_windows_tem_dois_pontos_escapado():
     fc = _fc(build_render_cmd(BG, [INST, VOX], win_ass, OUT, 210.0, win_sc))
     assert "subtitles='C\\:/jobs/k.ass'" in fc, fc
     assert "sendcmd=f='C\\:/jobs/bounce.txt'" in fc, fc
+
+
+def test_fundo_em_video_nao_leva_loop():
+    # "-loop 1" num video congela o primeiro frame: as cenas nunca virariam, e
+    # o ffmpeg nao reclamaria de nada. Falha silenciosa, por isso a cerca.
+    cmd = build_render_cmd(Path("/tmp/fundo.mp4"), [INST, VOX], ASS, OUT, 176.1, SC)
+    assert "-loop" not in cmd, cmd
+    # str(Path(...)) usa a separacao do SO; comparar com barra crua falharia
+    assert str(Path("/tmp/fundo.mp4")) in cmd, cmd
+
+
+def test_fundo_em_imagem_continua_levando_loop():
+    # E a outra ponta: imagem SEM loop vira um frame so.
+    cmd = build_render_cmd(BG, [INST, VOX], ASS, OUT, 176.1, SC)
+    assert "-loop" in cmd and cmd[cmd.index("-loop") + 1] == "1"
