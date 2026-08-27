@@ -40,3 +40,54 @@ class PaletteCoverageTests(unittest.TestCase):
             {"hue": 0.0, "saturation": 0.0, "intensity": 0.0},
             backdrop_for_color("nao-existe"),
         )
+
+
+from scripts.karaoke_styles.backdrop import emit_backdrop_commands
+
+
+def _line(color, start):
+    return {"color": color, "start": start, "text": "x", "end": start + 1.0}
+
+
+class EmitCommandTests(unittest.TestCase):
+    def test_emits_one_block_per_colour_change_plus_initial(self):
+        lines = [_line("soft", 0.5), _line("soft", 2.0),
+                 _line("intense", 4.0), _line("intense", 6.0),
+                 _line("warm", 8.0)]
+        out = emit_backdrop_commands(lines)
+        blocks = [l for l in out.splitlines() if l.strip()]
+        # 3 cores observadas (soft inicial, ->intense, ->warm) x 3 params
+        self.assertEqual(9, len(blocks), f"esperado 3 blocos x 3 params, veio:\n{out}")
+
+    def test_timestamps_are_monotonic_and_start_at_zero(self):
+        lines = [_line("soft", 5.0), _line("warm", 9.0)]
+        times = [float(l.split()[0])
+                 for l in emit_backdrop_commands(lines).splitlines() if l.strip()]
+        self.assertEqual(6, len(times), "denominador: 2 blocos x 3 params")
+        self.assertEqual(0.0, times[0], "primeiro bloco tem de ancorar em t=0")
+        self.assertEqual(sorted(times), times)
+
+    def test_every_command_targets_only_the_whitelisted_filter_and_params(self):
+        lines = [_line(c, i * 2.0) for i, c in enumerate(BACKDROP_PALETTE)]
+        emitted = [l for l in emit_backdrop_commands(lines).splitlines() if l.strip()]
+        self.assertEqual(15, len(emitted), "denominador: 5 cores x 3 params")
+        for line in emitted:
+            _t, target, param, _value = line.rstrip(";").split()
+            self.assertEqual("huesaturation", target)
+            self.assertIn(param, {"hue", "saturation", "intensity"})
+
+    def test_hostile_section_label_cannot_escape_into_the_filtergraph(self):
+        # Rotulo hostil vindo do caminho Whisper/LLM. So indexa a paleta.
+        lines = [_line("chorus; drawtext=text=pwn", 0.0)]
+        out = emit_backdrop_commands(lines)
+        self.assertNotIn("drawtext", out)
+        self.assertNotIn("pwn", out)
+        emitted = [l for l in out.splitlines() if l.strip()]
+        self.assertEqual(3, len(emitted), "cai no neutro, ainda 3 params")
+
+    def test_empty_lines_produce_empty_output(self):
+        self.assertEqual("", emit_backdrop_commands([]))
+
+    def test_out_of_range_timestamp_is_rejected(self):
+        with self.assertRaises(ValueError):
+            emit_backdrop_commands([_line("soft", 0.0), _line("warm", -5.0)])
