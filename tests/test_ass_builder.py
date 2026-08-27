@@ -81,7 +81,10 @@ class TestToKTags:
         k_text, _, _ = to_k_tags(["tiny"], timings)
         # Extract the number after {\\k
         import re
-        m = re.search(r"\{\\k(\d+)\}", k_text)
+        # \kf (fill progressivo), nao \k (salto seco): a escolha esta
+        # documentada em ass_builder.to_k_tags desde o commit inicial. Este
+        # regex e o golden ficaram no \k antigo e por isso nunca casaram.
+        m = re.search(r"\{\\kf(\d+)\}", k_text)
         assert m is not None
         cs_val = int(m.group(1))
         assert cs_val >= 3
