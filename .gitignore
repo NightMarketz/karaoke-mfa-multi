@@ -32,7 +32,8 @@ work/
 input/
 uploads/
 examples/
-test_*
+# ancorado na raiz: pega scratch de teste solto (test_song.wav), nao a suite em tests/
+/test_*
 *.mp4
 *.wav
 *.mid
