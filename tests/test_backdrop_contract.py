@@ -42,7 +42,7 @@ class PaletteCoverageTests(unittest.TestCase):
         )
 
 
-from scripts.karaoke_styles.backdrop import emit_backdrop_commands
+from scripts.karaoke_styles.backdrop import emit_backdrop_commands, _command
 
 
 def _line(color, start):
@@ -91,3 +91,19 @@ class EmitCommandTests(unittest.TestCase):
     def test_out_of_range_timestamp_is_rejected(self):
         with self.assertRaises(ValueError):
             emit_backdrop_commands([_line("soft", 0.0), _line("warm", -5.0)])
+
+    def test_nan_timestamp_is_rejected(self):
+        with self.assertRaises(ValueError):
+            emit_backdrop_commands([_line("soft", 0.0), _line("warm", float("nan"))])
+
+    def test_infinity_timestamp_is_rejected(self):
+        with self.assertRaises(ValueError):
+            emit_backdrop_commands([_line("soft", 0.0), _line("warm", float("inf"))])
+
+    def test_param_outside_whitelist_raises_valueerror(self):
+        with self.assertRaises(ValueError):
+            _command(0.0, "evil_param", 0.5, 0.0)
+
+    def test_value_outside_range_raises_valueerror(self):
+        with self.assertRaises(ValueError):
+            _command(0.0, "hue", 999.0, 0.0)

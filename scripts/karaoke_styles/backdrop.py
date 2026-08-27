@@ -11,6 +11,8 @@ gradiente de cores fixas — `gradients` não aceita comando em c0-c7.
 
 from __future__ import annotations
 
+import math
+
 NEUTRAL: dict[str, float] = {"hue": 0.0, "saturation": 0.0, "intensity": 0.0}
 
 BACKDROP_PALETTE: dict[str, dict[str, float]] = {
@@ -42,6 +44,8 @@ def _command(t: float, param: str, value: float, last_t: float) -> str:
     low, high = _ALLOWED[param]
     if not isinstance(value, (int, float)) or not (low <= float(value) <= high):
         raise ValueError(f"{param}={value!r} fora da faixa [{low}, {high}]")
+    if not math.isfinite(t):
+        raise ValueError(f"timestamp nao-finito: {t}")
     if t < 0.0 or t < last_t:
         raise ValueError(f"timestamp nao-monotonico: {t} apos {last_t}")
     return f"{t:.3f} {_FILTER} {param} {float(value):.4f};"
