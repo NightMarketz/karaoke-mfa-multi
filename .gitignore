@@ -26,6 +26,9 @@ wheels/
 venv/
 ENV/
 
+# Tooling caches
+.impeccable/
+
 # Project Specific
 tmp/
 work/
