@@ -408,6 +408,7 @@ SECTION_CODED_STYLES: dict[str, KaraokeStyle] = {
 }
 
 from scripts.karaoke_styles.library import PRESETS
+from scripts.karaoke_styles.backdrop import emit_backdrop_commands
 
 
 # ---------------------------------------------------------------------------
@@ -888,6 +889,25 @@ def _stage06_missing_job_event(
 # Main
 # ---------------------------------------------------------------------------
 
+def _write_backdrop(job_dir: Path, lines: list[dict]) -> Path | None:
+    """
+    Escreve backdrop.cmd a partir das cores de analysis.json.
+
+    Cosmetico: qualquer falha devolve None e o s07 cai para canvas preto.
+    Nunca levanta — um fundo ruim nao pode impedir um export.
+    """
+    try:
+        content = emit_backdrop_commands(lines)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        logger.warning("backdrop.cmd nao gerado: %s", exc)
+        return None
+    if not content:
+        return None
+    path = job_dir / "backdrop.cmd"
+    path.write_text(content + "\n", encoding="utf-8")  # sem BOM
+    return path
+
+
 def main() -> int:
     app_config = load_app_config()
     parser = argparse.ArgumentParser(
@@ -1155,6 +1175,7 @@ def main() -> int:
     output_path.write_bytes(ass_content.encode("utf-8-sig"))
     logger.info("Written: %s (%.1f KB)", output_path.name,
                 output_path.stat().st_size / 1e3)
+    backdrop_path = _write_backdrop(job_dir, lines)
     manifest_path = write_manifest(
         job_dir / "output.ass.manifest.json",
         {
@@ -1171,7 +1192,8 @@ def main() -> int:
             "outputs": {
                 "output.ass": {
                     "path": "output.ass",
-                }
+                },
+                **({"backdrop.cmd": {"path": "backdrop.cmd"}} if backdrop_path else {}),
             },
             "metrics": {
                 "analysis_line_count": len(lines),
@@ -1183,7 +1205,10 @@ def main() -> int:
             "timing_diagnostics": timing_diagnostics,
             "timing_audio_layers": timing_audio_layers,
         },
-        output_paths={"output.ass": output_path},
+        output_paths={
+            "output.ass": output_path,
+            **({"backdrop.cmd": backdrop_path} if backdrop_path else {}),
+        },
     )
     artifact_details = record_artifact(job_dir, "generating", output_path)
     _stage06_event(
@@ -1193,6 +1218,15 @@ def main() -> int:
         size_bytes=artifact_details["size_bytes"],
         manifest_path=str(manifest_path),
         manifest_sha256=file_sha256(manifest_path),
+    )
+    _stage06_event(
+        job_dir,
+        "stage06.backdrop_written" if backdrop_path else "stage06.backdrop_skipped",
+        path=str(backdrop_path) if backdrop_path else "",
+        command_count=(
+            len(backdrop_path.read_text(encoding="utf-8").strip().splitlines())
+            if backdrop_path else 0
+        ),
     )
 
     _update_status(job_dir, "generating", 100)
