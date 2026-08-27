@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+from conftest import stdout_protegido
+
 from karaoke.background import (ANIMA_PREFIX, ANIMA_SUFFIX, COMFY_ENV_VAR,
                                 COMFY_PORTS, _bust_cache, _diagnostico,
                                 _inject_prompt, build_brief, generate_image,
@@ -215,7 +217,11 @@ def _load_cli_module():
     spec = importlib.util.spec_from_file_location("background_image_cli", str(spec_path))
     mod = importlib.util.module_from_spec(spec)
     sys.modules["background_image_cli"] = mod
-    spec.loader.exec_module(mod)
+    # O 08b sequestra sys.stdout na importacao, como 18 dos 26 scripts. Sem a
+    # guarda o wrapper fecha o temporario da captura do pytest ao ser coletado
+    # e envenena o resto da suite. Ver conftest.stdout_protegido.
+    with stdout_protegido():
+        spec.loader.exec_module(mod)
     return mod
 
 
