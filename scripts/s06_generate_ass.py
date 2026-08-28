@@ -896,17 +896,18 @@ def _write_backdrop(job_dir: Path, lines: list[dict]) -> Path | None:
     Cosmetico: qualquer falha devolve None e o s07 cai para canvas preto.
     Nunca levanta — um fundo ruim nao pode impedir um export.
     """
-    try:
-        content = emit_backdrop_commands(lines)
-    except (ValueError, TypeError, KeyError, AttributeError) as exc:
-        logger.warning("backdrop.cmd nao gerado: %s", exc)
-        return None
-    if not content:
-        return None
     path = job_dir / "backdrop.cmd"
     tmp_path = path.with_name(path.name + ".tmp")
-    tmp_path.write_text(content + "\n", encoding="utf-8")  # sem BOM
-    tmp_path.replace(path)  # atomic: nunca deixa um arquivo parcial em backdrop.cmd
+    try:
+        content = emit_backdrop_commands(lines)
+        if not content:
+            return None
+        tmp_path.write_text(content + "\n", encoding="utf-8")  # sem BOM
+        tmp_path.replace(path)  # atomic: nunca deixa um arquivo parcial em backdrop.cmd
+    except (ValueError, TypeError, KeyError, AttributeError, OSError) as exc:
+        logger.warning("backdrop.cmd nao gerado: %s", exc)
+        tmp_path.unlink(missing_ok=True)
+        return None
     return path
 
 
