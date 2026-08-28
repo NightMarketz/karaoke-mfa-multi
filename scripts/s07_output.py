@@ -84,14 +84,36 @@ def _build_quality_args(vcodec: str, quality: int) -> list[str]:
         return ["-crf", q]
 
 
+def _ffmpeg_path(path: Path) -> str:
+    """Caminho seguro para dentro de um filtergraph (Windows: / e : escapado)."""
+    return str(path).replace("\\", "/").replace(":", "\\:")
+
+
+def _build_backdrop_source(
+    resolution: str, framerate: str, duration: float,
+    c0: str, c1: str, gtype: str, speed: float,
+) -> str:
+    """Fonte lavfi do fundo procedural. c0/c1 fixos — nao sao comandaveis."""
+    return (
+        f"gradients=s={resolution}:r={framerate}:d={duration:.3f}"
+        f":c0={c0}:c1={c1}:type={gtype}:speed={speed}"
+    )
+
+
+def _build_backdrop_filter(cmd_path: Path | None) -> str:
+    """sendcmd + huesaturation, ou vazio quando nao ha backdrop.cmd."""
+    if cmd_path is None:
+        return ""
+    return f"sendcmd=f='{_ffmpeg_path(cmd_path)}',huesaturation"
+
+
 def _build_subtitle_filter(ass_path: Path) -> str:
     """
     Build the ass= filter string for filter_complex.
     On Windows, the path must be escaped for the filtergraph (forward slashes + escaped colons)
     and quoted to prevent being misinterpreted as filter options.
     """
-    safe_path = str(ass_path).replace("\\", "/").replace(":", "\\:")
-    return f"ass=filename='{safe_path}'"
+    return f"ass=filename='{_ffmpeg_path(ass_path)}'"
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +432,10 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--no-backdrop", action="store_true",
+        help="Force the black canvas, ignoring backdrop.cmd.",
+    )
+    parser.add_argument(
         "--timeout", type=int, default=app_config.output_ffmpeg_timeout_s,
         help="ffmpeg timeout in seconds.",
     )
@@ -621,17 +647,53 @@ def main() -> int:
     except Exception:
         canvas_duration = 3600.0  # safe fallback
 
-    cmd += [
-        "-f", "lavfi",
-        "-i", f"color=c=black:s={args.resolution}:r={args.framerate}:d={canvas_duration:.3f}",
-    ]
+    backdrop_cmd: Path | None = None
+    backdrop_reason = ""
+    if not app_config.generate_backdrop:
+        backdrop_reason = "disabled_by_config"
+    elif args.no_backdrop:
+        backdrop_reason = "disabled_by_flag"
+    else:
+        candidate = job_dir / "backdrop.cmd"
+        if not candidate.exists():
+            backdrop_reason = "missing"
+        elif candidate.stat().st_size == 0:
+            backdrop_reason = "empty"
+        else:
+            backdrop_cmd = candidate
+
+    if backdrop_cmd is None:
+        # Cosmetico: registra o motivo e segue para o canvas preto.
+        write_event(
+            job_dir,
+            "stage07.backdrop_skipped",
+            STAGE,
+            message=f"Procedural backdrop skipped ({backdrop_reason})",
+            details={"reason": backdrop_reason},
+        )
+
+    if backdrop_cmd is not None:
+        canvas_source = _build_backdrop_source(
+            args.resolution, args.framerate, canvas_duration,
+            app_config.generate_backdrop_c0, app_config.generate_backdrop_c1,
+            app_config.generate_backdrop_type, app_config.generate_backdrop_speed,
+        )
+        background = "gradients"
+    else:
+        canvas_source = (
+            f"color=c=black:s={args.resolution}:r={args.framerate}:d={canvas_duration:.3f}"
+        )
+        background = "black"
+
+    cmd += ["-f", "lavfi", "-i", canvas_source]
     write_event(
         job_dir,
         "stage07.canvas_selected",
         STAGE,
         message="Synthetic background canvas selected",
         details={
-            "background": "black",
+            "background": background,
+            "backdrop_sha256": file_sha256(backdrop_cmd) if backdrop_cmd else "",
             "resolution": args.resolution,
             "framerate": args.framerate,
             "duration_seconds": canvas_duration,
@@ -642,9 +704,12 @@ def main() -> int:
     )
 
     # 2. Filters
-    # Video Filter: Subtitles
-    vf_filter = _build_subtitle_filter(ass_path) if ass_path else "null"
-    
+    # Video Filter: Backdrop sendcmd (if any) + Subtitles
+    backdrop_filter = _build_backdrop_filter(backdrop_cmd)
+    subtitle_filter = _build_subtitle_filter(ass_path) if ass_path else ""
+    vf_chain = [f for f in (backdrop_filter, subtitle_filter) if f]
+    vf_filter = ",".join(vf_chain) if vf_chain else "null"
+
     # Audio Filter: Mixing
     if has_vocals:
         # Mix instrumental (0:a) and vocals (1:a)
