@@ -14,6 +14,9 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from scripts.karaoke_styles.backdrop import emit_backdrop_commands
+from scripts.s07_output import _ffmpeg_path
+
 if shutil.which("ffmpeg") is None:
     pytest.skip("ffmpeg nao encontrado no PATH", allow_module_level=True)
 
@@ -51,11 +54,30 @@ def _render(dst: Path, vsrc: str, duration: float = 2.0) -> Path:
 
 class PhotosensitivityFenceTests(unittest.TestCase):
     def test_procedural_backdrop_stays_under_the_flash_threshold(self):
+        # Cerca contra a cadeia REAL que o s07 monta: gradients -> sendcmd(f=
+        # backdrop.cmd) -> huesaturation. Um teste que so' renderiza
+        # `gradients` sozinho (sem sendcmd/huesaturation/ass) nao mede o
+        # risco de flash — ele vive inteiro nas trocas de secao do sendcmd.
         with TemporaryDirectory() as tmp:
-            mp4 = _render(
-                Path(tmp) / "backdrop.mp4",
-                "gradients=s=320x180:r=30:c0=0x0a0a18:c1=0x2a1060:type=radial:speed=0.02",
+            lines = [
+                {"color": "soft", "start": 0.0},
+                {"color": "warm", "start": 0.5},
+                {"color": "intense", "start": 1.0},
+                {"color": "cool", "start": 1.5},
+            ]
+            distinct_colours = {line["color"] for line in lines}
+            self.assertGreaterEqual(
+                len(distinct_colours), 3,
+                "fixture tem de ter >=3 trocas de cor para exercitar o risco real",
             )
+            cmd_path = Path(tmp) / "backdrop.cmd"
+            cmd_path.write_text(emit_backdrop_commands(lines) + "\n", encoding="utf-8")
+
+            vsrc = (
+                "gradients=s=320x180:r=30:c0=0x0a0a18:c1=0x2a1060:type=radial:speed=0.02,"
+                f"sendcmd=f='{_ffmpeg_path(cmd_path)}',huesaturation"
+            )
+            mp4 = _render(Path(tmp) / "backdrop.mp4", vsrc)
             band = _luma_series(mp4, crop="crop=320:34:0:146")  # faixa da letra
             self.assertGreater(len(band), 0, "serie vazia nao e' aprovacao")
             self.assertEqual(60, len(band), "denominador: 2s x 30fps")
