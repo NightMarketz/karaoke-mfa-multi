@@ -16,12 +16,14 @@ class WriteBackdropTests(unittest.TestCase):
     def test_writes_file_without_bom(self):
         with TemporaryDirectory() as tmp:
             job = Path(tmp)
-            path = _write_backdrop(job, [{"color": "soft", "start": 0.0},
-                                         {"color": "intense", "start": 4.0}])
+            path, count = _write_backdrop(job, [{"color": "soft", "start": 0.0},
+                                                 {"color": "intense", "start": 4.0}])
             self.assertEqual(job / "backdrop.cmd", path)
             raw = path.read_bytes()
             self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), "sendcmd nao tolera BOM")
-            self.assertEqual(6, len(raw.decode("utf-8").strip().splitlines()))
+            lines = raw.decode("utf-8").strip().splitlines()
+            self.assertEqual(6, len(lines))
+            self.assertEqual(len(lines), count, "contagem devolvida tem de bater com o arquivo")
 
     def test_returns_none_and_writes_nothing_when_there_are_no_lines(self):
         with TemporaryDirectory() as tmp:
@@ -33,6 +35,26 @@ class WriteBackdropTests(unittest.TestCase):
         # Backdrop e' cosmetico: nunca derruba o s06.
         with TemporaryDirectory() as tmp:
             job = Path(tmp)
+            bad = [{"color": "soft", "start": 0.0}, {"color": "warm", "start": -5.0}]
+            self.assertIsNone(_write_backdrop(job, bad))
+            self.assertFalse((job / "backdrop.cmd").exists())
+
+    def test_empty_content_removes_a_stale_backdrop_cmd(self):
+        # Re-run sem linhas coloridas: o fundo da corrida anterior nao
+        # corresponde mais a analise atual — o s07 nao pode encontrar um
+        # backdrop.cmd velho e renderizar com timings obsoletos.
+        with TemporaryDirectory() as tmp:
+            job = Path(tmp)
+            (job / "backdrop.cmd").write_text("OLD", encoding="utf-8")
+            self.assertIsNone(_write_backdrop(job, []))
+            self.assertFalse((job / "backdrop.cmd").exists())
+
+    def test_invalid_content_removes_a_stale_backdrop_cmd(self):
+        # Mesmo caso, mas a falha e' de geracao (timestamp invalido), nao
+        # de ausencia de linhas.
+        with TemporaryDirectory() as tmp:
+            job = Path(tmp)
+            (job / "backdrop.cmd").write_text("OLD", encoding="utf-8")
             bad = [{"color": "soft", "start": 0.0}, {"color": "warm", "start": -5.0}]
             self.assertIsNone(_write_backdrop(job, bad))
             self.assertFalse((job / "backdrop.cmd").exists())
