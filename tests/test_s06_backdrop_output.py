@@ -35,3 +35,12 @@ class WriteBackdropTests(unittest.TestCase):
             bad = [{"color": "soft", "start": 0.0}, {"color": "warm", "start": -5.0}]
             self.assertIsNone(_write_backdrop(job, bad))
             self.assertFalse((job / "backdrop.cmd").exists())
+
+    def test_write_is_atomic_no_tmp_file_left_behind(self):
+        # Uma escrita truncada (crash a meio da escrita) nao pode deixar um
+        # backdrop.cmd parcial que o s07 aceitaria e o ffmpeg rejeitaria.
+        with TemporaryDirectory() as tmp:
+            job = Path(tmp)
+            _write_backdrop(job, [{"color": "soft", "start": 0.0},
+                                   {"color": "intense", "start": 4.0}])
+            self.assertEqual(["backdrop.cmd"], sorted(p.name for p in job.iterdir()))

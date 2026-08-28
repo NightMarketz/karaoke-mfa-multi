@@ -904,7 +904,9 @@ def _write_backdrop(job_dir: Path, lines: list[dict]) -> Path | None:
     if not content:
         return None
     path = job_dir / "backdrop.cmd"
-    path.write_text(content + "\n", encoding="utf-8")  # sem BOM
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(content + "\n", encoding="utf-8")  # sem BOM
+    tmp_path.replace(path)  # atomic: nunca deixa um arquivo parcial em backdrop.cmd
     return path
 
 

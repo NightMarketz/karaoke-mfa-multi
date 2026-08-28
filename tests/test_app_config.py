@@ -278,6 +278,60 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(config.ollama_temperature, 0.4)
         self.assertEqual(config.ollama_timeout_s, 701)
 
+    def test_load_app_config_backdrop_toml_false_is_honoured(self):
+        # This is the case that would silently break if _env_or_value / _bool_value
+        # were reordered: False is a legitimate override, not an absent value.
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "pipeline.toml"
+            config_path.write_text(
+                "\n".join(["[generate]", "backdrop = false"]),
+                encoding="utf-8",
+            )
+
+            config = load_app_config(config_path)
+
+        self.assertIs(config.generate_backdrop, False)
+
+    def test_load_app_config_backdrop_defaults_to_true_when_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "pipeline.toml"
+            config_path.write_text(
+                "\n".join(["[generate]", 'style_preset = "single-style-kf"']),
+                encoding="utf-8",
+            )
+
+            config = load_app_config(config_path)
+
+        self.assertIs(config.generate_backdrop, True)
+
+    def test_load_app_config_backdrop_env_overrides_toml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "pipeline.toml"
+            config_path.write_text(
+                "\n".join(["[generate]", "backdrop = true"]),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ, {"KARAOKE_GENERATE_BACKDROP": "false"}, clear=False
+            ):
+                config = load_app_config(config_path)
+
+        self.assertIs(config.generate_backdrop, False)
+
+    def test_load_app_config_backdrop_speed_from_toml_is_a_float(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "pipeline.toml"
+            config_path.write_text(
+                "\n".join(["[generate]", "backdrop_speed = 0.05"]),
+                encoding="utf-8",
+            )
+
+            config = load_app_config(config_path)
+
+        self.assertEqual(config.generate_backdrop_speed, 0.05)
+        self.assertIsInstance(config.generate_backdrop_speed, float)
+
 
 if __name__ == "__main__":
     unittest.main()
