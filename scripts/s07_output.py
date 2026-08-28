@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import sys
 import time
@@ -105,6 +106,45 @@ def _build_backdrop_filter(cmd_path: Path | None) -> str:
     if cmd_path is None:
         return ""
     return f"sendcmd=f='{_ffmpeg_path(cmd_path)}',huesaturation"
+
+
+# Fronteira de confianca: backdrop e' cosmetico e nunca pode abortar o render.
+# Qualquer valor fora daqui cai no fallback preto em vez de chegar ao ffmpeg.
+_VALID_BACKDROP_TYPES = frozenset({"linear", "radial", "circular", "spiral", "square"})
+_BACKDROP_COLOR_RE = re.compile(r"^0x[0-9a-fA-F]{6}$")
+_BACKDROP_CMD_LINE_RE = re.compile(
+    r"^\d+(\.\d+)?\s+huesaturation\s+(hue|saturation|intensity)\s+-?\d"
+)
+
+
+def _invalid_backdrop_config_reason(
+    gtype: str, speed: float, c0: str, c1: str,
+) -> str | None:
+    """None quando type/speed/c0/c1 sao seguros para o filtergraph; senao, o motivo."""
+    if gtype not in _VALID_BACKDROP_TYPES:
+        return "invalid_type"
+    if not (0 < speed <= 1):
+        return "invalid_speed"
+    if not _BACKDROP_COLOR_RE.match(c0):
+        return "invalid_c0"
+    if not _BACKDROP_COLOR_RE.match(c1):
+        return "invalid_c1"
+    return None
+
+
+def _invalid_backdrop_cmd_reason(path: Path) -> str | None:
+    """None quando a 1a linha nao-vazia de backdrop.cmd bate o formato do
+    sendcmd esperado; senao, o motivo. So olha a 1a linha — guarda, nao parser."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "unreadable"
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        return None if _BACKDROP_CMD_LINE_RE.match(stripped) else "invalid_cmd_format"
+    return "empty"
 
 
 def _build_subtitle_filter(ass_path: Path) -> str:
@@ -294,81 +334,6 @@ def _validate_mp4(path: Path) -> list[str]:
         errors.append(f"ffprobe output unparseable: {e}")
 
     return errors
-
-
-# ---------------------------------------------------------------------------
-# ffmpeg command builder
-# ---------------------------------------------------------------------------
-
-def _build_ffmpeg_cmd(
-    instrumental_path: Path,
-    ass_path: Path | None,
-    output_path: Path,
-    vcodec: str,
-    quality: int,
-    resolution: str,
-    framerate: str,
-    audio_codec: str,
-    audio_bitrate: str,
-) -> list[str]:
-    """
-    Build the full ffmpeg command list.
-
-    Strategy:
-      - Input 0: instrumental.wav  (audio source)
-      - Input 1: lavfi color=black (synthetic video canvas)
-      - If ASS present: apply ass= filter to canvas
-      - -shortest: stop when audio ends (canvas is infinite)
-    """
-    quality_args = _build_quality_args(vcodec, quality)
-
-    vf_filter = (
-        _build_subtitle_filter(ass_path)
-        if ass_path is not None
-        else "null"
-    )
-
-    # Canvas duration = audio duration + 2s buffer.
-    # Without the buffer, -shortest cuts the video exactly at audio end,
-    # which truncates the fade-out of the last subtitle line.
-    # ffprobe reads audio duration; falls back to 3600s (1 hour) if unreadable.
-    try:
-        import subprocess as _sp, json as _json
-        _probe = _sp.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_streams", str(instrumental_path)],
-            capture_output=True, text=True, timeout=15,
-        )
-        _data = _json.loads(_probe.stdout)
-        _audio_dur = float(next(
-            s["duration"] for s in _data.get("streams", [])
-            if s.get("codec_type") == "audio"
-        ))
-        canvas_duration = _audio_dur + 2.0
-    except Exception:
-        canvas_duration = 3600.0  # safe fallback
-
-    cmd = [
-        "ffmpeg", "-y",
-        # Audio input
-        "-i", str(instrumental_path),
-        # Synthetic video canvas — fixed duration avoids -shortest cut
-        "-f", "lavfi",
-        "-i", f"color=c=black:s={resolution}:r={framerate}:d={canvas_duration:.3f}",
-        # Video filter: overlay ASS subtitles (or pass-through)
-        "-vf", vf_filter,
-        # Video encode
-        "-c:v", vcodec,
-        *quality_args,
-        # Audio encode
-        "-c:a", audio_codec,
-        "-b:a", audio_bitrate,
-        # -shortest now stops at audio end (canvas is 2s longer — safe)
-        "-shortest",
-        str(output_path),
-    ]
-
-    return cmd
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +625,18 @@ def main() -> int:
         elif candidate.stat().st_size == 0:
             backdrop_reason = "empty"
         else:
-            backdrop_cmd = candidate
+            backdrop_reason = (
+                _invalid_backdrop_config_reason(
+                    app_config.generate_backdrop_type,
+                    app_config.generate_backdrop_speed,
+                    app_config.generate_backdrop_c0,
+                    app_config.generate_backdrop_c1,
+                )
+                or _invalid_backdrop_cmd_reason(candidate)
+                or ""
+            )
+            if not backdrop_reason:
+                backdrop_cmd = candidate
 
     if backdrop_cmd is None:
         # Cosmetico: registra o motivo e segue para o canvas preto.
