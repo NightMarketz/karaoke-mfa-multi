@@ -66,6 +66,7 @@ def render_jobs(takes: list[dict]) -> list[dict]:
         "prompt": t.get("motion_prompt", ""),
         "negative": t.get("negative_prompt", ""),
         "frames": int(t.get("generate_frames", 81)),
+        "fps": int(t.get("fps", 16)),
         "seed": 2000 + int(t.get("idx", i)),
     } for i, t in enumerate(takes)]
 
@@ -148,25 +149,40 @@ def concat_filter(offsets: list[float], duration: float) -> str:
     return ";".join(parts)
 
 
+def _ffprobe(path: Path, entries: str) -> str:
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+             "-show_entries", entries, "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip()
+
+
 def probe_frames(path: Path) -> int:
     """Conta os frames DECODIFICANDO. -1 se o ffprobe nao conseguiu ler.
 
     nb_frames do container mente ou vem N/A conforme o muxer; -count_frames
     custa alguns ms num clipe de 81 frames e nao mente.
     """
-    try:
-        out = subprocess.run(
-            ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
-             "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(path)],
-            capture_output=True, text=True, timeout=120,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return -1
-    value = out.stdout.strip().split(",")[0].strip()
+    value = _ffprobe(path, "stream=nb_read_frames").split(",")[0].strip()
     return int(value) if value.isdigit() else -1
 
 
-def verify_take(path: Path, expected_frames: int) -> str | None:
+def probe_fps(path: Path) -> float:
+    """fps real do stream. -1.0 se nao deu para ler."""
+    value = _ffprobe(path, "stream=r_frame_rate").split(",")[0].strip()
+    try:
+        num, _, den = value.partition("/")
+        return int(num) / int(den or 1)
+    except (ValueError, ZeroDivisionError):
+        return -1.0
+
+
+def verify_take(path: Path, expected_frames: int,
+                expected_fps: int | None = None) -> str | None:
     """None se o take serve. Senao, a razao — com os dois numeros.
 
     O disco e' da outra maquina, entao o status do ComfyUI nao e' evidencia:
@@ -182,7 +198,42 @@ def verify_take(path: Path, expected_frames: int) -> str | None:
         return f"{path.name}: ffprobe nao leu video nenhum"
     if got != expected_frames:
         return f"{path.name}: {got} frames, esperado {expected_frames}"
+    if expected_fps is not None:
+        fps = probe_fps(path)
+        # O fps mora em takes.json E no no CreateVideo do workflow. Discordando,
+        # a contagem de frames ainda bate e so a montagem sai desalinhada.
+        if abs(fps - expected_fps) > 1e-6:
+            return (f"{path.name}: {fps:g} fps, esperado {expected_fps} "
+                    "(o no CreateVideo do workflow discorda de takes.json)")
     return None
+
+
+def check_models(graph: dict, object_info: dict) -> list[str]:
+    """Confere os nomes de arquivo do grafo contra o que a maquina remota tem.
+
+    Os nomes vieram do template oficial, nao da maquina que vai rodar: melhor
+    cobrar antes do que descobrir no primeiro take, depois da fila inteira.
+    """
+    problemas = []
+    for nid, node in graph.items():
+        cls = node.get("class_type", "")
+        info = object_info.get(cls)
+        if info is None:
+            problemas.append(f"no {nid}: a maquina remota nao conhece {cls}")
+            continue
+        required = info.get("input", {}).get("required", {})
+        for name, value in node.get("inputs", {}).items():
+            spec = required.get(name)
+            # Enum chega como [[opcao, ...], {...}]; texto livre, como ["STRING", ...].
+            if not (isinstance(spec, list) and spec and isinstance(spec[0], list)):
+                continue
+            opcoes = spec[0]
+            if isinstance(value, str) and value not in opcoes:
+                amostra = ", ".join(map(str, opcoes[:8])) or "nenhuma"
+                problemas.append(
+                    f"no {nid} ({cls}.{name}): {value} nao existe la. "
+                    f"{len(opcoes)} disponivel(is): {amostra}")
+    return problemas
 
 
 def upload_image(base: str, path: Path) -> str:
@@ -220,6 +271,14 @@ def download(base: str, ref: dict, dest: Path) -> None:
         dest.write_bytes(resp.read())
 
 
+def fetch_object_info(base: str) -> dict:
+    """O que a maquina remota realmente tem instalado."""
+    try:
+        return json.load(urllib.request.urlopen(f"{base}/object_info", timeout=120))
+    except Exception as exc:
+        raise SystemExit(f"/object_info nao respondeu em {base}: {exc}")
+
+
 def render_all(base: str, jobs: list[dict], *, template: str, kf_dir: Path,
                dest: Path, timeout: int = 1800, poll: float = 2.0,
                log=print) -> tuple[int, list[str]]:
@@ -233,7 +292,8 @@ def render_all(base: str, jobs: list[dict], *, template: str, kf_dir: Path,
         tag = f"[{i}/{len(jobs)}] {job['id']}"
         done = next((p for p in sorted(dest.glob(f"{job['id']}.*"))
                      if p.suffix != ".part"
-                     and verify_take(p, job["frames"]) is None), None)
+                     and verify_take(p, job["frames"],
+                                     expected_fps=job.get("fps")) is None), None)
         if done is not None:
             ok += 1
             log(f"  {tag}: ja estava pronto, pulado")
@@ -258,7 +318,7 @@ def render_all(base: str, jobs: list[dict], *, template: str, kf_dir: Path,
                 continue
             part = dest / f"{job['id']}.part"
             download(base, files[0], part)
-            reason = verify_take(part, job["frames"])
+            reason = verify_take(part, job["frames"], expected_fps=job.get("fps"))
             if reason:
                 # Nao deixa o reprovado em disco: na proxima rodada ele
                 # pareceria pronto e envenenaria a montagem em silencio.
@@ -327,6 +387,8 @@ def main() -> int:
                              "esta maquina, que quase nunca e' o que voce quer.")
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Por take. Video demora muito mais que imagem.")
+    parser.add_argument("--skip-preflight", action="store_true",
+                        help="Nao conferir os nomes de modelo contra a maquina.")
     parser.add_argument("--concat", action="store_true",
                         help="Depois de gerar, emenda tudo em backdrop.mp4.")
     args = parser.parse_args()
@@ -353,6 +415,19 @@ def main() -> int:
     dest = args.job_dir / "takes"
     base = probe_url(args.url)
     print(f"ComfyUI: {base}  |  {len(jobs)} takes  ->  {dest}")
+
+    # Os nomes de modelo do grafo vieram do template oficial, nao desta
+    # maquina. Cobrar agora custa uma chamada; descobrir depois custa a fila.
+    if not args.skip_preflight:
+        problemas = check_models(build_graph(template, jobs[0]),
+                                 fetch_object_info(base))
+        if problemas:
+            print(f"preflight reprovou {len(problemas)} no(s):", file=sys.stderr)
+            for linha in problemas:
+                print(f"  {linha}", file=sys.stderr)
+            print("Ajuste os nomes em " + str(args.workflow) +
+                  " ou passe --skip-preflight.", file=sys.stderr)
+            return 1
 
     ok, failures = render_all(base, jobs, template=template, kf_dir=kf_dir,
                               dest=dest, timeout=args.timeout)

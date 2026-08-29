@@ -16,6 +16,9 @@ import threading
 import unittest
 
 from scripts.takes_render import (
+    DEFAULT_WORKFLOW,
+    REQUIRED_MARKERS,
+    check_models,
     concat_filter,
     find_gaps,
     splice_offsets,
@@ -349,6 +352,15 @@ class RemoteRoundTripTests(unittest.TestCase):
         self.assertEqual(1, len(FakeComfy.prompts),
                          "so o take que faltava foi submetido")
 
+    def test_a_take_at_the_wrong_fps_is_refused_by_the_loop(self):
+        # 81 frames, mas a 24 fps: a contagem bate e so a montagem sairia
+        # torta. takes.json diz 16.
+        FakeComfy.payload = _make_mp4(self.dir / "fast.mp4", 81, fps=24).read_bytes()
+        ok, failures = self._run()
+        self.assertEqual(0, ok)
+        self.assertEqual(2, len(failures), f"denominador: {len(self.jobs)} takes")
+        self.assertIn("fps", failures[0])
+
     def test_a_short_take_from_the_server_is_refused_not_written(self):
         FakeComfy.payload = _make_mp4(self.dir / "short.mp4", 60).read_bytes()
         ok, failures = self._run()
@@ -409,3 +421,135 @@ class MontageTests(unittest.TestCase):
         clips = self._clips(2)
         clips[1].unlink()
         self.assertIsNotNone(montage(clips, takes, self.dir / "backdrop.mp4"))
+
+
+class ShippedWorkflowTests(unittest.TestCase):
+    """O grafo FLF2V versionado. Arquivo de dados apodrece calado: se um
+    marcador sumir num edit, o runner submeteria prompt de outra pessoa."""
+
+    def setUp(self):
+        self.path = pathlib.Path(DEFAULT_WORKFLOW)
+        if not self.path.exists():
+            self.fail(f"workflow ausente: {self.path}")
+        self.raw = self.path.read_text(encoding="utf-8")
+
+    def test_every_required_marker_is_present(self):
+        faltando = [m for m in REQUIRED_MARKERS if m not in self.raw]
+        self.assertEqual([], faltando, f"denominador: {len(REQUIRED_MARKERS)} marcadores")
+
+    def test_it_builds_a_graph_with_no_marker_left_behind(self):
+        job = {"prompt": "um gato", "negative": "feio", "seed": 7, "frames": 81,
+               "first": "kf_000.png", "last": "kf_001.png", "id": "take_000"}
+        graph = build_graph(self.raw, job)
+        raw = json.dumps(graph)
+        for marker in REQUIRED_MARKERS:
+            self.assertNotIn(marker, raw)
+
+    def test_every_link_points_at_a_node_that_exists(self):
+        graph = json.loads(self.raw.replace("%seed%", "0").replace("%frames%", "81"))
+        alvos = 0
+        for nid, node in graph.items():
+            for name, value in node.get("inputs", {}).items():
+                if isinstance(value, list) and len(value) == 2 and isinstance(value[0], str):
+                    alvos += 1
+                    self.assertIn(value[0], graph,
+                                  f"no {nid}.{name} aponta para {value[0]}, que nao existe")
+        self.assertGreater(alvos, 0, "grafo sem nenhuma ligacao nao e' grafo")
+
+    def test_the_two_keyframes_reach_the_flf2v_node(self):
+        graph = json.loads(self.raw.replace("%seed%", "0").replace("%frames%", "81"))
+        flf = [n for n in graph.values()
+               if n["class_type"] == "WanFirstLastFrameToVideo"]
+        self.assertEqual(1, len(flf), "esperado exatamente 1 no FLF2V")
+        carregadores = {nid for nid, n in graph.items()
+                        if n["class_type"] == "LoadImage"}
+        for slot in ("start_image", "end_image"):
+            origem = flf[0]["inputs"][slot][0]
+            self.assertIn(origem, carregadores, f"{slot} nao vem de um LoadImage")
+
+    def test_the_length_marker_lands_on_the_flf2v_node(self):
+        # %frames% em outro no nao controlaria a duracao do take.
+        graph = json.loads(self.raw.replace("%seed%", "0").replace("%frames%", "81"))
+        flf = next(n for n in graph.values()
+                   if n["class_type"] == "WanFirstLastFrameToVideo")
+        self.assertEqual(81, flf["inputs"]["length"])
+
+    def test_a_save_node_carries_the_filename_prefix_the_nonce_needs(self):
+        graph = json.loads(self.raw.replace("%seed%", "0").replace("%frames%", "81"))
+        com_prefixo = [n for n in graph.values()
+                       if "filename_prefix" in n.get("inputs", {})]
+        self.assertEqual(1, len(com_prefixo),
+                         "sem exatamente um no de save o nonce nao tem onde ir")
+
+
+@unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                     "precisa de ffmpeg/ffprobe no PATH")
+class FpsFenceTests(unittest.TestCase):
+    """O fps mora em takes.json E no no CreateVideo do workflow. Se os dois
+    discordarem, a contagem de frames continua batendo e so a montagem sai
+    desalinhada — o pior tipo de erro, o que passa no teste errado."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_the_right_fps_is_accepted(self):
+        mp4 = _make_mp4(self.dir / "ok.mp4", 81, fps=16)
+        self.assertIsNone(verify_take(mp4, 81, expected_fps=16))
+
+    def test_a_take_at_the_wrong_fps_is_refused_even_with_81_frames(self):
+        mp4 = _make_mp4(self.dir / "fast.mp4", 81, fps=24)
+        reason = verify_take(mp4, 81, expected_fps=16)
+        self.assertIsNotNone(reason, "81 frames a 24 fps nao e' o take pedido")
+        self.assertIn("24", reason)
+        self.assertIn("16", reason)
+
+    def test_fps_is_not_checked_when_not_asked(self):
+        mp4 = _make_mp4(self.dir / "any.mp4", 81, fps=24)
+        self.assertIsNone(verify_take(mp4, 81))
+
+
+class PreflightTests(unittest.TestCase):
+    """Os nomes de modelo no workflow sao suposicao nossa. Melhor cobrar da
+    maquina que vai rodar do que descobrir no primeiro take."""
+
+    def test_a_model_the_remote_does_not_have_is_named_with_the_alternatives(self):
+        object_info = {"UNETLoader": {"input": {"required": {
+            "unet_name": [["outro_modelo.safetensors", "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"]]}}}}
+        graph = {"76": {"class_type": "UNETLoader",
+                        "inputs": {"unet_name": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"}}}
+        problemas = check_models(graph, object_info)
+        self.assertEqual(1, len(problemas), "denominador: 1 no com modelo")
+        self.assertIn("wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors", problemas[0])
+        self.assertIn("outro_modelo.safetensors", problemas[0])
+
+    def test_a_model_the_remote_has_passes(self):
+        object_info = {"VAELoader": {"input": {"required": {
+            "vae_name": [["wan_2.1_vae.safetensors"]]}}}}
+        graph = {"79": {"class_type": "VAELoader",
+                        "inputs": {"vae_name": "wan_2.1_vae.safetensors"}}}
+        self.assertEqual([], check_models(graph, object_info))
+
+    def test_a_node_class_the_remote_does_not_know_is_reported(self):
+        graph = {"81": {"class_type": "WanFirstLastFrameToVideo", "inputs": {}}}
+        problemas = check_models(graph, {})
+        self.assertEqual(1, len(problemas))
+        self.assertIn("WanFirstLastFrameToVideo", problemas[0])
+
+    def test_free_text_inputs_are_not_mistaken_for_model_names(self):
+        # O enum vem como lista de listas; texto livre vem como ["STRING", {...}].
+        object_info = {"CLIPTextEncode": {"input": {"required": {
+            "text": ["STRING", {"multiline": True}]}}}}
+        graph = {"90": {"class_type": "CLIPTextEncode",
+                        "inputs": {"text": "um gato no conves"}}}
+        self.assertEqual([], check_models(graph, object_info))
+
+    def test_the_shipped_workflow_is_checked_whole(self):
+        raw = pathlib.Path(DEFAULT_WORKFLOW).read_text(encoding="utf-8")
+        graph = json.loads(raw.replace("%seed%", "0").replace("%frames%", "81"))
+        # object_info vazio: nenhuma classe e' conhecida, entao cada NO vira
+        # um problema. Uma linha por no e' o que serve para corrigir o JSON:
+        # 16 nos, 11 classes distintas — a populacao certa aqui e' o no.
+        self.assertEqual(len(graph), len(check_models(graph, {})),
+                         f"denominador: {len(graph)} nos no grafo versionado")
