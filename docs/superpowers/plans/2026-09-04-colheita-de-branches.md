@@ -590,10 +590,10 @@ Esperado: `test_reap_emite_tag_antes_do_delete` **FALHA**. Essa cerca existe por
 Remova de `reap_commands` as três linhas do bloco `if b.checked_out:`. Rode:
 
 ```bash
-pytest tests/test_branch_harvest.py -v -k "reap or contagem"
+pytest tests/test_branch_harvest.py -v -k reap
 ```
 
-Esperado: `test_reap_pula_branch_com_worktree_ativo` **e** `test_contagem_fecha_por_caminho_independente` **FALHAM**. **Desfaça** e confirme verde.
+Esperado: `test_reap_pula_branch_com_worktree_ativo` **FALHA**. (`test_contagem_fecha_por_caminho_independente` não é alvo deste controle: sua asserção soma `len(cmds) + len(bloqueadas)`, invariante a qual balde o item cai, então prova que nenhuma branch se perde na contagem, não que a guarda de worktree existe.) **Desfaça** e confirme verde.
 
 - [ ] **Step 7: Rodar contra o repositório real e conferir com o medido no spec**
 

@@ -166,7 +166,12 @@ def test_reap_arquiva_orfa_e_attic_juntas():
 
 
 def test_contagem_fecha_por_caminho_independente():
-    """Re-derivacao: as listas de saida somam o total, sem consultar os vereditos."""
+    """Re-derivacao: as listas de saida somam o total, sem consultar os vereditos.
+
+    Pega uma branch sumindo de todos os baldes (perdida na contagem). Nao pega
+    uma branch trocando de balde (ex.: de bloqueada para cmds) — a soma
+    len(cmds) + len(bloqueadas) fica igual nos dois casos.
+    """
     rows = [
         _b("mvp-pipeline-runner", date(2026, 8, 20)),              # protegida
         _b("master", date(2026, 8, 15)),                           # protegida
