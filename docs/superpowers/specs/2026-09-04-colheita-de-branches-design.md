@@ -160,6 +160,7 @@ sobre 67 arquivos `test_*.py`:
   fixture real com output.mp4/output.ass indisponível)
 - erros de coleta: `0`
 - soma: `756` (passaram) + `0` (falharam) + `2` (pulados) = `758`
+- ambiente: nenhum ambiente conda declarado do projeto (`karaoke_env`, `demucs_env`, `mfa_env`, base do miniforge3) tem `pytest` instalado; a medição usou o `pytest` resolvido pelo `PATH` (venv `hermes-agent`, pytest 9.0.2, Python 3.11.9). Reproduzir esta linha de base exige localizar (ou provisionar) um interpretador com pytest equivalente — outro ambiente pode mudar coletados/pulados por diferença de ambiente, não por regressão.
 
 O portão de merge compara contra esses números. Merge que não aumente `0` falhos
 passa, mesmo com os 2 skips herdados; merge que aumente falhos, ou reduza os itens
