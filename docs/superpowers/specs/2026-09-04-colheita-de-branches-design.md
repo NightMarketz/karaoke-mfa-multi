@@ -149,8 +149,18 @@ começarem a morrer no relógio, o número está errado, não a regra.
 algo dentro delas merece ser portado à mão para o tronco. Decisão adiada, por
 branch, sob demanda — e porte é trabalho novo, não colheita.
 
-**L3 — O portão de merge nunca foi exercido.** Não há medição de que `pytest tests`
-passe hoje no tronco. Um portão sobre suíte já vermelha não é portão. **Antes de o
-critério valer, é preciso rodar `pytest tests` em `mvp-pipeline-runner` e registrar
-o número com denominador.** Sem essa linha de base, o primeiro merge reprovado não
-distingue "a branch quebrou" de "já estava quebrado".
+**L3 — FECHADA em 2026-09-04.** Linha de base do tronco, medida com `pytest tests`
+sobre 67 arquivos `test_*.py`:
+
+- coletados: `758` itens
+- passaram: `756` de `758`
+- falharam: `0` de `758`
+- pulados (skipped): `2` de `758` (`tests/test_clean_outputs_integration.py:99` —
+  fixture real do Struggle ausente; `tests/test_review_wizard_server.py:1727` —
+  fixture real com output.mp4/output.ass indisponível)
+- erros de coleta: `0`
+- soma: `756` (passaram) + `0` (falharam) + `2` (pulados) = `758`
+
+O portão de merge compara contra esses números. Merge que não aumente `0` falhos
+passa, mesmo com os 2 skips herdados; merge que aumente falhos, ou reduza os itens
+coletados abaixo de `758` sem justificativa, reprova.
