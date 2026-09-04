@@ -18,7 +18,7 @@ import branch_harvest as bh
 HOJE = date(2026, 9, 4)
 
 
-def _b(name, last, merge_base=True, checked_out=False, ahead=1, behind=0):
+def _b(name, last, merge_base=True, worktree="", ahead=1, behind=0, dirty=0):
     return bh.Branch(
         name=name,
         sha="0" * 40,
@@ -27,7 +27,8 @@ def _b(name, last, merge_base=True, checked_out=False, ahead=1, behind=0):
         merge_base=merge_base,
         behind=behind,
         ahead=ahead,
-        checked_out=checked_out,
+        worktree=worktree,
+        dirty=dirty,
     )
 
 
@@ -130,8 +131,8 @@ def test_collect_le_o_git_de_verdade(tmp_path):
     assert bh.verdict(rows["feature-orfa"], HOJE) == "orfa"
 
     # a branch com worktree ativo tem de vir marcada
-    assert rows["feature-orfa"].checked_out is True
-    assert rows[bh.TRUNK].checked_out is False
+    assert rows["feature-orfa"].worktree != ""
+    assert rows[bh.TRUNK].worktree == ""
 
 
 def test_collect_recusa_repositorio_sem_tronco(tmp_path):
@@ -161,10 +162,10 @@ def test_reap_emite_tag_antes_do_delete():
 
 
 def test_reap_pula_branch_com_worktree_ativo():
-    b = _b("claude/velha-em-uso", date(2026, 1, 1), checked_out=True)
+    b = _b("claude/velha-em-uso", date(2026, 1, 1), worktree="C:/wt/x")
     cmds, bloqueadas = bh.reap_commands([b], HOJE)
     assert cmds == []
-    assert bloqueadas == ["claude/velha-em-uso"]
+    assert [b.name for b in bloqueadas] == ["claude/velha-em-uso"]
 
 
 def test_reap_bloqueia_nome_com_metacaractere_de_shell():
@@ -173,7 +174,7 @@ def test_reap_bloqueia_nome_com_metacaractere_de_shell():
     b = _b("evil;pwned", date(2026, 1, 1))
     cmds, bloqueadas = bh.reap_commands([b], HOJE)
     assert cmds == []
-    assert bloqueadas == ["evil;pwned"]
+    assert [b.name for b in bloqueadas] == ["evil;pwned"]
 
 
 def test_reap_ignora_viva_e_protegida():
@@ -209,9 +210,68 @@ def test_contagem_fecha_por_caminho_independente():
         _b("master", date(2026, 8, 15)),                           # protegida
         _b("claude/viva", date(2026, 9, 1)),                       # viva
         _b("claude/velha", date(2026, 1, 1)),                      # attic
-        _b("claude/em-uso", date(2026, 1, 1), checked_out=True),   # attic, bloqueada
+        _b("claude/em-uso", date(2026, 1, 1), worktree="C:/wt/x"),   # attic, bloqueada
         _b("claude/orfa", date(2026, 9, 1), merge_base=False),     # orfa
     ]
     cmds, bloqueadas = bh.reap_commands(rows, HOJE)
     sobreviventes = [b for b in rows if bh.verdict(b, HOJE) in ("viva", "protegida")]
     assert len(cmds) + len(bloqueadas) + len(sobreviventes) == len(rows) == 6
+
+
+def _wt(name, dirty, worktree):
+    """Branch bloqueada por worktree, com contagem de alteracoes nao commitadas."""
+    return bh.Branch(
+        name=name,
+        sha="0" * 40,
+        last=date(2026, 1, 1),
+        subject="assunto",
+        merge_base=True,
+        behind=0,
+        ahead=1,
+        worktree=worktree,
+        dirty=dirty,
+    )
+
+
+def test_remedio_manda_remover_worktree_limpo():
+    linhas = "\n".join(bh.remedios([_wt("claude/limpa", 0, "C:/wt/limpa")]))
+    assert "git worktree remove C:/wt/limpa" in linhas
+
+
+def test_remedio_nao_manda_remover_worktree_sujo():
+    """Remover worktree sujo destroi trabalho nao commitado. O remedio muda."""
+    linhas = "\n".join(bh.remedios([_wt("claude/suja", 20, "C:/wt/suja")]))
+    assert "git worktree remove C:/wt/suja" not in linhas
+    assert "claude/suja" in linhas
+    assert "20" in linhas, "a contagem de alteracoes tem de aparecer, com denominador"
+
+
+def test_remedio_separa_os_dois_grupos():
+    linhas = "\n".join(
+        bh.remedios(
+            [_wt("claude/limpa", 0, "C:/wt/limpa"), _wt("claude/suja", 3, "C:/wt/suja")]
+        )
+    )
+    assert "git worktree remove C:/wt/limpa" in linhas
+    assert "git worktree remove C:/wt/suja" not in linhas
+
+
+def test_collect_conta_alteracoes_nao_commitadas_do_worktree(tmp_path):
+    """Integracao: a contagem de sujeira vem do worktree de verdade."""
+    r = tmp_path / "repo"
+    r.mkdir()
+    _git("init", "-b", bh.TRUNK, cwd=r)
+    _git("config", "user.email", "t@t.local", cwd=r)
+    _git("config", "user.name", "t", cwd=r)
+    (r / "a.txt").write_text("1", encoding="utf-8")
+    _git("add", "-A", cwd=r)
+    _git("commit", "-m", "tronco", cwd=r)
+
+    wt = tmp_path / "wt-suja"
+    _git("worktree", "add", "-b", "feature-suja", str(wt), cwd=r)
+    (wt / "novo.txt").write_text("nao commitado", encoding="utf-8")
+
+    rows = {b.name: b for b in bh.collect(cwd=str(r))}
+    assert rows["feature-suja"].dirty == 1, f"esperava 1, vi {rows['feature-suja'].dirty}"
+    assert rows["feature-suja"].worktree != ""
+    assert rows[bh.TRUNK].dirty == 0
