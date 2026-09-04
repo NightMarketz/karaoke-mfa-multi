@@ -71,6 +71,10 @@ def test_summary_traz_denominador_e_fecha_a_soma():
     out = bh.summary(rows, HOJE)
     assert "de 4" in out
     assert "soma 4 = 4" in out
+    assert "protegida 1 de 4" in out
+    assert "viva 1 de 4" in out
+    assert "attic 1 de 4" in out
+    assert "orfa 1 de 4" in out
 
 
 def test_summary_recusa_conjunto_vazio():
@@ -130,6 +134,22 @@ def test_collect_le_o_git_de_verdade(tmp_path):
     assert rows[bh.TRUNK].checked_out is False
 
 
+def test_collect_recusa_repositorio_sem_tronco(tmp_path):
+    """Sem o tronco, merge-base falha por ref desconhecida (exit 128), nao por
+    ausencia de ancestral comum (exit 1) — os dois nao podem virar 'orfa'."""
+    r = tmp_path / "repo-sem-tronco"
+    r.mkdir()
+    _git("init", "-b", "so-existe-esta", cwd=r)
+    _git("config", "user.email", "t@t.local", cwd=r)
+    _git("config", "user.name", "t", cwd=r)
+    (r / "a.txt").write_text("1", encoding="utf-8")
+    _git("add", "-A", cwd=r)
+    _git("commit", "-m", "unica branch", cwd=r)
+
+    with pytest.raises(ValueError, match=bh.TRUNK):
+        bh.collect(cwd=str(r))
+
+
 def test_reap_emite_tag_antes_do_delete():
     b = _b("claude/velha", date(2026, 1, 1))
     cmds, bloqueadas = bh.reap_commands([b], HOJE)
@@ -137,6 +157,7 @@ def test_reap_emite_tag_antes_do_delete():
     assert len(cmds) == 1
     assert cmds[0].index("git tag attic/claude/velha") < cmds[0].index("git branch -D")
     assert "&&" in cmds[0], "delete nao pode rodar se a tag falhar"
+    assert b.sha in cmds[0], "sem o sha a tag marca o HEAD atual, nao a branch"
 
 
 def test_reap_pula_branch_com_worktree_ativo():
@@ -144,6 +165,15 @@ def test_reap_pula_branch_com_worktree_ativo():
     cmds, bloqueadas = bh.reap_commands([b], HOJE)
     assert cmds == []
     assert bloqueadas == ["claude/velha-em-uso"]
+
+
+def test_reap_bloqueia_nome_com_metacaractere_de_shell():
+    # nome de branch cru dentro do comando: `;`, `$(...)`, etc. executariam
+    # ao colar. Tem de ir para bloqueadas, nunca virar linha de comando.
+    b = _b("evil;pwned", date(2026, 1, 1))
+    cmds, bloqueadas = bh.reap_commands([b], HOJE)
+    assert cmds == []
+    assert bloqueadas == ["evil;pwned"]
 
 
 def test_reap_ignora_viva_e_protegida():
@@ -166,7 +196,9 @@ def test_reap_arquiva_orfa_e_attic_juntas():
 
 
 def test_contagem_fecha_por_caminho_independente():
-    """Re-derivacao: as listas de saida somam o total, sem consultar os vereditos.
+    """Re-derivacao: as listas de saida somam o total, usando o mesmo oraculo
+    (bh.verdict) do outro lado — nao prova a logica de reap_commands por um
+    caminho independente, so prova que nenhuma branch se perde entre os baldes.
 
     Pega uma branch sumindo de todos os baldes (perdida na contagem). Nao pega
     uma branch trocando de balde (ex.: de bloqueada para cmds) — a soma

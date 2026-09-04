@@ -8,6 +8,7 @@ comprar tempo.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 from collections import Counter
 from datetime import date
@@ -16,6 +17,7 @@ from typing import NamedTuple
 TRUNK = "mvp-pipeline-runner"
 PROTECTED = frozenset({"mvp-pipeline-runner", "master", "main"})
 STALE_DAYS = 14
+NOME_SEGURO = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 
 class Branch(NamedTuple):
@@ -55,7 +57,9 @@ def _checked_out(cwd: str | None = None) -> set[str]:
     }
 
 
-def collect(cwd: str | None = None, trunk: str = TRUNK) -> list[Branch]:
+def collect(cwd: str | None = None) -> list[Branch]:
+    if _git("rev-parse", "--verify", "--quiet", TRUNK, cwd=cwd).returncode != 0:
+        raise ValueError(f"tronco {TRUNK} nao existe neste repositorio")
     ativos = _checked_out(cwd)
     fmt = "%(refname:short)%09%(objectname)%09%(committerdate:short)%09%(contents:subject)"
     out = _git("for-each-ref", f"--format={fmt}", "refs/heads", cwd=cwd).stdout
@@ -67,11 +71,11 @@ def collect(cwd: str | None = None, trunk: str = TRUNK) -> list[Branch]:
         while len(campos) < 4:
             campos.append("")
         name, sha, dia, subject = campos
-        tem_base = _git("merge-base", trunk, name, cwd=cwd).returncode == 0
+        tem_base = _git("merge-base", TRUNK, name, cwd=cwd).returncode == 0
         behind = ahead = 0
         if tem_base:
             counts = _git(
-                "rev-list", "--left-right", "--count", f"{trunk}...{name}", cwd=cwd
+                "rev-list", "--left-right", "--count", f"{TRUNK}...{name}", cwd=cwd
             ).stdout.split()
             if len(counts) == 2:
                 behind, ahead = int(counts[0]), int(counts[1])
@@ -124,7 +128,7 @@ def reap_commands(
     for b in rows:
         if verdict(b, today, stale_days) not in ("orfa", "attic"):
             continue
-        if b.checked_out:
+        if b.checked_out or not NOME_SEGURO.match(b.name):
             bloqueadas.append(b.name)
             continue
         cmds.append(f"git tag attic/{b.name} {b.sha} && git branch -D {b.name}")
@@ -156,11 +160,18 @@ def main(argv: list[str] | None = None) -> int:
         if bloqueadas:
             print(
                 f"# {len(bloqueadas)} de {len(rows)} nao podem ser apagadas "
-                "(worktree ativo): " + ", ".join(bloqueadas)
+                "(worktree ativo, ou nome que exige aspas para o shell): "
+                + ", ".join(bloqueadas)
             )
             print(
-                "# remedio: `git worktree list` para achar o caminho, "
-                "`git worktree remove <caminho>`, depois rode este comando de novo."
+                "# remedio worktree ativo: `git worktree list` para achar o "
+                "caminho, `git worktree remove <caminho>`, depois rode este "
+                "comando de novo."
+            )
+            print(
+                "# remedio nome com metacaractere: renomeie a branch "
+                "(`git branch -m <nome-atual> <nome-seguro>`) e rode de novo — "
+                "o comando gerado nunca cita esses nomes sem aspas."
             )
     return 0
 
