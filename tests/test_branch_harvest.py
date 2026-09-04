@@ -275,3 +275,18 @@ def test_collect_conta_alteracoes_nao_commitadas_do_worktree(tmp_path):
     assert rows["feature-suja"].dirty == 1, f"esperava 1, vi {rows['feature-suja'].dirty}"
     assert rows["feature-suja"].worktree != ""
     assert rows[bh.TRUNK].dirty == 0
+
+
+def test_dirty_devolve_sentinela_quando_nao_da_para_medir(tmp_path):
+    """Nao verificavel != limpo. Fundir os dois faz o remedio mandar apagar."""
+    assert bh._dirty(str(tmp_path / "nao-existe")) == -1
+    assert bh._dirty("") == 0, "sem worktree nao e' o mesmo que worktree ilegivel"
+
+
+def test_remedio_nao_manda_remover_worktree_ilegivel():
+    """dirty < 0 = nao consegui medir. Falha fechada: nao sugere remover."""
+    linhas = "\n".join(bh.remedios([_wt("claude/opaca", -1, "C:/wt/opaca")]))
+    assert "git worktree remove C:/wt/opaca" not in linhas
+    assert "claude/opaca" in linhas
+    assert "-1" not in linhas, "sentinela nao pode vazar como contagem"
+    assert "nao verificavel" in linhas

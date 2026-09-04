@@ -64,12 +64,19 @@ def _worktrees(cwd: str | None = None) -> dict[str, str]:
 
 
 def _dirty(path: str) -> int:
-    """Quantas entradas nao commitadas o worktree tem. 0 se nao der para saber."""
-    if not path or not os.path.isdir(path):
+    """Entradas nao commitadas. 0 = limpo, -1 = nao consegui medir.
+
+    Fundir "limpo" com "nao consegui medir" faz o remedio sugerir apagar um
+    worktree que pode ter trabalho dentro — o defeito exato que este modulo
+    existe para evitar. Na duvida, -1: falha fechada.
+    """
+    if not path:
         return 0
+    if not os.path.isdir(path):
+        return -1
     r = _git("status", "--porcelain", cwd=path)
     if r.returncode != 0:
-        return 0
+        return -1
     return len([l for l in r.stdout.splitlines() if l.strip()])
 
 
@@ -118,7 +125,12 @@ def render(rows: list[Branch], today: date, stale_days: int = STALE_DAYS) -> str
         pos = "-" if not b.merge_base else f"{b.behind}/{b.ahead}"
         wt = ""
         if b.worktree:
-            wt = f" [worktree, {b.dirty} sujo]" if b.dirty else " [worktree]"
+            if b.dirty < 0:
+                wt = " [worktree, nao verificavel]"
+            elif b.dirty:
+                wt = f" [worktree, {b.dirty} sujo]"
+            else:
+                wt = " [worktree]"
         linhas.append(f"{v:<10} {b.last.isoformat()}  {pos:>9}  {b.name}{wt}")
     return "\n".join(linhas)
 
@@ -162,8 +174,9 @@ def remedios(bloqueadas: list[Branch]) -> list[str]:
     voce — ele nomeia o que ha para perder.
     """
     total = len(bloqueadas)
-    limpas = [b for b in bloqueadas if b.worktree and not b.dirty]
-    sujas = [b for b in bloqueadas if b.worktree and b.dirty]
+    limpas = [b for b in bloqueadas if b.worktree and b.dirty == 0]
+    sujas = [b for b in bloqueadas if b.worktree and b.dirty > 0]
+    opacas = [b for b in bloqueadas if b.worktree and b.dirty < 0]
     inseguras = [b for b in bloqueadas if not b.worktree]
     linhas: list[str] = []
     if limpas:
@@ -174,6 +187,13 @@ def remedios(bloqueadas: list[Branch]) -> list[str]:
         linhas.append(f"# {len(sujas)} de {total}: worktree SUJO. NAO remova — resolva antes:")
         for b in sujas:
             linhas.append(f"#   {b.name}: {b.dirty} nao commitadas em {b.worktree}")
+    if opacas:
+        linhas.append(
+            f"# {len(opacas)} de {total}: worktree nao verificavel "
+            "(`git status` falhou ou o diretorio sumiu). NAO remova as cegas:"
+        )
+        for b in opacas:
+            linhas.append(f"#   {b.name}: {b.worktree}")
     if inseguras:
         linhas.append(
             f"# {len(inseguras)} de {total}: nome exige aspas. "
