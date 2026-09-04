@@ -32,19 +32,23 @@ Tudo abaixo foi medido nesta data, não estimado.
 - `mvp-pipeline-runner` está **112 commits à frente de `master`**. É o tronco de
   fato, nunca declarado como tal.
 
-**As 42 branches locais, contra o tronco**
-- **29 de 42 não têm ancestral comum** com `mvp-pipeline-runner`. `git merge` não
+**As 43 branches locais, contra o tronco** — re-medido na Rodada de correção
+final com `python scripts/branch_harvest.py`; a diferença de 42 para 43 é a
+própria branch `claude/branch-harvest`, que passou a existir para fazer esta
+medição:
+- **29 de 43 não têm ancestral comum** com `mvp-pipeline-runner`. `git merge` não
   se aplica a elas.
-- **13 de 42 são mergeáveis**; dessas, **10 têm trabalho de fato** (ahead > 0).
-- **16 de 42 estão congeladas em 2026-03-15**, todas sem ancestral. É a data da
+- **14 de 43 são mergeáveis**; dessas, **11 têm trabalho de fato** (ahead > 0) —
+  `claude/branch-harvest` é a que se somou.
+- **16 de 43 estão congeladas em 2026-03-15**, todas sem ancestral. É a data da
   morte da linhagem MAIN.
-- Concentração do valor não colhido: `feat/karaoke-voice-game` (ahead 46, behind 8),
-  `claude/flf2v-takes-render` (ahead 34, behind 112),
-  `claude/anime-compositing-satsuei-2585b3` (ahead 18, behind 112).
+- Concentração do valor não colhido: `feat/karaoke-voice-game` (ahead 46, behind 10),
+  `claude/flf2v-takes-render` (ahead 34, behind 114),
+  `claude/anime-compositing-satsuei-2585b3` (ahead 18, behind 114).
 
 **Comando de teste**
 - O canônico é `pytest tests`, documentado em `spec/TEST_PLAN.md:8`, presente em
-  5 de 42 branches locais — nenhuma delas alcançável por quem lê só o `README.md`.
+  5 de 43 branches locais — nenhuma delas alcançável por quem lê só o `README.md`.
 - `pytest` na raiz mede outra população: transforma `pytest.importorskip` em erro
   de coleta. Foi a origem da divergência 778/838.
 
@@ -70,30 +74,43 @@ Tudo abaixo foi medido nesta data, não estimado.
 
 **P1 — Linhagem (mecânico).** Branch sem ancestral comum com o tronco sai da fila
 de colheita. Não é candidata a merge, por impossibilidade estrutural, não por
-julgamento de valor. Efeito hoje: **29 de 42 saem sem inspeção humana**.
+julgamento de valor. Efeito hoje: **29 de 43 saem sem inspeção humana**.
 
 **P2 — Relógio (mecânico).** Branch sem commit há mais de 14 dias vira
-`attic/<nome>` e a branch é apagada. Efeito hoje: das 13 mergeáveis, 2 são protegidas (`mvp-pipeline-runner`, `master`); das 11 restantes, mata 8.
+`attic/<nome>` e a branch é apagada. Efeito hoje: das 14 mergeáveis, 2 são protegidas (`mvp-pipeline-runner`, `master`); das 12 restantes, mata 8.
 
 **P3 — Sobrevivência (humano).** O que chega aqui exige uma frase sua dizendo o
-que a branch entrega. Sem frase, morre igual. Efeito hoje: **3 branches** chegam
-a P3 — `claude/flf2v-takes-render`, `claude/anime-compositing-satsuei-2585b3`,
+que a branch entrega. Sem frase, morre igual. Efeito hoje: **4 branches** chegam
+a P3 — `claude/branch-harvest` (esta mesma, a que fez a medição),
+`claude/flf2v-takes-render`, `claude/anime-compositing-satsuei-2585b3`,
 `feat/karaoke-voice-game`.
 
-**Resultado sobre a listagem:** `git branch` sai de 42 linhas para **5** — as 3
+**Resultado sobre a listagem:** `git branch` sai de 43 linhas para **6** — as 4
 sobreviventes mais as 2 protegidas locais (`mvp-pipeline-runner`, `master`).
+(Re-medido na Rodada de correção final: a diferença de 42→43 e 5→6 em relação à
+versão anterior deste spec é a própria branch `claude/branch-harvest`.)
 
 Nada é perdido em P1 ou P2. A tag `attic/<nome>` segura o commit indefinidamente;
 o que muda é que ele some da listagem de branches e do espaço mental.
 
 ## 5. Portão de merge
 
+O portão é **relativo**, não um limiar absoluto — `pytest.importorskip` faz a
+contagem de coletados depender do que está importável naquela máquina naquele
+dia, então um número fixo (`758`, ou qualquer outro) reprovaria por diferença de
+ambiente, não por regressão. Duas medições **no mesmo shell**, minutos de
+diferença: o ambiente cancela por construção.
+
 Sequência, no tronco:
 
-1. `git merge <branch>` no tronco.
-2. `pytest tests` — o comando exato, com o argumento.
-3. Verde: commita. Vermelho: desfaz o merge, a branch volta para P3 com a falha
-   registrada na frase.
+1. Antes de mergear: `pytest tests` — anote coletados, passaram, falharam,
+   pulados e subtests passados.
+2. `git merge <branch>` no tronco.
+3. `pytest tests` de novo, **no mesmo shell** do passo 1.
+4. Passa se `falharam` não aumentou, `coletados` não diminuiu, e subtests não
+   diminuíram. Reprova caso contrário — e a reprovação desfaz o **merge**,
+   nunca o número: `git merge --abort` (ou reset ao commit anterior), a branch
+   volta para P3 com a falha registrada na frase.
 
 A verificação roda **no resultado do merge**, nunca na branch isolada. Suíte verde
 em duas branches separadas não diz nada sobre a união das duas.
@@ -149,8 +166,16 @@ começarem a morrer no relógio, o número está errado, não a regra.
 algo dentro delas merece ser portado à mão para o tronco. Decisão adiada, por
 branch, sob demanda — e porte é trabalho novo, não colheita.
 
-**L3 — FECHADA em 2026-09-04.** Linha de base do tronco, medida com `pytest tests`
-sobre 67 arquivos `test_*.py`:
+**L3 — FECHADA em 2026-09-04. Portão trocado de absoluto para relativo (Rodada de
+correção final).** `758` era propriedade da máquina daquele momento, não do
+código: `pytest.importorskip` faz o número de coletados depender do que está
+importável, e por isso não pode ser um limiar fixo. O portão de merge (§5) agora
+mede duas vezes no mesmo shell — antes e depois do merge — e compara a diferença,
+nunca um número absoluto contra outro dia.
+
+Os números abaixo, medidos com `pytest tests` sobre 67 arquivos `test_*.py`,
+ficam como **contexto histórico do que o tronco valia naquele dia**, não como
+limiar:
 
 - coletados: `758` itens
 - passaram: `756` de `758`
@@ -160,8 +185,16 @@ sobre 67 arquivos `test_*.py`:
   fixture real com output.mp4/output.ass indisponível)
 - erros de coleta: `0`
 - soma: `756` (passaram) + `0` (falharam) + `2` (pulados) = `758`
+- subtests passados: `293` de `293` (0 falharam) — não fazia parte da medição
+  original; ver L3/A9 na Rodada de correção final. Um teste que itera sobre uma
+  coleção que virou vazia continua verde e some `293` → `0` sem mover nenhum dos
+  números acima, por isso o portão de merge (§5) também compara subtests.
 - ambiente: nenhum ambiente conda declarado do projeto (`karaoke_env`, `demucs_env`, `mfa_env`, base do miniforge3) tem `pytest` instalado; a medição usou o `pytest` resolvido pelo `PATH` (venv `hermes-agent`, pytest 9.0.2, Python 3.11.9). Reproduzir esta linha de base exige localizar (ou provisionar) um interpretador com pytest equivalente — outro ambiente pode mudar coletados/pulados por diferença de ambiente, não por regressão.
 
-O portão de merge compara contra esses números. Merge que não aumente `0` falhos
-passa, mesmo com os 2 skips herdados; merge que aumente falhos, ou reduza os itens
-coletados abaixo de `758` sem justificativa, reprova.
+**L4 — DECLARADA, não resolvida.** O projeto não declara nenhum ambiente onde o
+próprio comando de teste roda. Nenhum dos ambientes conda declarados
+(`karaoke_env`, `demucs_env`, `mfa_env`) tem `pytest`. O portão relativo (§5)
+contorna isso — as duas medições rodam no mesmo shell, seja ele qual for — mas a
+causa raiz continua: quem clonar o repositório não tem como rodar `pytest tests`
+seguindo só o que o repositório declara. É trabalho de repositório, fora deste
+plano.

@@ -604,7 +604,13 @@ python scripts/branch_harvest.py --reap
 Esperado, contra os números do spec (§2), com `--stale-days 14` e hoje ≈ 2026-09-04:
 `viva 3 de 42 | protegida 2 de 42 | attic 8 de 42 | orfa 29 de 42  (soma 42 = 42)`.
 
-Se a soma não fechar, ou se as parcelas não somarem 42, pare: ou o script está errado, ou o repositório mudou desde a medição. Nos dois casos, o número novo é que vale — e o spec precisa ser atualizado, não o número maquiado.
+**Atualizado na Rodada de correção final:** re-medido em 2026-09-04 com
+`python scripts/branch_harvest.py`, o número real é
+`viva 4 de 43 | protegida 2 de 43 | attic 8 de 43 | orfa 29 de 43  (soma 43 = 43)`.
+A diferença de 42 para 43 (e de `viva 3` para `viva 4`) é a própria branch
+`claude/branch-harvest`, que passou a existir para fazer esta colheita.
+
+Se a soma não fechar, ou se as parcelas não somarem o total, pare: ou o script está errado, ou o repositório mudou desde a medição. Nos dois casos, o número novo é que vale — e o spec precisa ser atualizado, não o número maquiado.
 
 **Não cole os comandos ainda.** Executar a colheita é decisão do usuário, não do plano.
 
@@ -685,3 +691,5 @@ git add -- CLAUDE.md AGENTS.md && git commit -m "docs: declara o tronco, o coman
 - **Consertar o `README.md`** da linhagem MAIN, que descreve um pipeline de 12 estágios que não roda (batem 3 de 12).
 - **Portar qualquer coisa das 29 órfãs** — Lacuna L2 do spec, decidida por branch e sob demanda.
 - **Hook de enforcement.** Nada aqui impede um merge sem teste; os portões dependem de serem rodados. Adicionar quando um merge ruim passar de fato — não antes.
+- **Tronco configurável em `collect`.** O parâmetro `trunk` foi removido nesta rodada (nunca era passado com valor diferente do default). Um tronco configurável de verdade chega junto com a Lacuna L2 do spec — e aí a proteção de `PROTECTED` (hoje uma lista fixa) precisa ser threaded junto, não só `collect`.
+- **Sincronizar `CLAUDE.md` e `AGENTS.md`.** Deriva pré-existente a esta branch: os blocos que esta branch acrescentou são idênticos nos dois arquivos, mas `AGENTS.md` já tinha 77 linhas contra 28 do `CLAUDE.md` antes desta branch tocar neles. Corrigir a deriva anterior é trabalho de repositório, não desta colheita.
