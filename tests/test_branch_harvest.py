@@ -128,3 +128,53 @@ def test_collect_le_o_git_de_verdade(tmp_path):
     # a branch com worktree ativo tem de vir marcada
     assert rows["feature-orfa"].checked_out is True
     assert rows[bh.TRUNK].checked_out is False
+
+
+def test_reap_emite_tag_antes_do_delete():
+    b = _b("claude/velha", date(2026, 1, 1))
+    cmds, bloqueadas = bh.reap_commands([b], HOJE)
+    assert bloqueadas == []
+    assert len(cmds) == 1
+    assert cmds[0].index("git tag attic/claude/velha") < cmds[0].index("git branch -D")
+    assert "&&" in cmds[0], "delete nao pode rodar se a tag falhar"
+
+
+def test_reap_pula_branch_com_worktree_ativo():
+    b = _b("claude/velha-em-uso", date(2026, 1, 1), checked_out=True)
+    cmds, bloqueadas = bh.reap_commands([b], HOJE)
+    assert cmds == []
+    assert bloqueadas == ["claude/velha-em-uso"]
+
+
+def test_reap_ignora_viva_e_protegida():
+    rows = [
+        _b("mvp-pipeline-runner", date(2026, 1, 1)),
+        _b("claude/viva", date(2026, 9, 1)),
+    ]
+    cmds, bloqueadas = bh.reap_commands(rows, HOJE)
+    assert cmds == []
+    assert bloqueadas == []
+
+
+def test_reap_arquiva_orfa_e_attic_juntas():
+    rows = [
+        _b("claude/orfa", date(2026, 9, 1), merge_base=False),
+        _b("claude/velha", date(2026, 1, 1)),
+    ]
+    cmds, _ = bh.reap_commands(rows, HOJE)
+    assert len(cmds) == 2
+
+
+def test_contagem_fecha_por_caminho_independente():
+    """Re-derivacao: as listas de saida somam o total, sem consultar os vereditos."""
+    rows = [
+        _b("mvp-pipeline-runner", date(2026, 8, 20)),              # protegida
+        _b("master", date(2026, 8, 15)),                           # protegida
+        _b("claude/viva", date(2026, 9, 1)),                       # viva
+        _b("claude/velha", date(2026, 1, 1)),                      # attic
+        _b("claude/em-uso", date(2026, 1, 1), checked_out=True),   # attic, bloqueada
+        _b("claude/orfa", date(2026, 9, 1), merge_base=False),     # orfa
+    ]
+    cmds, bloqueadas = bh.reap_commands(rows, HOJE)
+    sobreviventes = [b for b in rows if bh.verdict(b, HOJE) in ("viva", "protegida")]
+    assert len(cmds) + len(bloqueadas) + len(sobreviventes) == len(rows) == 6

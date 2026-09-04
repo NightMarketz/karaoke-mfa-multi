@@ -115,15 +115,53 @@ def summary(rows: list[Branch], today: date, stale_days: int = STALE_DAYS) -> st
     return " | ".join(partes) + f"  (soma {sum(c.values())} = {total})"
 
 
+def reap_commands(
+    rows: list[Branch], today: date, stale_days: int = STALE_DAYS
+) -> tuple[list[str], list[str]]:
+    """Comandos de arquivamento. Nao executa nada — devolve texto para colar."""
+    cmds: list[str] = []
+    bloqueadas: list[str] = []
+    for b in rows:
+        if verdict(b, today, stale_days) not in ("orfa", "attic"):
+            continue
+        if b.checked_out:
+            bloqueadas.append(b.name)
+            continue
+        cmds.append(f"git tag attic/{b.name} {b.sha} && git branch -D {b.name}")
+    return cmds, bloqueadas
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Estado das branches contra o tronco.")
+    p.add_argument(
+        "--reap",
+        action="store_true",
+        help="imprime os comandos de arquivamento; nao executa nada",
+    )
     p.add_argument("--stale-days", type=int, default=STALE_DAYS)
     a = p.parse_args(argv)
+
     rows = collect()
     hoje = date.today()
     print(render(rows, hoje, a.stale_days))
     print()
     print(summary(rows, hoje, a.stale_days))
+
+    if a.reap:
+        cmds, bloqueadas = reap_commands(rows, hoje, a.stale_days)
+        print()
+        print(f"# {len(cmds)} de {len(rows)} branches a arquivar. Cole:")
+        for c in cmds:
+            print(c)
+        if bloqueadas:
+            print(
+                f"# {len(bloqueadas)} de {len(rows)} nao podem ser apagadas "
+                "(worktree ativo): " + ", ".join(bloqueadas)
+            )
+            print(
+                "# remedio: `git worktree list` para achar o caminho, "
+                "`git worktree remove <caminho>`, depois rode este comando de novo."
+            )
     return 0
 
 
