@@ -79,11 +79,21 @@ def should_fail(
     report: QCReport,
     pct_thresh: float = 5.0,
     min_density_words_per_minute: int = 2,
-    audio_duration_s: float | None = None
+    audio_duration_s: float | None = None,
+    p95_thresh_s: float = 1.8,
 ) -> Tuple[bool, str]:
     """
     Returns (failed, reason).
-    ``failed`` is True when any metric exceeds the threshold.
+    ``failed`` is True when any metric exceeds ITS OWN threshold.
+
+    São gates de dimensões diferentes, e por isso dials separados:
+    ``pct_thresh`` governa pct_long/pct_short (porcentagem de palavras) e
+    ``p95_thresh_s`` governa o p95 (segundos). Até 07/09/2026 o p95 estava
+    fixo em 1.8s e não obedecia a dial nenhum — `pct_thresh=100.0` deixava de
+    reprovar por porcentagem mas o p95 continuava reprovando, o que fazia
+    "tolerância máxima" não significar tolerância máxima. Escalar um limite em
+    segundos por uma porcentagem seria incoerente; expor o próprio limite é o
+    conserto. Passe ``float("inf")`` para desligar este gate.
     """
     if report.total_words == 0:
         return True, "Zero words in TextGrid — alignment produced nothing."
@@ -98,8 +108,8 @@ def should_fail(
             reasons.append(f"Muitas palavras perdidas (Densidade baixíssima: {wpm:.1f} WPM, esperado: {min_density_words_per_minute}). MFA não alinhou a letra.")
 
     # High p95 duration is a proxy for bad general alignments (everything stretched out)
-    if report.p95_duration > 1.8:
-        reasons.append(f"P95 Word Duration ({report.p95_duration:.2f}s) além do tolerável (>1.8s). Provável desalinhamento geral ou letra incorreta.")
+    if report.p95_duration > p95_thresh_s:
+        reasons.append(f"P95 Word Duration ({report.p95_duration:.2f}s) além do tolerável (>{p95_thresh_s}s). Provável desalinhamento geral ou letra incorreta.")
 
     if report.pct_long > pct_thresh:
         reasons.append(

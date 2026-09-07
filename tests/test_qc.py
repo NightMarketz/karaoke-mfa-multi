@@ -100,6 +100,41 @@ class TestShouldFail:
         failed_strict, _ = should_fail(report, pct_thresh=0.0)
         assert failed_strict
 
-        # At 100% tolerance nothing should fail
-        failed_lenient, _ = should_fail(report, pct_thresh=100.0)
+        # At 100% tolerance nothing should fail. São dois gates de dimensões
+        # diferentes, então "tolerância máxima" precisa soltar os dois dials:
+        # pct_thresh é porcentagem de palavras, p95_thresh_s é segundos.
+        failed_lenient, _ = should_fail(
+            report, pct_thresh=100.0, p95_thresh_s=float("inf")
+        )
         assert not failed_lenient
+
+
+class TestP95Gate:
+    """O gate do p95 é independente do pct_thresh — e até 07/09/2026 não tinha
+    teste nenhum. A cobertura que ele parecia ter era acidental: a razão do p95
+    é a que domina em test_fails_buggy_fixture, mas aquele caso passaria pelo
+    gate de porcentagem do mesmo jeito. Aqui ele é medido sozinho."""
+
+    def test_p95_reprova_no_default_mesmo_com_pct_liberado(self):
+        words = extract_words(load_textgrid("buggy_durations.TextGrid"))
+        report = qc_words(words)
+        assert report.p95_duration > 1.8  # cardinalidade: a fixture EXERCITA o gate
+        failed, reason = should_fail(report, pct_thresh=100.0)
+        assert failed
+        assert "P95" in reason
+
+    def test_p95_liberado_nao_reprova(self):
+        words = extract_words(load_textgrid("buggy_durations.TextGrid"))
+        report = qc_words(words)
+        _, reason = should_fail(
+            report, pct_thresh=100.0, p95_thresh_s=float("inf")
+        )
+        assert "P95" not in reason
+
+    def test_p95_limite_e_respeitado(self):
+        words = extract_words(load_textgrid("buggy_durations.TextGrid"))
+        report = qc_words(words)
+        acima = report.p95_duration - 0.01
+        abaixo = report.p95_duration + 0.01
+        assert should_fail(report, pct_thresh=100.0, p95_thresh_s=acima)[0]
+        assert not should_fail(report, pct_thresh=100.0, p95_thresh_s=abaixo)[0]
