@@ -460,7 +460,7 @@ def main():
 
     if args.job_id:
         wav_path    = kpaths.vocals_raw(args.job_id)
-        lyrics_path = kpaths.lyrics_txt(args.job_id)
+        lyrics_path = kpaths.lyrics_path(args.job_id)
         out_dir     = kpaths.alignment_dir(args.job_id)
 
         for p, label in [(wav_path, "Vocal"), (lyrics_path, "Letra")]:

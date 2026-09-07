@@ -49,6 +49,12 @@ def vocals_raw(job_id: str) -> Path:
 def mfa_corpus_dir(job_id: str) -> Path:
     return job_root(job_id) / "04_mfa_corpus"
 
+def corpus_dir(job_id: str) -> Path:
+    """Corpus .lab que o MFA consome. Alias de mfa_corpus_dir — confirmado
+    que quem grava (03_prepare_corpus.py) e quem le (04_mfa_alignment.py)
+    usam o mesmo diretorio 04_mfa_corpus."""
+    return mfa_corpus_dir(job_id)
+
 def mfa_textgrid(job_id: str) -> Path:
     """TextGrid gerado pelo MFA."""
     return job_root(job_id) / "05_alignment" / "mfa_vocals.TextGrid"
@@ -128,3 +134,39 @@ def word_timing_json(job_id: str) -> Path:
 
 def unmapped_regions_json(job_id: str) -> Path:
     return alignment_dir(job_id) / "unmapped_regions.json"
+
+def char_timing_json(job_id: str) -> Path:
+    """Timing por caractere do CTC. Gravado por 03_forced_align.py:138."""
+    return alignment_dir(job_id) / "char_timing.json"
+
+# --- Render / fundo ---
+
+def adlibs_json(job_id: str) -> Path:
+    """Timings de adlibs gerados pelo Step 03c/07."""
+    return alignment_dir(job_id) / "adlibs_timing.json"
+
+def input_job_dir(job_id: str) -> Path:
+    """Diretorio de input real do job (onde song.wav e escrito por
+    01_media_prep.py e lido por 02_vocal_isolation.py/13_process_conclusion.py).
+    Alias de input_dir — nao confundir com demucs_out_dir."""
+    return input_dir(job_id)
+
+def demucs_out_dir(job_id: str) -> Path:
+    """Pasta que o Demucs cria para este job: htdemucs/<stem do audio>/.
+    O Demucs nomeia a subpasta pelo stem do arquivo de entrada (song.wav),
+    nao pelo diretorio de input — ver scripts/02_vocal_isolation.py."""
+    return separation_dir(job_id) / "htdemucs" / "song"
+
+def song_wav(job_id: str) -> Path:
+    """WAV normalizado que 01_media_prep.py escreve (linha 49: input_job_dir /
+    "song.wav"). Citado por server.py:95, que estourava AttributeError ali —
+    antes de qualquer estagio rodar."""
+    return input_job_dir(job_id) / "song.wav"
+
+def background_png(job_id: str) -> Path:
+    """Ilustracao gerada pelo Step 08b."""
+    return step_output(job_id, "08_background") / "background.png"
+
+def output_video(job_id: str) -> Path:
+    """MP4 final. Alias do final_video ja existente."""
+    return final_video(job_id)
