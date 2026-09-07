@@ -36,7 +36,7 @@ def main():
     # 1. Remove Demucs output (usually the largest files)
     _progress(30, "Removendo stems intermediários...")
     # htdemucs/{job_id} contains bass.wav, drums.wav, other.wav, etc.
-    demucs_job_dir = sep_dir / "htdemucs" / kpaths.input_job_dir(job_id).name
+    demucs_job_dir = kpaths.demucs_out_dir(job_id)
     
     files_to_remove = ["bass.wav", "drums.wav", "other.wav"]
     for f in files_to_remove:

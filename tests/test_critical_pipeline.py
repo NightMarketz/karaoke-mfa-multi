@@ -23,6 +23,8 @@ from unittest import mock
 
 import pytest
 
+from conftest import stdout_protegido
+
 # Ensure project root is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -699,7 +701,8 @@ class TestNormaliseLyrics:
         mod = importlib.util.module_from_spec(spec)
         # Mock argparse to avoid sys.argv issues
         sys.modules["prepare_corpus"] = mod
-        spec.loader.exec_module(mod)
+        with stdout_protegido():          # ver conftest: o script
+            spec.loader.exec_module(mod)   # sequestra o stdout do pytest
 
         result = mod.normalise_lyrics("I'm still here, won't fall!")
         logger.info(f"  normalised = {result!r}")
@@ -717,7 +720,8 @@ class TestNormaliseLyrics:
         spec = importlib.util.spec_from_file_location("prepare_corpus2", str(spec_path))
         mod = importlib.util.module_from_spec(spec)
         sys.modules["prepare_corpus2"] = mod
-        spec.loader.exec_module(mod)
+        with stdout_protegido():          # ver conftest: o script
+            spec.loader.exec_module(mod)   # sequestra o stdout do pytest
 
         result = mod.normalise_lyrics("Hello, World! How's it going?")
         logger.info(f"  normalised = {result!r}")

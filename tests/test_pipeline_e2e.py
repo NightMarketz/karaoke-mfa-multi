@@ -3,6 +3,8 @@ Testa as 12 etapas do pipeline, injetando mocks ou verificando as saídas em cad
 """
 import os
 import json
+
+import pytest
 from pathlib import Path
 
 def verify_step_1_preprocess(job_dir):
@@ -57,6 +59,15 @@ def verify_step_12_render_video(job_dir):
     assert (job_dir / "07_video" / "karaoke_preview.mp4").exists(), "Step 12 failed: karaoke_preview.mp4 not found"
     print("Step 12 (Render Video) verified.")
 
+@pytest.mark.xfail(
+    reason="Artefato obsoleto: (a) a fixture job_dir_path nunca existiu, entao "
+           "este teste so sabe dar erro de coleta; (b) verify_step_12 exige "
+           "07_video/karaoke_preview.mp4, saida de scripts/08_render_video.py, "
+           "que este branch apagou — o render vivo e o 09_video_rendering.py, "
+           "que escreve em kpaths.output_video(). Reescrever contra o pipeline "
+           "atual ou apagar; nomear um renderizador morto e desonesto.",
+    run=False,
+)
 def test_pipeline_all_steps(job_dir_path):
     job_dir = Path(job_dir_path)
     if not job_dir.exists():

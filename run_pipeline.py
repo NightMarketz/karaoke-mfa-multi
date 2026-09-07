@@ -119,15 +119,19 @@ def build_steps(job_id, lang, romanization, aligner="mfa"):
             "cmd": [python, _p("scripts", "08_onset_dtw.py"), "--job-id", job_id]
         },
         {
-            "id": 11, "name": "Video Rendering",
+            "id": 11, "name": "Background Illustration",
+            "cmd": [python, _p("scripts", "08b_background_image.py"), "--job-id", job_id]
+        },
+        {
+            "id": 12, "name": "Video Rendering",
             "cmd": [python, _p("scripts", "09_video_rendering.py"), "--job-id", job_id]
         },
         {
-            "id": 12, "name": "System Cleanup",
+            "id": 13, "name": "System Cleanup",
             "cmd": [python, _p("scripts", "11_system_cleanup.py"), "--job-id", job_id]
         },
         {
-            "id": 13, "name": "Process Conclusion",
+            "id": 14, "name": "Process Conclusion",
             "cmd": [python, _p("scripts", "13_process_conclusion.py"), "--job-id", job_id]
         }
     ])
