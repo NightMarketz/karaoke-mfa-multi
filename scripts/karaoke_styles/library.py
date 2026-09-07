@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping
 
 DEFAULT_STYLE_KEY = "verse"
-SUPPORTED_EFFECTS = ("highlight", "fade_in", "bounce", "flash", "none")
+# What a line may ask for. "flash" is not here: it is a style property
+# (KaraokeStyle.highlight_effect), not something a line picks.
+SUPPORTED_EFFECTS = ("highlight", "none")
 
 
 @dataclass(frozen=True)
 class KaraokeStyle:
     r"""
-    One ASS style definition.
-    primary_color   = not-yet-sung text color   (\1c)  &HBBGGRR& format
-    secondary_color = progressive fill color    (\2c)  filled by \kf
+    One ASS style definition. Field names are designer-facing intent;
+    s06's _generate_ass swaps primary/secondary onto the ASS Style line
+    because libass sweeps \kf from SecondaryColour to PrimaryColour.
+    primary_color   = not-yet-sung text color   (written to \2c)  &HBBGGRR&
+    secondary_color = progressive fill color    (written to \1c)  filled by \kf
     outline_color   = border                    (\3c)
     back_color      = shadow/background         (\4c)
     """
@@ -34,7 +38,7 @@ class KaraokeStyle:
     alignment: int
     margin_v: int
     border_style: int = 1
-    flash_on_highlight: bool = False
+    highlight_effect: str = "highlight"
 
 
 @dataclass(frozen=True)
@@ -45,39 +49,11 @@ class StylePreset:
     description: str
     styles: Mapping[str, KaraokeStyle]
     effects: tuple[str, ...] = SUPPORTED_EFFECTS
-    effect_profile_id: str = "clean_sweep"
-
-
-@dataclass(frozen=True)
-class AnimationProfile:
-    id: str
-    label: str
-    safety: str
-    karaoke_tag: str
-    line_effects: tuple[str, ...]
-    word_effects: tuple[str, ...]
-    layer_strategy: str
-    max_extra_layers: int
-    motion_intensity: str
-    description: str
 
 
 def _c(r: int, g: int, b: int, a: int = 0) -> str:
     """Convert RGBA to ASS &HAABBGGRR format."""
     return f"&H{a:02X}{b:02X}{g:02X}{r:02X}"
-
-
-ANIMATION_PROFILES: dict[str, AnimationProfile] = {
-    "clean_sweep": AnimationProfile("clean_sweep", "Clean Sweep", "safe", "kf", ("fade",), ("sweep",), "single", 0, "none", "Current readable left-to-right karaoke sweep."),
-    "instant": AnimationProfile("instant", "Instant Fill", "safe", "k", ("fade",), ("instant",), "single", 0, "none", "Classic instant karaoke color switch."),
-    "outline_pop": AnimationProfile("outline_pop", "Outline Pop", "safe", "ko", ("fade",), ("outline_pop",), "single", 0, "low", "Outline appears at the vocal attack for a crisp pop."),
-    "soft_glow": AnimationProfile("soft_glow", "Soft Glow", "safe", "kf", ("fade",), ("glow_pulse",), "single", 0, "low", "Readable sweep with a restrained outline glow pulse."),
-    "bounce_word": AnimationProfile("bounce_word", "Bounce Word", "safe", "kf", ("fade",), ("scale_pop",), "single", 0, "medium", "Small scale bounce on each highlighted word."),
-    "chorus_bloom": AnimationProfile("chorus_bloom", "Chorus Bloom", "layered", "kf", ("fade",), ("glow_pulse", "echo_shadow"), "extra_layer", 1, "medium", "Future chorus-focused bloom using one extra glow layer."),
-    "syllable_float": AnimationProfile("syllable_float", "Syllable Float", "layered", "kf", ("fade",), ("float",), "per_syllable", 1, "medium", "Future per-syllable vertical motion."),
-    "typewriter_clip": AnimationProfile("typewriter_clip", "Typewriter Clip", "layered", "kf", ("fade",), ("clip_reveal",), "clip", 1, "low", "Future rectangular clip reveal."),
-    "aegisub_templater": AnimationProfile("aegisub_templater", "Aegisub Templater", "experimental", "kf", ("template",), ("inline_fx",), "templater", 99, "high", "Future Automation/Lua templater export profile."),
-}
 
 
 DEFAULT_STYLES: dict[str, KaraokeStyle] = {
@@ -92,6 +68,21 @@ DEFAULT_STYLES: dict[str, KaraokeStyle] = {
         outline_color=_c(0, 0, 0),
         back_color=_c(0, 0, 0, 80),
         outline=2.5,
+        shadow=1.5,
+        alignment=2,
+        margin_v=40,
+    ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Segoe UI Bold",
+        fontsize=56,
+        bold=True,
+        italic=False,
+        primary_color=_c(235, 235, 235),
+        secondary_color=_c(255, 205, 0),
+        outline_color=_c(70, 50, 0),
+        back_color=_c(0, 0, 0, 76),
+        outline=2.6,
         shadow=1.5,
         alignment=2,
         margin_v=40,
@@ -126,18 +117,37 @@ DEFAULT_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=40,
     ),
+    # intro/outro stay understated, but the sung fill is now a muted cyan from
+    # the preset's own palette instead of a 20-step of the same gray: the old
+    # 180->200 pair had no hue and no brightness, so the sweep did not read.
+    # cyberpunk aliases both of these, so it inherits the fix.
     "intro": KaraokeStyle(
         name="Intro",
         fontname="Segoe UI Bold",
         fontsize=40,
         bold=False,
         italic=False,
-        primary_color=_c(180, 180, 180),
-        secondary_color=_c(200, 200, 200),
+        primary_color=_c(215, 215, 215),
+        secondary_color=_c(80, 150, 175),
         outline_color=_c(0, 0, 0),
         back_color=_c(0, 0, 0, 100),
         outline=2.0,
         shadow=1.0,
+        alignment=2,
+        margin_v=40,
+    ),
+    "drop": KaraokeStyle(
+        name="Drop",
+        fontname="Segoe UI Bold",
+        fontsize=60,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 235, 215),
+        secondary_color=_c(255, 120, 30),
+        outline_color=_c(85, 32, 0),
+        back_color=_c(0, 0, 0, 70),
+        outline=3.0,
+        shadow=1.8,
         alignment=2,
         margin_v=40,
     ),
@@ -147,12 +157,27 @@ DEFAULT_STYLES: dict[str, KaraokeStyle] = {
         fontsize=40,
         bold=False,
         italic=False,
-        primary_color=_c(180, 180, 180),
-        secondary_color=_c(200, 200, 200),
+        primary_color=_c(215, 215, 215),
+        secondary_color=_c(80, 150, 175),
         outline_color=_c(0, 0, 0),
         back_color=_c(0, 0, 0, 100),
         outline=2.0,
         shadow=1.0,
+        alignment=2,
+        margin_v=40,
+    ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(230, 230, 230),
+        secondary_color=_c(120, 200, 255),
+        outline_color=_c(0, 0, 0),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.2,
+        shadow=0.8,
         alignment=2,
         margin_v=40,
     ),
@@ -208,6 +233,54 @@ NEON_STYLES["chorus"] = KaraokeStyle(
     margin_v=40,
 )
 
+NEON_STYLES["prechorus"] = KaraokeStyle(
+    name="PreChorus",
+    fontname="Segoe UI Bold",
+    fontsize=60,
+    bold=True,
+    italic=False,
+    primary_color=_c(50, 50, 50),
+    secondary_color=_c(0, 255, 255),
+    outline_color=_c(0, 190, 190),
+    back_color=_c(0, 0, 0, 60),
+    outline=3.0,
+    shadow=0.0,
+    alignment=2,
+    margin_v=40,
+)
+
+NEON_STYLES["drop"] = KaraokeStyle(
+    name="Drop",
+    fontname="Segoe UI Bold",
+    fontsize=64,
+    bold=True,
+    italic=False,
+    primary_color=_c(55, 55, 55),
+    secondary_color=_c(255, 110, 0),
+    outline_color=_c(170, 70, 0),
+    back_color=_c(0, 0, 0, 60),
+    outline=3.2,
+    shadow=0.0,
+    alignment=2,
+    margin_v=40,
+)
+
+NEON_STYLES["rap"] = KaraokeStyle(
+    name="Rap",
+    fontname="Segoe UI Bold",
+    fontsize=48,
+    bold=False,
+    italic=False,
+    primary_color=_c(45, 45, 45),
+    secondary_color=_c(170, 255, 60),
+    outline_color=_c(110, 190, 30),
+    back_color=_c(0, 0, 0, 60),
+    outline=2.6,
+    shadow=0.0,
+    alignment=2,
+    margin_v=40,
+)
+
 CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
     "verse": KaraokeStyle(
         name="Verse",
@@ -224,7 +297,24 @@ CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=50,
         border_style=3,
-        flash_on_highlight=True,
+        highlight_effect="flash",
+    ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Segoe UI Bold",
+        fontsize=56,
+        bold=True,
+        italic=False,
+        primary_color=_c(150, 60, 205),
+        secondary_color=_c(255, 240, 60),
+        outline_color=_c(0, 0, 0),
+        back_color=_c(0, 0, 0, 150),
+        outline=2.6,
+        shadow=1.5,
+        alignment=2,
+        margin_v=50,
+        border_style=3,
+        highlight_effect="flash",
     ),
     "chorus": KaraokeStyle(
         name="Chorus",
@@ -241,7 +331,7 @@ CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=50,
         border_style=3,
-        flash_on_highlight=True,
+        highlight_effect="flash",
     ),
     "bridge": KaraokeStyle(
         name="Bridge",
@@ -258,10 +348,43 @@ CYBERPUNK_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=50,
         border_style=3,
-        flash_on_highlight=False,
+        highlight_effect="highlight",
     ),
     "intro": DEFAULT_STYLES["intro"],
+    "drop": KaraokeStyle(
+        name="Drop",
+        fontname="Segoe UI Bold",
+        fontsize=60,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 255, 255),
+        secondary_color=_c(255, 0, 140),
+        outline_color=_c(90, 0, 60),
+        back_color=_c(0, 0, 0, 150),
+        outline=3.0,
+        shadow=1.8,
+        alignment=2,
+        margin_v=50,
+        border_style=3,
+        highlight_effect="flash",
+    ),
     "outro": DEFAULT_STYLES["outro"],
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(210, 190, 235),
+        secondary_color=_c(120, 255, 220),
+        outline_color=_c(0, 0, 0),
+        back_color=_c(0, 0, 0, 150),
+        outline=2.2,
+        shadow=1.0,
+        alignment=2,
+        margin_v=50,
+        border_style=3,
+    ),
     "ad_lib": DEFAULT_STYLES["ad_lib"],
 }
 
@@ -287,7 +410,11 @@ SECTION_CODED_STYLES: dict[str, KaraokeStyle] = {
         fontsize=52,
         bold=True,
         italic=False,
-        primary_color=_c(245, 245, 245),
+        # Waiting text is a cool gray, not near-white: the old 245->255 pair
+        # was a luminance ratio of 1.09 with no hue shift either, so the \kf
+        # sweep was invisible. Verse stays the neutral section, but the fill
+        # now reads as a step in brightness.
+        primary_color=_c(168, 176, 190),
         secondary_color=_c(255, 255, 255),
         outline_color=_c(20, 20, 20),
         back_color=_c(0, 0, 0, 80),
@@ -371,6 +498,21 @@ SECTION_CODED_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(230, 230, 235),
+        secondary_color=_c(120, 200, 255),
+        outline_color=_c(10, 10, 20),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.4,
+        shadow=0.8,
+        alignment=2,
+        margin_v=42,
+    ),
     "ad_lib": DEFAULT_STYLES["ad_lib"],
 }
 
@@ -406,9 +548,9 @@ SINGLE_STYLE_KF_STYLES: dict[str, KaraokeStyle] = {
         alignment=_SINGLE_STYLE_BASE.alignment,
         margin_v=_SINGLE_STYLE_BASE.margin_v,
         border_style=_SINGLE_STYLE_BASE.border_style,
-        flash_on_highlight=_SINGLE_STYLE_BASE.flash_on_highlight,
+        highlight_effect=_SINGLE_STYLE_BASE.highlight_effect,
     )
-    for key in ("intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "ad_lib")
+    for key in ("intro", "verse", "prechorus", "chorus", "bridge", "drop", "outro", "rap", "ad_lib")
 }
 
 AEGISUB_CLASSIC_BLUE_STYLES: dict[str, KaraokeStyle] = {
@@ -442,6 +584,21 @@ AEGISUB_CLASSIC_BLUE_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Segoe UI Bold",
+        fontsize=56,
+        bold=True,
+        italic=False,
+        primary_color=_c(250, 252, 255),
+        secondary_color=_c(90, 160, 255),
+        outline_color=_c(0, 30, 100),
+        back_color=_c(0, 0, 0, 76),
+        outline=2.6,
+        shadow=1.3,
+        alignment=2,
+        margin_v=42,
+    ),
     "chorus": KaraokeStyle(
         name="Chorus",
         fontname="Segoe UI Bold",
@@ -472,6 +629,21 @@ AEGISUB_CLASSIC_BLUE_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "drop": KaraokeStyle(
+        name="Drop",
+        fontname="Segoe UI Bold",
+        fontsize=60,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 250, 240),
+        secondary_color=_c(255, 190, 60),
+        outline_color=_c(92, 58, 0),
+        back_color=_c(0, 0, 0, 72),
+        outline=3.0,
+        shadow=1.5,
+        alignment=2,
+        margin_v=42,
+    ),
     "outro": KaraokeStyle(
         name="Outro",
         fontname="Segoe UI Bold",
@@ -484,6 +656,21 @@ AEGISUB_CLASSIC_BLUE_STYLES: dict[str, KaraokeStyle] = {
         back_color=_c(0, 0, 0, 90),
         outline=2.0,
         shadow=1.0,
+        alignment=2,
+        margin_v=42,
+    ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(235, 242, 250),
+        secondary_color=_c(120, 190, 235),
+        outline_color=_c(0, 32, 72),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.2,
+        shadow=0.8,
         alignment=2,
         margin_v=42,
     ),
@@ -610,6 +797,21 @@ AEGISUB_GOLD_CHORUS_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Semibold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(245, 238, 222),
+        secondary_color=_c(214, 178, 110),
+        outline_color=_c(72, 44, 0),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.2,
+        shadow=0.8,
+        alignment=2,
+        margin_v=42,
+    ),
     "ad_lib": KaraokeStyle(
         name="AdLib",
         fontname="Segoe UI Semibold",
@@ -733,6 +935,21 @@ AEGISUB_ANIME_POP_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(245, 240, 250),
+        secondary_color=_c(120, 205, 255),
+        outline_color=_c(70, 20, 80),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.3,
+        shadow=0.9,
+        alignment=2,
+        margin_v=42,
+    ),
     "ad_lib": KaraokeStyle(
         name="AdLib",
         fontname="Segoe UI Bold",
@@ -781,6 +998,21 @@ AEGISUB_SOFT_PASTEL_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Segoe UI Semibold",
+        fontsize=56,
+        bold=True,
+        italic=False,
+        primary_color=_c(252, 246, 236),
+        secondary_color=_c(232, 196, 142),
+        outline_color=_c(84, 64, 44),
+        back_color=_c(0, 0, 0, 72),
+        outline=2.1,
+        shadow=1.0,
+        alignment=2,
+        margin_v=42,
+    ),
     "chorus": KaraokeStyle(
         name="Chorus",
         fontname="Segoe UI Semibold",
@@ -811,6 +1043,21 @@ AEGISUB_SOFT_PASTEL_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "drop": KaraokeStyle(
+        name="Drop",
+        fontname="Segoe UI Semibold",
+        fontsize=60,
+        bold=True,
+        italic=False,
+        primary_color=_c(252, 240, 236),
+        secondary_color=_c(236, 158, 142),
+        outline_color=_c(92, 52, 44),
+        back_color=_c(0, 0, 0, 70),
+        outline=2.3,
+        shadow=1.1,
+        alignment=2,
+        margin_v=42,
+    ),
     "outro": KaraokeStyle(
         name="Outro",
         fontname="Segoe UI Semibold",
@@ -823,6 +1070,21 @@ AEGISUB_SOFT_PASTEL_STYLES: dict[str, KaraokeStyle] = {
         back_color=_c(0, 0, 0, 84),
         outline=1.8,
         shadow=0.9,
+        alignment=2,
+        margin_v=42,
+    ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Semibold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(244, 244, 248),
+        secondary_color=_c(172, 186, 214),
+        outline_color=_c(58, 64, 82),
+        back_color=_c(0, 0, 0, 78),
+        outline=1.9,
+        shadow=0.8,
         alignment=2,
         margin_v=42,
     ),
@@ -874,6 +1136,21 @@ AEGISUB_NIGHT_GLOW_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Segoe UI Bold",
+        fontsize=56,
+        bold=True,
+        italic=False,
+        primary_color=_c(242, 246, 255),
+        secondary_color=_c(120, 120, 255),
+        outline_color=_c(18, 18, 86),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.8,
+        shadow=1.1,
+        alignment=2,
+        margin_v=42,
+    ),
     "chorus": KaraokeStyle(
         name="Chorus",
         fontname="Segoe UI Bold",
@@ -904,6 +1181,21 @@ AEGISUB_NIGHT_GLOW_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "drop": KaraokeStyle(
+        name="Drop",
+        fontname="Segoe UI Bold",
+        fontsize=60,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 246, 250),
+        secondary_color=_c(255, 86, 190),
+        outline_color=_c(92, 10, 62),
+        back_color=_c(0, 0, 0, 76),
+        outline=3.0,
+        shadow=1.2,
+        alignment=2,
+        margin_v=42,
+    ),
     "outro": KaraokeStyle(
         name="Outro",
         fontname="Segoe UI Bold",
@@ -915,6 +1207,21 @@ AEGISUB_NIGHT_GLOW_STYLES: dict[str, KaraokeStyle] = {
         outline_color=_c(8, 18, 68),
         back_color=_c(0, 0, 0, 96),
         outline=2.2,
+        shadow=0.8,
+        alignment=2,
+        margin_v=42,
+    ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(226, 234, 250),
+        secondary_color=_c(110, 150, 205),
+        outline_color=_c(10, 22, 76),
+        back_color=_c(0, 0, 0, 84),
+        outline=2.3,
         shadow=0.8,
         alignment=2,
         margin_v=42,
@@ -964,6 +1271,21 @@ AEGISUB_IMPACT_RED_STYLES: dict[str, KaraokeStyle] = {
         back_color=_c(0, 0, 0, 82),
         outline=2.8,
         shadow=1.2,
+        alignment=2,
+        margin_v=42,
+    ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Segoe UI Black",
+        fontsize=58,
+        bold=True,
+        italic=False,
+        primary_color=_c(250, 246, 240),
+        secondary_color=_c(255, 196, 60),
+        outline_color=_c(96, 60, 0),
+        back_color=_c(0, 0, 0, 78),
+        outline=3.0,
+        shadow=1.4,
         alignment=2,
         margin_v=42,
     ),
@@ -1027,6 +1349,21 @@ AEGISUB_IMPACT_RED_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Black",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(236, 236, 236),
+        secondary_color=_c(198, 60, 44),
+        outline_color=_c(66, 0, 0),
+        back_color=_c(0, 0, 0, 84),
+        outline=2.4,
+        shadow=0.8,
+        alignment=2,
+        margin_v=42,
+    ),
     "ad_lib": KaraokeStyle(
         name="AdLib",
         fontname="Segoe UI Black",
@@ -1075,6 +1412,21 @@ AEGISUB_DUAL_VOCAL_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Segoe UI Bold",
+        fontsize=56,
+        bold=True,
+        italic=False,
+        primary_color=_c(250, 252, 255),
+        secondary_color=_c(110, 190, 255),
+        outline_color=_c(0, 52, 96),
+        back_color=_c(0, 0, 0, 76),
+        outline=2.6,
+        shadow=1.3,
+        alignment=2,
+        margin_v=42,
+    ),
     "chorus": KaraokeStyle(
         name="Chorus",
         fontname="Segoe UI Bold",
@@ -1105,6 +1457,21 @@ AEGISUB_DUAL_VOCAL_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "drop": KaraokeStyle(
+        name="Drop",
+        fontname="Segoe UI Bold",
+        fontsize=60,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 248, 236),
+        secondary_color=_c(255, 176, 60),
+        outline_color=_c(96, 56, 0),
+        back_color=_c(0, 0, 0, 72),
+        outline=3.0,
+        shadow=1.4,
+        alignment=2,
+        margin_v=42,
+    ),
     "outro": KaraokeStyle(
         name="Outro",
         fontname="Segoe UI Bold",
@@ -1117,6 +1484,21 @@ AEGISUB_DUAL_VOCAL_STYLES: dict[str, KaraokeStyle] = {
         back_color=_c(0, 0, 0, 90),
         outline=2.1,
         shadow=1.0,
+        alignment=2,
+        margin_v=42,
+    ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(236, 244, 250),
+        secondary_color=_c(130, 200, 225),
+        outline_color=_c(0, 60, 80),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.2,
+        shadow=0.9,
         alignment=2,
         margin_v=42,
     ),
@@ -1138,14 +1520,20 @@ AEGISUB_DUAL_VOCAL_STYLES: dict[str, KaraokeStyle] = {
 }
 
 AEGISUB_CLEAN_EDITORIAL_STYLES: dict[str, KaraokeStyle] = {
+    # The preset's language is "sung = the deeper tinted tone" (chorus gold,
+    # bridge silver-blue, ad_lib sage). intro/verse/outro were the three
+    # neutrals that had no tint at all — a 16..28 step of the same gray, which
+    # left the sweep invisible. They now carry the same tints: cool blue for
+    # the quiet sections, warm sand for the verse (a softer sibling of the
+    # chorus gold, so it stays distinct from the blue bridge).
     "intro": KaraokeStyle(
         name="Intro",
         fontname="Arial",
         fontsize=40,
         bold=False,
         italic=False,
-        primary_color=_c(206, 210, 214),
-        secondary_color=_c(190, 194, 200),
+        primary_color=_c(212, 216, 220),
+        secondary_color=_c(118, 140, 164),
         outline_color=_c(28, 32, 36),
         back_color=_c(0, 0, 0, 82),
         outline=1.8,
@@ -1160,11 +1548,26 @@ AEGISUB_CLEAN_EDITORIAL_STYLES: dict[str, KaraokeStyle] = {
         bold=True,
         italic=False,
         primary_color=_c(246, 246, 246),
-        secondary_color=_c(230, 230, 230),
+        secondary_color=_c(196, 170, 116),
         outline_color=_c(30, 32, 34),
         back_color=_c(0, 0, 0, 72),
         outline=2.0,
         shadow=1.0,
+        alignment=2,
+        margin_v=42,
+    ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Arial",
+        fontsize=54,
+        bold=True,
+        italic=False,
+        primary_color=_c(250, 248, 244),
+        secondary_color=_c(168, 152, 132),
+        outline_color=_c(46, 40, 32),
+        back_color=_c(0, 0, 0, 72),
+        outline=2.2,
+        shadow=1.1,
         alignment=2,
         margin_v=42,
     ),
@@ -1198,17 +1601,47 @@ AEGISUB_CLEAN_EDITORIAL_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "drop": KaraokeStyle(
+        name="Drop",
+        fontname="Arial",
+        fontsize=58,
+        bold=True,
+        italic=False,
+        primary_color=_c(252, 246, 240),
+        secondary_color=_c(188, 110, 80),
+        outline_color=_c(74, 38, 26),
+        back_color=_c(0, 0, 0, 70),
+        outline=2.4,
+        shadow=1.2,
+        alignment=2,
+        margin_v=42,
+    ),
     "outro": KaraokeStyle(
         name="Outro",
         fontname="Arial",
         fontsize=40,
         bold=False,
         italic=False,
-        primary_color=_c(196, 198, 202),
-        secondary_color=_c(168, 172, 178),
+        primary_color=_c(200, 202, 206),
+        secondary_color=_c(112, 130, 152),
         outline_color=_c(28, 32, 36),
         back_color=_c(0, 0, 0, 84),
         outline=1.8,
+        shadow=0.8,
+        alignment=2,
+        margin_v=42,
+    ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Arial",
+        fontsize=42,
+        bold=False,
+        italic=False,
+        primary_color=_c(238, 238, 240),
+        secondary_color=_c(150, 158, 170),
+        outline_color=_c(32, 36, 40),
+        back_color=_c(0, 0, 0, 80),
+        outline=1.9,
         shadow=0.8,
         alignment=2,
         margin_v=42,
@@ -1261,6 +1694,21 @@ AEGISUB_CYBER_MINIMAL_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "prechorus": KaraokeStyle(
+        name="PreChorus",
+        fontname="Segoe UI Semibold",
+        fontsize=56,
+        bold=True,
+        italic=False,
+        primary_color=_c(240, 250, 255),
+        secondary_color=_c(110, 120, 255),
+        outline_color=_c(18, 20, 80),
+        back_color=_c(0, 0, 0, 70),
+        outline=2.6,
+        shadow=0.0,
+        alignment=2,
+        margin_v=42,
+    ),
     "chorus": KaraokeStyle(
         name="Chorus",
         fontname="Segoe UI Semibold",
@@ -1291,6 +1739,21 @@ AEGISUB_CYBER_MINIMAL_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "drop": KaraokeStyle(
+        name="Drop",
+        fontname="Segoe UI Semibold",
+        fontsize=60,
+        bold=True,
+        italic=False,
+        primary_color=_c(255, 248, 240),
+        secondary_color=_c(255, 168, 0),
+        outline_color=_c(86, 54, 0),
+        back_color=_c(0, 0, 0, 68),
+        outline=2.8,
+        shadow=0.0,
+        alignment=2,
+        margin_v=42,
+    ),
     "outro": KaraokeStyle(
         name="Outro",
         fontname="Segoe UI Semibold",
@@ -1302,6 +1765,21 @@ AEGISUB_CYBER_MINIMAL_STYLES: dict[str, KaraokeStyle] = {
         outline_color=_c(0, 48, 62),
         back_color=_c(0, 0, 0, 82),
         outline=2.0,
+        shadow=0.0,
+        alignment=2,
+        margin_v=42,
+    ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Semibold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(234, 240, 244),
+        secondary_color=_c(120, 196, 210),
+        outline_color=_c(0, 52, 64),
+        back_color=_c(0, 0, 0, 76),
+        outline=2.2,
         shadow=0.0,
         alignment=2,
         margin_v=42,
@@ -1429,6 +1907,21 @@ AEGISUB_STAGE_LIGHTS_STYLES: dict[str, KaraokeStyle] = {
         alignment=2,
         margin_v=42,
     ),
+    "rap": KaraokeStyle(
+        name="Rap",
+        fontname="Segoe UI Bold",
+        fontsize=44,
+        bold=False,
+        italic=False,
+        primary_color=_c(240, 244, 250),
+        secondary_color=_c(140, 180, 220),
+        outline_color=_c(8, 36, 84),
+        back_color=_c(0, 0, 0, 80),
+        outline=2.3,
+        shadow=0.9,
+        alignment=2,
+        margin_v=42,
+    ),
     "ad_lib": KaraokeStyle(
         name="AdLib",
         fontname="Segoe UI Bold",
@@ -1445,15 +1938,297 @@ AEGISUB_STAGE_LIGHTS_STYLES: dict[str, KaraokeStyle] = {
         margin_v=42,
     ),
 }
-STYLE_DEFAULTS: dict[str, dict[str, str]] = {
-    "intro": {"color": "soft", "effect": "fade_in"},
-    "verse": {"color": "default", "effect": "highlight"},
-    "prechorus": {"color": "warm", "effect": "highlight"},
-    "chorus": {"color": "intense", "effect": "highlight"},
-    "bridge": {"color": "cool", "effect": "highlight"},
-    "drop": {"color": "warm", "effect": "highlight"},
-    "outro": {"color": "warm", "effect": "fade_in"},
-    "ad_lib": {"color": "soft", "effect": "none"},
+# ── Modern presets ────────────────────────────────────────────────────────
+# Two looks the section-coded palettes cannot express with colour alone.
+#
+# pill: BorderStyle 3 = opaque box. In libass the box is filled with
+# OutlineColour and `outline` becomes its padding, so outline_color IS the box
+# colour here, not a border. Shadow 0 keeps the edge clean.
+# ponytail: BorderStyle 3 draws a hard RECTANGLE — the name is aspirational.
+# Rounded corners need a \p1 vector drawing on a layer below the text, which
+# also means measuring the line's width. Upgrade there only if the square
+# corners actually bother someone.
+#
+# focus-pull: the whole line sits out of focus and each syllable sharpens on its
+# own attack. It exists only because effects.py now anchors \t at the syllable's
+# offset — with the old line-relative \t every word sharpened at once.
+_LOUD_KEYS = ("chorus", "drop")
+
+
+def _modern_variants(base: KaraokeStyle, *, loud_fontsize: int) -> dict[str, KaraokeStyle]:
+    """One base, per-section name + a size bump on the hook. Nothing else."""
+    return {
+        key: replace(
+            base,
+            name=SECTION_CODED_STYLES[key].name,
+            fontsize=(
+                loud_fontsize if key in _LOUD_KEYS
+                else base.fontsize - 8 if key == "ad_lib"
+                else base.fontsize
+            ),
+            italic=key == "ad_lib",
+        )
+        for key in SECTION_CODED_STYLES
+    }
+
+
+_PILL_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Bold",
+    fontsize=52,
+    bold=True,
+    italic=False,
+    primary_color=_c(225, 225, 230),    # waiting: soft white on the box
+    secondary_color=_c(214, 255, 60),   # sung: reels lime
+    outline_color=_c(14, 14, 18),       # the box itself
+    back_color=_c(0, 0, 0, 255),        # transparent: no shadow box
+    outline=6.0,                        # box padding
+    shadow=0.0,
+    alignment=2,
+    margin_v=64,
+    border_style=3,
+)
+
+PILL_STYLES: dict[str, KaraokeStyle] = _modern_variants(_PILL_BASE, loud_fontsize=60)
+
+_FOCUS_PULL_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Bold",
+    fontsize=56,
+    bold=True,
+    italic=False,
+    primary_color=_c(148, 148, 158),    # waiting: dimmed, and blurred by \blur3
+    secondary_color=_c(255, 255, 255),  # sung: sharp white
+    outline_color=_c(8, 8, 12),
+    back_color=_c(0, 0, 0, 120),
+    outline=1.8,                        # thin: \blur muddies a heavy border
+    shadow=1.0,
+    alignment=2,
+    margin_v=52,
+    highlight_effect="focus",
+)
+
+FOCUS_PULL_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _FOCUS_PULL_BASE, loud_fontsize=64
+)
+
+# bold-highlight: the short-form caption spec that measures best today — heavy
+# sans, hot fill on the active word, a rim thick enough to survive any
+# background, parked in the lower-middle third instead of on the frame edge.
+# Its power is contrast, not motion, so it keeps the plain sweep.
+# ponytail: the references call for Montserrat/Proxima Nova Bold; neither is
+# installed here and libass substitutes silently, so this uses Segoe UI Black.
+# Install the font and change one field if the heavier cut is wanted.
+_BOLD_HIGHLIGHT_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Black",
+    fontsize=58,
+    bold=True,
+    italic=False,
+    primary_color=_c(255, 255, 255),   # waiting: pure white
+    secondary_color=_c(255, 214, 0),   # sung: hot yellow
+    outline_color=_c(0, 0, 0),         # the rim that does the readability work
+    back_color=_c(0, 0, 0, 160),
+    outline=4.5,
+    shadow=0.0,
+    alignment=2,
+    margin_v=150,                      # lower-middle third, not the very bottom
+)
+
+BOLD_HIGHLIGHT_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _BOLD_HIGHLIGHT_BASE, loud_fontsize=66
+)
+
+# word-reveal: nothing on screen ahead of the voice. Lyric-video look — the
+# singer cannot read ahead, which is why it is its own preset and not a default.
+_WORD_REVEAL_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Black",
+    fontsize=58,
+    bold=True,
+    italic=False,
+    primary_color=_c(255, 255, 255),
+    secondary_color=_c(120, 240, 255),  # sung: cold cyan against the white
+    outline_color=_c(10, 12, 20),
+    back_color=_c(0, 0, 0, 140),
+    outline=3.0,
+    shadow=1.0,
+    alignment=2,
+    margin_v=120,
+    highlight_effect="reveal",
+)
+
+WORD_REVEAL_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _WORD_REVEAL_BASE, loud_fontsize=66
+)
+
+# word-pop: the "word pop" caption — clean face, solid colour, a bounce on each
+# attack. The bounce is vertical only (see effects._pop), so it never reflows.
+_WORD_POP_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Black",
+    fontsize=56,
+    bold=True,
+    italic=False,
+    primary_color=_c(240, 240, 245),
+    secondary_color=_c(255, 106, 92),   # sung: coral
+    outline_color=_c(16, 10, 14),
+    back_color=_c(0, 0, 0, 150),
+    outline=3.5,
+    shadow=1.0,
+    alignment=2,
+    margin_v=130,
+    highlight_effect="pop",
+)
+
+WORD_POP_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _WORD_POP_BASE, loud_fontsize=64
+)
+
+# ── Motion presets ────────────────────────────────────────────────────────
+# The first three that could not exist before: their effects animate position,
+# rotation or uniform scale, so s06 gives every syllable its own Dialogue and
+# \pos placed from real font metrics. Same face and geometry as word-pop —
+# only the fill colour and the effect change, so the motion is what you are
+# comparing and not a second variable.
+
+_FLY_IN_BASE = replace(
+    _WORD_POP_BASE,
+    secondary_color=_c(120, 220, 255),   # sung: ice blue
+    highlight_effect="fly-in",
+)
+FLY_IN_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _FLY_IN_BASE, loud_fontsize=64
+)
+
+_SWING_BASE = replace(
+    _WORD_POP_BASE,
+    secondary_color=_c(255, 208, 92),    # sung: warm amber
+    highlight_effect="swing",
+)
+SWING_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _SWING_BASE, loud_fontsize=64
+)
+
+_PUNCH_BASE = replace(
+    _WORD_POP_BASE,
+    secondary_color=_c(255, 92, 141),    # sung: hot pink
+    highlight_effect="punch",
+)
+PUNCH_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _PUNCH_BASE, loud_fontsize=64
+)
+
+# typewriter: letters land one at a time. Narrative pacing, so a lighter cut and
+# generous tracking; the amber fill reads as terminal text rather than caption.
+_TYPEWRITER_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Semibold",
+    fontsize=52,
+    bold=False,
+    italic=False,
+    primary_color=_c(232, 228, 218),
+    secondary_color=_c(255, 176, 59),   # sung: amber
+    outline_color=_c(10, 8, 6),
+    back_color=_c(0, 0, 0, 130),
+    outline=2.6,
+    shadow=1.0,
+    alignment=2,
+    margin_v=110,
+    highlight_effect="typewriter",
+)
+
+TYPEWRITER_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _TYPEWRITER_BASE, loud_fontsize=58
+)
+
+# glitch: chromatic aberration on a single Dialogue line. The style's SHADOW is
+# the offset colour copy (cyan) and the outline is the opposite rim (magenta),
+# which is why shadow is opaque and unusually far out.
+# ponytail: this is one-sided aberration — real two-sided needs a ghost Dialogue
+# per line at an offset \pos, i.e. s06 emitting more than one event per line.
+# Worth doing only if the single offset reads as too tame on real footage.
+_GLITCH_BASE = KaraokeStyle(
+    name="Verse",
+    fontname="Segoe UI Black",
+    fontsize=56,
+    bold=True,
+    italic=False,
+    primary_color=_c(122, 134, 166),    # waiting: muted slate, so the sweep reads
+    secondary_color=_c(255, 255, 255),
+    outline_color=_c(255, 0, 110),      # magenta rim
+    back_color=_c(0, 229, 255),         # cyan offset copy, fully opaque
+    outline=2.0,
+    shadow=4.0,
+    alignment=2,
+    margin_v=120,
+)
+
+GLITCH_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _GLITCH_BASE, loud_fontsize=64
+)
+
+# ── Layer presets ────────────────────────────────────────────────
+# The four looks that needed colour, layers and a mask to exist as data. Same
+# face and geometry as word-pop, so the LAYER work is the only variable you are
+# comparing and not a second one.
+
+_GLOW_BASE = replace(
+    _WORD_POP_BASE,
+    primary_color=_c(150, 165, 190),     # waiting: cool slate, so the halo reads
+    secondary_color=_c(255, 255, 255),   # sung: white inside a cyan halo
+    outline_color=_c(6, 10, 18),
+    highlight_effect="glow",
+)
+GLOW_STYLES: dict[str, KaraokeStyle] = _modern_variants(_GLOW_BASE, loud_fontsize=64)
+
+_ABERRATION_BASE = replace(
+    _WORD_POP_BASE,
+    primary_color=_c(122, 134, 166),     # waiting: muted slate, so the sweep reads
+    secondary_color=_c(255, 255, 255),
+    outline_color=_c(8, 8, 12),
+    highlight_effect="aberration",
+)
+ABERRATION_STYLES: dict[str, KaraokeStyle] = _modern_variants(
+    _ABERRATION_BASE, loud_fontsize=64
+)
+
+_FLARE_BASE = replace(
+    _WORD_POP_BASE,
+    primary_color=_c(214, 214, 224),
+    secondary_color=_c(255, 236, 245),
+    # The flare ANIMATES this register, so the style value is only the resting
+    # pose; effects.py's first key is what actually holds between attacks.
+    outline_color=_c(10, 10, 18),
+    highlight_effect="flare",
+)
+FLARE_STYLES: dict[str, KaraokeStyle] = _modern_variants(_FLARE_BASE, loud_fontsize=64)
+
+_SWEEP_BASE = replace(
+    _WORD_POP_BASE,
+    primary_color=_c(158, 160, 172),
+    secondary_color=_c(255, 214, 120),   # sung: warm gold under a white light
+    outline_color=_c(10, 8, 6),
+    highlight_effect="sweep",
+)
+SWEEP_STYLES: dict[str, KaraokeStyle] = _modern_variants(_SWEEP_BASE, loud_fontsize=64)
+
+
+# The syllable effect each style key sings with. Two values on purpose: the
+# sweep for lyrics, an instant fill for ad-libs. The old table also carried a
+# "color" name per style that no renderer ever read, and a "fade_in" that
+# libass discarded (a line-scoped \fad already comes from the event itself,
+# and the first one wins).
+STYLE_EFFECTS: dict[str, str] = {
+    "intro": "highlight",
+    "verse": "highlight",
+    "prechorus": "highlight",
+    "chorus": "highlight",
+    "bridge": "highlight",
+    "drop": "highlight",
+    "outro": "highlight",
+    "rap": "highlight",
+    "ad_lib": "none",
 }
 
 PRESET_LIBRARY: dict[str, StylePreset] = {
@@ -1470,7 +2245,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Original neon karaoke subtitles.",
         styles=NEON_STYLES,
-        effect_profile_id="soft_glow",
     ),
     "cyberpunk": StylePreset(
         id="cyberpunk",
@@ -1478,7 +2252,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Premium synthwave karaoke subtitles.",
         styles=CYBERPUNK_STYLES,
-        effect_profile_id="outline_pop",
     ),
     "section-coded": StylePreset(
         id="section-coded",
@@ -1493,7 +2266,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="One consistent visual style for every lyric section.",
         styles=SINGLE_STYLE_KF_STYLES,
-        effect_profile_id="clean_sweep",
     ),
     "aegisub-classic-blue": StylePreset(
         id="aegisub-classic-blue",
@@ -1501,7 +2273,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Classic fansub blue/cyan karaoke styling.",
         styles=AEGISUB_CLASSIC_BLUE_STYLES,
-        effect_profile_id="clean_sweep",
     ),
     "aegisub-gold-chorus": StylePreset(
         id="aegisub-gold-chorus",
@@ -1509,7 +2280,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Warm white verses with gold hook emphasis.",
         styles=AEGISUB_GOLD_CHORUS_STYLES,
-        effect_profile_id="soft_glow",
     ),
     "aegisub-anime-pop": StylePreset(
         id="aegisub-anime-pop",
@@ -1517,7 +2287,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Bright pink, cyan, and yellow anime karaoke styling.",
         styles=AEGISUB_ANIME_POP_STYLES,
-        effect_profile_id="bounce_word",
     ),
     "aegisub-soft-pastel": StylePreset(
         id="aegisub-soft-pastel",
@@ -1525,7 +2294,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Low-contrast mint, lavender, and rose subtitle styling.",
         styles=AEGISUB_SOFT_PASTEL_STYLES,
-        effect_profile_id="clean_sweep",
     ),
     "aegisub-night-glow": StylePreset(
         id="aegisub-night-glow",
@@ -1533,7 +2301,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Cool white, blue, and purple glow-friendly styling.",
         styles=AEGISUB_NIGHT_GLOW_STYLES,
-        effect_profile_id="soft_glow",
     ),
     "aegisub-impact-red": StylePreset(
         id="aegisub-impact-red",
@@ -1541,7 +2308,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="High-impact white and red karaoke styling.",
         styles=AEGISUB_IMPACT_RED_STYLES,
-        effect_profile_id="outline_pop",
     ),
     "aegisub-dual-vocal": StylePreset(
         id="aegisub-dual-vocal",
@@ -1549,7 +2315,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Lead vocal cyan with distinct ad-lib and bridge colors.",
         styles=AEGISUB_DUAL_VOCAL_STYLES,
-        effect_profile_id="clean_sweep",
     ),
     "aegisub-clean-editorial": StylePreset(
         id="aegisub-clean-editorial",
@@ -1557,7 +2322,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Restrained editorial white, silver, and subtle gold styling.",
         styles=AEGISUB_CLEAN_EDITORIAL_STYLES,
-        effect_profile_id="clean_sweep",
     ),
     "aegisub-cyber-minimal": StylePreset(
         id="aegisub-cyber-minimal",
@@ -1565,7 +2329,6 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="Minimal cyan and magenta styling with dark outlines.",
         styles=AEGISUB_CYBER_MINIMAL_STYLES,
-        effect_profile_id="soft_glow",
     ),
     "aegisub-stage-lights": StylePreset(
         id="aegisub-stage-lights",
@@ -1573,7 +2336,104 @@ PRESET_LIBRARY: dict[str, StylePreset] = {
         version=1,
         description="White, blue, magenta, and gold stage-light palette.",
         styles=AEGISUB_STAGE_LIGHTS_STYLES,
-        effect_profile_id="bounce_word",
+    ),
+    "pill": StylePreset(
+        id="pill",
+        label="Pill",
+        version=1,
+        description="Social-caption look: lyrics ride an opaque box, lime fill.",
+        styles=PILL_STYLES,
+    ),
+    "focus-pull": StylePreset(
+        id="focus-pull",
+        label="Focus Pull",
+        version=1,
+        description="Blurred line that sharpens syllable by syllable on the attack.",
+        styles=FOCUS_PULL_STYLES,
+    ),
+    "bold-highlight": StylePreset(
+        id="bold-highlight",
+        label="Bold Highlight",
+        version=1,
+        description="Heavy white caption with a hot yellow fill and a thick black rim.",
+        styles=BOLD_HIGHLIGHT_STYLES,
+    ),
+    "word-reveal": StylePreset(
+        id="word-reveal",
+        label="Word Reveal",
+        version=1,
+        description="Nothing on screen ahead of the voice: each syllable fades in on its attack.",
+        styles=WORD_REVEAL_STYLES,
+    ),
+    "word-pop": StylePreset(
+        id="word-pop",
+        label="Word Pop",
+        version=1,
+        description="Clean coral caption that bounces on every vocal attack.",
+        styles=WORD_POP_STYLES,
+    ),
+    "typewriter": StylePreset(
+        id="typewriter",
+        label="Typewriter",
+        version=1,
+        description="Amber letters landing one character at a time.",
+        styles=TYPEWRITER_STYLES,
+    ),
+    "glitch": StylePreset(
+        id="glitch",
+        label="Glitch",
+        version=1,
+        description="Chromatic aberration: magenta rim over an offset cyan copy.",
+        styles=GLITCH_STYLES,
+    ),
+    "fly-in": StylePreset(
+        id="fly-in",
+        label="Fly In",
+        version=1,
+        description="Each syllable rises into place and fades up, landing on its attack.",
+        styles=FLY_IN_STYLES,
+    ),
+    "swing": StylePreset(
+        id="swing",
+        label="Swing",
+        version=1,
+        description="Each syllable tips in off-angle and settles level on its attack.",
+        styles=SWING_STYLES,
+    ),
+    "punch": StylePreset(
+        id="punch",
+        label="Punch",
+        version=1,
+        description="Uniform overshoot on every attack — the bounce word-pop could not do.",
+        styles=PUNCH_STYLES,
+    ),
+    "glow": StylePreset(
+        id="glow",
+        label="Glow",
+        version=1,
+        description="A soft cyan halo behind every line, drawn as its own layer.",
+        styles=GLOW_STYLES,
+    ),
+    "aberration": StylePreset(
+        id="aberration",
+        label="Aberration",
+        version=1,
+        description="Two-sided chromatic aberration: a cyan copy left, a magenta copy right.",
+        styles=ABERRATION_STYLES,
+    ),
+    "flare": StylePreset(
+        id="flare",
+        label="Flare",
+        version=1,
+        description="The rim flares hot pink on every attack and settles back — no extra events.",
+        styles=FLARE_STYLES,
+    ),
+    "sweep": StylePreset(
+        id="sweep",
+        label="Sweep",
+        version=1,
+        description="A soft light sweeps across the line once as it appears.",
+        styles=SWEEP_STYLES,
     ),
 }
 
@@ -1591,6 +2451,7 @@ SECTION_TO_STYLE = {
     "verse 3": "verse",
     "estrofe": "verse",
     "estrofa": "verse",
+    "rap": "rap",
     "rap verse": "verse",
     "spoken": "verse",
     "spoken word": "verse",
@@ -1640,65 +2501,8 @@ SECTION_TO_STYLE = {
     "coda": "outro",
 }
 
-LYRICS_SECTION_TO_STYLE: dict[str, str] = {
-    "intro": "intro",
-    "introduction": "intro",
-    "opening": "intro",
-    "outro": "outro",
-    "outro chorus": "outro",
-    "outro hook": "outro",
-    "ending": "outro",
-    "fade out": "outro",
-    "fade-out": "outro",
-    "coda": "outro",
-    "verse": "verse",
-    "verse 1": "verse",
-    "verse 2": "verse",
-    "verse 3": "verse",
-    "estrofe": "verse",
-    "estrofa": "verse",
-    "rap verse": "verse",
-    "spoken": "verse",
-    "spoken word": "verse",
-    "chorus": "chorus",
-    "chorus 2": "chorus",
-    "chorus 3": "chorus",
-    "refrao": "chorus",
-    "refrão": "chorus",
-    "refrán": "chorus",
-    "hook": "chorus",
-    "hook 2": "chorus",
-    "drop": "chorus",
-    "drop 1": "chorus",
-    "drop 2": "chorus",
-    "big chorus": "chorus",
-    "final chorus": "chorus",
-    "climax": "chorus",
-    "pre-chorus": "verse",
-    "pre-chorus 2": "verse",
-    "pre chorus": "verse",
-    "pre-hook": "verse",
-    "lift": "verse",
-    "build": "verse",
-    "build-up": "verse",
-    "buildup": "verse",
-    "bridge": "bridge",
-    "ponte": "bridge",
-    "breakdown": "bridge",
-    "break": "bridge",
-    "interlude": "bridge",
-    "guitar solo": "bridge",
-    "solo": "bridge",
-    "instrumental": "bridge",
-    "instrumental break": "bridge",
-    "spoken bridge": "bridge",
-    "dialogue": "bridge",
-    "transition": "bridge",
-    "middle 8": "bridge",
-    "middle eight": "bridge",
-}
 
-_SECTION_PREFIX_FALLBACK: dict[str, str] = {
+SECTION_PREFIX_FALLBACK: dict[str, str] = {
     "verse": "verse",
     "chorus": "chorus",
     "refra": "chorus",
@@ -1714,25 +2518,6 @@ _SECTION_PREFIX_FALLBACK: dict[str, str] = {
     "build": "prechorus",
 }
 
-LYRICS_SECTION_PREFIX_FALLBACK: dict[str, str] = {
-    "verse": "verse",
-    "chorus": "chorus",
-    "refra": "chorus",
-    "hook": "chorus",
-    "drop": "chorus",
-    "bridge": "bridge",
-    "pont": "bridge",
-    "break": "bridge",
-    "pre": "verse",
-    "intro": "intro",
-    "outro": "outro",
-    "solo": "bridge",
-    "interl": "bridge",
-    "instru": "bridge",
-    "build": "verse",
-    "spoken": "verse",
-    "coda": "outro",
-}
 
 
 def list_preset_ids() -> list[str]:
@@ -1746,33 +2531,6 @@ def get_preset(preset_id: str) -> StylePreset:
         raise KeyError(f"Unknown karaoke style preset: {preset_id}") from exc
 
 
-def list_animation_profile_ids() -> list[str]:
-    return list(ANIMATION_PROFILES.keys())
-
-
-def get_animation_profile(profile_id: str) -> AnimationProfile:
-    try:
-        return ANIMATION_PROFILES[profile_id]
-    except KeyError as exc:
-        raise KeyError(f"Unknown karaoke animation profile: {profile_id}") from exc
-
-
-def list_animation_profile_metadata() -> list[dict[str, object]]:
-    return [
-        {
-            "id": profile.id,
-            "label": profile.label,
-            "safety": profile.safety,
-            "karaoke_tag": profile.karaoke_tag,
-            "line_effects": list(profile.line_effects),
-            "word_effects": list(profile.word_effects),
-            "layer_strategy": profile.layer_strategy,
-            "max_extra_layers": profile.max_extra_layers,
-            "motion_intensity": profile.motion_intensity,
-            "description": profile.description,
-        }
-        for profile in ANIMATION_PROFILES.values()
-    ]
 
 
 def list_preset_metadata() -> list[dict[str, object]]:
@@ -1784,14 +2542,13 @@ def list_preset_metadata() -> list[dict[str, object]]:
             "description": preset.description,
             "styles": list(preset.styles.keys()),
             "effects": list(preset.effects),
-            "effect_profile": preset.effect_profile_id,
         }
         for preset in PRESET_LIBRARY.values()
     ]
 
 
 def supported_style_keys() -> set[str]:
-    return set(STYLE_DEFAULTS.keys())
+    return set(STYLE_EFFECTS.keys())
 
 
 def is_supported_style(style: object) -> bool:
@@ -1803,34 +2560,27 @@ def is_supported_effect(effect: object) -> bool:
 
 
 def resolve_section(label: str) -> tuple[str, str]:
+    """Raw section label -> (canonical label, style key).
+
+    Exact match first, so an ordinal like "verse 2" survives as the canonical
+    label instead of every verse collapsing to "verse" in the review UI; then
+    the numeric strip, then a prefix fallback, then the default style.
+    """
     normalized = str(label or "").strip().lower()
-    stripped = re.sub(r"[\s\d\(\)]+$", "", normalized).strip()
-    if stripped and stripped != normalized and stripped in SECTION_TO_STYLE:
-        return stripped, SECTION_TO_STYLE[stripped]
     if normalized in SECTION_TO_STYLE:
         return normalized, SECTION_TO_STYLE[normalized]
 
-    for prefix, style in _SECTION_PREFIX_FALLBACK.items():
-        if normalized.startswith(prefix):
-            return normalized, style
-
-    return normalized, DEFAULT_STYLE_KEY
-
-
-def resolve_lyrics_section(label: str) -> tuple[str, str]:
-    normalized = str(label or "").strip().lower()
-    if normalized in LYRICS_SECTION_TO_STYLE:
-        return normalized, LYRICS_SECTION_TO_STYLE[normalized]
-
     stripped = re.sub(r"[\s\d\(\)]+$", "", normalized).strip()
-    if stripped and stripped in LYRICS_SECTION_TO_STYLE:
-        return stripped, LYRICS_SECTION_TO_STYLE[stripped]
+    if stripped and stripped in SECTION_TO_STYLE:
+        return stripped, SECTION_TO_STYLE[stripped]
 
-    for prefix, style in LYRICS_SECTION_PREFIX_FALLBACK.items():
+    for prefix, style in SECTION_PREFIX_FALLBACK.items():
         if normalized.startswith(prefix):
             return normalized, style
 
     return normalized, DEFAULT_STYLE_KEY
+
+
 
 
 def validate_preset(preset: StylePreset) -> list[str]:
@@ -1851,8 +2601,6 @@ def validate_preset(preset: StylePreset) -> list[str]:
     for effect in preset.effects:
         if not is_supported_effect(effect):
             errors.append(f"Preset {preset.id} has unsupported effect: {effect}")
-    if preset.effect_profile_id not in ANIMATION_PROFILES:
-        errors.append(f"Preset {preset.id} has unknown animation profile: {preset.effect_profile_id}")
     return errors
 
 

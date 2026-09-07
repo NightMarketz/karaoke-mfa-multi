@@ -129,6 +129,63 @@ class AssGenerationTests(unittest.TestCase):
         self.assertNotIn("\\k8", text)
         self.assertNotIn("\\k12", text)
 
+    def test_long_inter_word_gap_keeps_a_single_space_between_words(self):
+        # A gap wide enough to survive absorption used to be emitted as its own
+        # space-padded part, burning as "the  tomb".
+        text = _build_karaoke_text(
+            [
+                {"word": "the", "start": 43.60, "end": 43.92},
+                {"word": "tomb", "start": 45.62, "end": 45.74},
+            ],
+            line_start_ms=43600,
+            effect="highlight",
+        )
+
+        self.assertIn("\\k170}", text)          # the gap is still consumed
+        self.assertNotIn("  ", text)            # but adds no second space
+        self.assertEqual(text, text.strip())    # and no leading/trailing space
+        self.assertEqual(1, text.count(" "))
+
+    def test_leading_silence_gap_does_not_indent_the_line(self):
+        text = _build_karaoke_text(
+            [{"word": "Breathing", "start": 37.22, "end": 38.38}],
+            line_start_ms=36000,
+            effect="highlight",
+        )
+
+        self.assertIn("\\k122}", text)
+        self.assertEqual(0, text.count(" "), text)  # nothing to separate
+
+    def _verse_style_line(self, resolution: str) -> list[str]:
+        from scripts.s06_generate_ass import _generate_ass
+
+        content = _generate_ass(
+            lines=[self._sample_line()],
+            styles=PRESETS["section-coded"],
+            resolution=resolution,
+            fade_in_ms=300,
+            fade_out_ms=500,
+        )
+        line = next(l for l in content.splitlines() if l.startswith("Style: Verse,"))
+        return line.split(",")
+
+    def test_style_pixels_scale_with_the_render_height(self):
+        # Presets are drawn against 720p. At 1080p an unscaled 52px verse was
+        # 4.8% of frame height instead of 7.2%, and the side margin was a flat
+        # 20px on a 1920px frame.
+        from scripts.karaoke_styles.library import PRESETS as LIB
+
+        verse = LIB["section-coded"]["verse"]
+        at720 = self._verse_style_line("1280x720")
+        at1080 = self._verse_style_line("1920x1080")
+
+        # fields: Name,Fontname,Fontsize,...,MarginL,MarginR,MarginV,Encoding
+        self.assertEqual(str(verse.fontsize), at720[2])
+        self.assertEqual(str(round(verse.fontsize * 1.5)), at1080[2])
+        self.assertEqual(str(round(verse.margin_v * 1.5)), at1080[-2])
+        self.assertEqual(["64", "64"], at720[-4:-2])
+        self.assertEqual(["96", "96"], at1080[-4:-2])
+
     def test_section_coded_preset_exists(self):
         self.assertIn("section-coded", PRESETS)
         self.assertIn("drop", PRESETS["section-coded"])
@@ -194,6 +251,62 @@ class AssGenerationTests(unittest.TestCase):
             self.assertEqual(len(dialogue_lines), 1)
             self.assertNotIn("Base,,", dialogue_lines[0])
             self.assertIn("\\kf", dialogue_lines[0])
+
+    def test_stage06_renders_timed_syllables_from_analysis_words(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            self._write_analysis(
+                job_dir,
+                [
+                    {
+                        "text": "mama",
+                        "start": 10.0,
+                        "end": 10.8,
+                        "style": "verse",
+                        "effect": "highlight",
+                        "words": [
+                            {
+                                "word": "mama",
+                                "start": 10.0,
+                                "end": 10.8,
+                                "syllables": [
+                                    {"text": "ma", "start": 10.05, "end": 10.30},
+                                    {"text": "ma", "start": 10.35, "end": 10.80},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            )
+
+            exit_code = self._run_stage06(job_dir, "--preset", "section-coded")
+
+            self.assertEqual(exit_code, 0)
+            ass_content = (job_dir / "output.ass").read_text(encoding="utf-8-sig")
+            self.assertIn("\\kf25}ma", ass_content)
+            self.assertIn("\\kf45}ma", ass_content)
+
+    def test_syllable_kf_quantization_applies_residual_to_last_visible_segment(self):
+        text = _build_karaoke_text(
+            [
+                {
+                    "word": "abc",
+                    "start": 10.0,
+                    "end": 11.0,
+                    "syllables": [
+                        {"text": "a", "start": 10.000, "end": 10.214},
+                        {"text": "b", "start": 10.214, "end": 10.551},
+                        {"text": "c", "start": 10.551, "end": 11.000},
+                    ],
+                }
+            ],
+            line_start_ms=10000,
+            effect="highlight",
+        )
+
+        self.assertIn("\\kf21}a", text)
+        self.assertIn("\\kf34}b", text)
+        self.assertIn("\\kf45}c", text)
 
     def test_stage06_writes_ass_manifest_with_generation_provenance(self):
         with tempfile.TemporaryDirectory() as tmp:

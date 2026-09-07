@@ -1,0 +1,182 @@
+# Icelandic pronunciation lexicon for s04 (word<TAB>ARPAbet).
+# The HubertFA model has no native Icelandic phones (only en/ja/zh), so these
+# are the NEAREST en/ ARPAbet phones — chosen to get the vowel/syllable count
+# right, which g2p_en gets wrong on Icelandic spelling. Approximate by design.
+# Corpus words are audio-validated; the rest is high-frequency vocabulary for
+# future Icelandic content. Unlisted Icelandic words fall back to g2p_en (logged).
+af	AA V
+aftur	AA F T UH R
+aldrei	AA L D R EY
+allir	AA L IH R
+allt	AA L T
+alltaf	AA L T AA F
+auga	OY G AA
+að	AA DH
+bara	B AA R AA
+barn	B AA R N
+blóð	B L OW DH
+blóðinu	B L OW DH IH N UH
+blóðið	B L OW DH IH DH
+brenna	B R EH N AA
+bæði	B AY DH IH
+bíða	B IY DH AA
+bíður	B IY DH UH R
+dagur	D AA G UH R
+dauði	D OY DH IH
+deyja	D EY AA
+draumur	D R OY M UH R
+dýr	D IY R
+dýrið	D IY R IH DH
+eftir	EH F T IH R
+einn	EY N
+eins	EY N S
+ekkert	EH K EH R T
+ekki	EH K IH
+eldur	EH L D UH R
+en	EH N
+enn	EH N
+er	EH R
+eða	EH DH AA
+falla	F AA T L AA
+fara	F AA R AA
+fer	F EH R
+finn	F IH N
+finna	F IH N AA
+forfeður	F AO R F EH DH UH R
+frjáls	F R Y AW L S
+frá	F R AW
+fyrir	F IH R IH R
+fyrsti	F IH R S T IH
+gamall	G AA M AA L
+gegn	G EH G N
+gera	G EH R AA
+gerir	G EH R IH R
+get	G EH T
+getur	G EH T UH R
+góður	G OW DH UH R
+hafa	HH AA V AA
+halda	HH AA L D AA
+haltu	HH AA L T UH
+hamar	HH AA M AA R
+hann	HH AA N
+hef	HH EH V
+hefur	HH EH V UH R
+heim	HH EY M
+heimur	HH EY M UH R
+heitur	HH EY T UH R
+henni	HH EH N IH
+himinn	HH IH M IH N
+hjarta	HH Y AA R T AA
+hjartað	HH Y AA R T AA DH
+hjá	HH Y AW
+honum	HH AO N UH M
+hvað	K V AA DH
+hver	K V EH R
+hér	HH Y EH R
+höfuð	HH ER V UH DH
+höfuðið	HH ER V UH DH IH DH
+hönd	HH ER N D
+hún	HH UW N
+húð	HH UW DH
+húðinni	HH UW DH IH N IH
+inn	IH N
+jörð	Y ER DH
+kaldur	K AA L D UH R
+kalla	K AA L AA
+kem	K EH M
+koma	K AO M AA
+kona	K AO N AA
+kraftur	K R AA F T UH R
+lifa	L IH V AA
+ljós	L Y OW S
+líf	L IY V
+líka	L IY K AA
+maður	M AA DH UH R
+meira	M EY R AA
+með	M EH DH
+mig	M IH G
+minn	M IH N
+minni	M IH N IH
+mitt	M IH T
+mjög	M Y ER G
+myrkur	M IH R K UH R
+mér	M Y EH R
+mín	M IY N
+mínar	M IY N AA R
+mínir	M IY N IH R
+mínu	M IY N UH
+mínum	M IY N UH M
+naga	N AA G AA
+niður	N IH DH UH R
+nótt	N OW T
+nú	N UW
+nýju	N IY Y UH
+nýr	N IY R
+og	AO G
+okkar	AO K AA R
+rauður	R OY DH UH R
+saman	S AA M AA N
+segir	S EH Y IH R
+sem	S EH M
+sig	S IH G
+sinn	S IH N
+sjá	S Y AW
+slær	S L AY R
+springa	S P R IH NG G AA
+standa	S T AA N D AA
+sterkur	S T EH R K UH R
+stór	S T OW R
+svartur	S V AA R T UH R
+svo	S V AO
+sé	S Y EH
+sín	S IY N
+sól	S OW L
+taka	T AA K AA
+tekur	T EH K UH R
+tennur	T EH N UH R
+tennurnar	T EH N UH R N AA R
+til	T IH L
+tveir	T V EY R
+tími	T IY M IH
+um	UH M
+undir	UH N D IH R
+upp	UH P
+vaknar	V AA K N AA R
+var	V AA R
+vatn	V AA T N
+veistu	V EY S T UH
+veit	V EY T
+veiði	V EY DH IH
+veiðinni	V EY DH IH N IH
+vera	V EH R AA
+vil	V IH L
+vill	V IH L
+vindur	V IH N D UH R
+við	V IH DH
+yfir	IH V IH R
+ykkar	IH K AA R
+á	AW
+áfram	AW F R AA M
+án	AW N
+ást	AW S T
+ég	Y EH G
+í	IY
+út	UW T
+þar	TH AA R
+þau	TH OY
+það	TH AA DH
+þegar	TH EH G AA R
+þeim	TH EY M
+þeir	TH EY R
+þessi	TH EH S IH
+þetta	TH EH T AA
+þig	TH IH G
+þinn	TH IH N
+þið	TH IH DH
+þrír	TH R IY R
+því	TH V IY
+þá	TH AW
+þær	TH AY R
+þér	TH Y EH R
+þín	TH IY N
+þú	TH UW

@@ -204,6 +204,112 @@ class AnalysisContractTests(unittest.TestCase):
                 )
             )
 
+    def test_stage05_writes_syllable_artifacts_from_word_phonemes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            words = [
+                {
+                    "word": "mama",
+                    "start": 10.0,
+                    "end": 10.8,
+                    "phonemes": [
+                        {"ph": "M", "start": 10.0, "end": 10.05},
+                        {"ph": "AA", "start": 10.05, "end": 10.3},
+                        {"ph": "M", "start": 10.3, "end": 10.35},
+                        {"ph": "AH", "start": 10.35, "end": 10.8},
+                    ],
+                }
+            ]
+            self._write_stage05_inputs(
+                job_dir,
+                transcript={
+                    "language": "en",
+                    "alignment_mode": "forced",
+                    "segments": [{"text": "mama", "section": "verse", "words": words}],
+                },
+                words=words,
+            )
+
+            exit_code = self._run_stage05(job_dir)
+
+            self.assertEqual(exit_code, 0)
+            analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
+            syllable_map = json.loads((job_dir / "syllable_map.json").read_text(encoding="utf-8"))
+            syllable_alignment = json.loads((job_dir / "syllable_alignment.json").read_text(encoding="utf-8"))
+            word = analysis["lines"][0]["words"][0]
+            self.assertEqual([item["text"] for item in word["syllables"]], ["ma", "ma"])
+            self.assertEqual([item["phones"] for item in syllable_map["lines"][0]["words"][0]["syllables"]], [["M", "AA"], ["M", "AH"]])
+            self.assertEqual([item["text"] for item in syllable_alignment["syllables"]], ["ma", "ma"])
+            self.assertEqual(syllable_alignment["syllable_timing_mode"], "projected_from_stage04_phonemes")
+            self.assertEqual(syllable_alignment["phonetic_backend"], "stage04_existing_phonemes")
+            self.assertIsNone(syllable_alignment["g2p_backend"])
+            self.assertFalse(syllable_alignment["native_phone_aligner"])
+            self.assertTrue(syllable_alignment["safe_for_final_export"])
+            self.assertEqual(syllable_alignment["syllables"][0]["phonetic_start"], 10.0)
+            self.assertEqual(syllable_alignment["syllables"][0]["karaoke_start"], 10.05)
+            self.assertEqual(syllable_alignment["syllables"][0]["source"], "phone_projection")
+            self.assertGreaterEqual(syllable_alignment["syllables"][0]["confidence"], 0.7)
+            self.assertEqual(syllable_alignment["syllables"][0]["flags"], [])
+            self.assertIn("phone_coverage", syllable_alignment["syllables"][0]["score_breakdown"])
+            with patch("builtins.print"):
+                from scripts import s08_validate
+
+                s08_validate._failures.clear()
+                s08_validate.validate_syllable_alignment(job_dir)
+            self.assertFalse(s08_validate._failures)
+
+    def test_syllable_segments_are_ordered_within_span_and_emit_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            words = [
+                {
+                    "word": "mama",
+                    "start": 10.0,
+                    "end": 10.8,
+                    "source": "hubertfa",
+                    "phonemes": [
+                        {"ph": "M", "start": 10.0, "end": 10.05},
+                        {"ph": "AA", "start": 10.05, "end": 10.3},
+                        {"ph": "M", "start": 10.3, "end": 10.35},
+                        {"ph": "AH", "start": 10.35, "end": 10.8},
+                    ],
+                }
+            ]
+            self._write_stage05_inputs(
+                job_dir,
+                transcript={
+                    "language": "en",
+                    "alignment_mode": "forced",
+                    "segments": [{"text": "mama", "section": "verse", "words": words}],
+                },
+                words=words,
+            )
+
+            exit_code = self._run_stage05(job_dir)
+
+            self.assertEqual(exit_code, 0)
+            analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
+            word = analysis["lines"][0]["words"][0]
+            syls = word["syllables"]
+            self.assertGreaterEqual(len(syls), 2)
+            # Each syllable carries a confidence and stays within the word span.
+            for syl in syls:
+                self.assertIn("confidence", syl)
+                self.assertGreaterEqual(syl["karaoke_start"], word["start"] - 1e-6)
+                self.assertLessEqual(syl["karaoke_end"], word["end"] + 1e-6)
+            # Ordered, non-overlapping karaoke spans.
+            for earlier, later in zip(syls, syls[1:]):
+                self.assertLessEqual(earlier["karaoke_end"], later["karaoke_start"] + 1e-6)
+
+            events = read_events(job_dir)
+            self.assertTrue(
+                any(
+                    event["event"] == "syllable_segments_built"
+                    and event["details"].get("segment_count") == len(syls)
+                    for event in events
+                )
+            )
+
     def test_llm_parse_failures_emit_retry_and_fallback_events(self):
         with tempfile.TemporaryDirectory() as tmp:
             job_dir = Path(tmp)
@@ -397,6 +503,112 @@ class AnalysisContractTests(unittest.TestCase):
             events = read_events(job_dir)
             names = [event["event"] for event in events]
             self.assertLess(names.index("stage05.analysis_written"), names.index("stage05.completed"))
+
+
+class SyllableWordBoundsTests(unittest.TestCase):
+    """s05 projects HubertFA phone times into CTC word spans; the two aligners
+    disagree, so the projection must never leave the word (§8)."""
+
+    def _project(self, word: dict):
+        return s05_analyze._project_word_syllables(word, line_id="L001", word_id="L001_W001")
+
+    def test_syllable_end_is_clamped_to_word_end(self):
+        word = {
+            "word": "casa",
+            "start": 1.0,
+            "end": 1.6,
+            "source": "ctc_forced+hubertfa",
+            "phonemes": [
+                {"ph": "K", "start": 1.0, "end": 1.1},
+                {"ph": "AA", "start": 1.1, "end": 1.3},
+                {"ph": "S", "start": 1.3, "end": 1.45},
+                {"ph": "AH", "start": 1.45, "end": 1.9},
+            ],
+        }
+
+        _, aligned = self._project(word)
+
+        self.assertEqual(len(aligned), 2)
+        self.assertLessEqual(aligned[-1]["end"], 1.6)
+        self.assertLessEqual(aligned[-1]["karaoke_end"], 1.6)
+
+    def test_syllable_start_is_clamped_to_word_start(self):
+        word = {
+            "word": "casa",
+            "start": 1.2,
+            "end": 1.9,
+            "source": "ctc_forced+hubertfa",
+            "phonemes": [
+                {"ph": "K", "start": 1.0, "end": 1.05},
+                {"ph": "AA", "start": 1.05, "end": 1.5},
+                {"ph": "S", "start": 1.5, "end": 1.6},
+                {"ph": "AH", "start": 1.6, "end": 1.85},
+            ],
+        }
+
+        _, aligned = self._project(word)
+
+        self.assertGreaterEqual(aligned[0]["start"], 1.2)
+        self.assertGreaterEqual(aligned[0]["karaoke_start"], 1.2)
+
+    def test_floored_syllable_past_word_end_is_never_emitted_inverted(self):
+        # The floor branch caps the end at word_end; when the vowel itself starts
+        # after word_end that yields end < start (29 of these in job publi-bet).
+        word = {
+            "word": "casa",
+            "start": 1.0,
+            "end": 1.35,
+            "source": "ctc_forced+hubertfa",
+            "phonemes": [
+                {"ph": "K", "start": 1.0, "end": 1.1},
+                {"ph": "AA", "start": 1.1, "end": 1.3},
+                {"ph": "S", "start": 1.3, "end": 1.4},
+                {"ph": "AH", "start": 1.4, "end": 1.45},
+            ],
+        }
+
+        _, aligned = self._project(word)
+
+        self.assertEqual(aligned, [])
+
+    def test_min_floor_does_not_stretch_a_syllable_over_the_next_one(self):
+        # 'coragem' in job publi-bet: the 'co' phone lasts 7ms, the floor stretches
+        # it to 80ms, and the 'ra' vowel starts 26ms in — the fill ran backwards.
+        word = {
+            "word": "cora",
+            "start": 0.0,
+            "end": 1.5,
+            "source": "ctc_forced+hubertfa",
+            "phonemes": [
+                {"ph": "K", "start": 0.00, "end": 0.05},
+                {"ph": "OW", "start": 0.05, "end": 0.06},
+                {"ph": "R", "start": 0.06, "end": 0.08},
+                {"ph": "AA", "start": 0.08, "end": 0.30},
+            ],
+        }
+
+        _, aligned = self._project(word)
+
+        self.assertEqual(2, len(aligned))
+        self.assertLessEqual(aligned[0]["end"], aligned[1]["start"])
+
+    def test_word_whose_vowel_falls_past_word_end_renders_as_single_highlight(self):
+        word = {
+            "word": "vai",
+            "start": 2.0,
+            "end": 2.2,
+            "source": "ctc_forced+hubertfa",
+            "phonemes": [
+                {"ph": "V", "start": 2.0, "end": 2.05},
+                {"ph": "AY", "start": 2.25, "end": 2.4},
+            ],
+        }
+
+        mapped, aligned = self._project(word)
+
+        self.assertEqual(aligned, [])
+        self.assertEqual(len(mapped), 1)
+        self.assertEqual(mapped[0]["phones"], [])
 
 
 if __name__ == "__main__":

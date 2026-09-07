@@ -60,3 +60,18 @@ These are configurable via `pipeline.toml` (`[output]` section) or env vars (`KA
 | `transcribe_low_confidence_threshold` | 0.25 | s03 (word probability floor for `low_confidence` flag) |
 | `transcribe_lc_warning_pct` | 20 % | s03 (% low-confidence words before warning) |
 | `vocal_activity.min_duration_s` | 200 ms | review_wizard vocal activity detector |
+
+## Tronco e colheita
+
+- **Tronco:** `mvp-pipeline-runner`. Todo trabalho volta para cá. Refs protegidas,
+  nunca arquivadas: `mvp-pipeline-runner`, `master`, `main`.
+- **Comando de teste:** `pytest tests` — com o argumento. `pytest` na raiz mede
+  outra população: transforma `pytest.importorskip` em erro de coleta.
+- **Portão de merge:** `pytest tests` verde **no resultado do merge**, não na branch
+  isolada. Vermelho desfaz o merge.
+- **Colheita:** antes de despachar uma frente nova, rode
+  `python scripts/branch_harvest.py --reap` e resolva o destino das branches
+  existentes. Branch sem ancestral comum com o tronco não é mergeável — arquivar ou
+  portar à mão, nunca `git merge`.
+- Desenho e medição que originaram isto:
+  `docs/superpowers/specs/2026-09-04-colheita-de-branches-design.md`.

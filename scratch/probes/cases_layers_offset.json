@@ -1,0 +1,17 @@
+[
+  [
+    "offset: MarginL moves the wrong way",
+    "ml = max(1, round(margin_lr + dx))",
+    "ml = max(1, round(margin_lr - dx))"
+  ],
+  [
+    "offset: MarginV ignores dy",
+    "mv = max(1, round(style.margin_v * scale - dy))",
+    "mv = max(1, round(style.margin_v * scale))"
+  ],
+  [
+    "offset: the layout anchor ignores the layer offset",
+    "anchor = (spot.x + spot.width / 2 + dx, spot.y + dy)",
+    "anchor = (spot.x + spot.width / 2, spot.y)"
+  ]
+]

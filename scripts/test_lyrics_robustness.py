@@ -43,6 +43,7 @@ from s03b_lyrics_align import (
     _build_full_text, _split_words_by_lines, _snap_to_onsets,
     SECTION_TO_STYLE, _SECTION_PREFIX_FALLBACK,
 )
+from scripts.karaoke_styles.library import supported_style_keys
 
 _G = "\033[32m"; _R = "\033[31m"; _X = "\033[0m"
 _passed = _failed = 0
@@ -93,7 +94,7 @@ def _seg(words):
 # -----------------------------------------------------------------
 
 def test_resolve_exact_all_55_entries():
-    heading("_resolve_section — every SECTION_TO_STYLE entry (55 total)")
+    heading(f"_resolve_section — every SECTION_TO_STYLE entry ({len(SECTION_TO_STYLE)} total)")
     for label, expected in SECTION_TO_STYLE.items():
         canonical, style = _resolve_section(label)
         check(style == expected, f"[{label}] -> {expected}", f"got '{style}'")
@@ -105,8 +106,11 @@ def test_resolve_numeric_strip():
     cases = [
         ("chorus 2","chorus"),("chorus 3","chorus"),("chorus 4","chorus"),("chorus 10","chorus"),
         ("verse 2","verse"),("verse 3","verse"),("verse 4","verse"),
-        ("pre-chorus 2","verse"),("pre-chorus 3","verse"),("pre-chorus 4","verse"),
-        ("hook 2","chorus"),("hook 3","chorus"),("drop 3","chorus"),("drop 4","chorus"),
+        # These pinned s03b's internal map value, not what a listener saw: s05
+        # was already rendering a pre-chorus with the PreChorus style. s03b now
+        # says so itself, so the two agree.
+        ("pre-chorus 2","prechorus"),("pre-chorus 3","prechorus"),("pre-chorus 4","prechorus"),
+        ("hook 2","chorus"),("hook 3","chorus"),("drop 3","drop"),("drop 4","drop"),
         ("bridge 2","bridge"),("verse (2)","verse"),("verse (3)","verse"),
         ("chorus (2)","chorus"),("outro (2)","outro"),
     ]
@@ -282,7 +286,7 @@ def test_parse_numbered_markers():
         styles = [_resolve_section(l['section'])[1] for l in lines]
         check(styles[0] == 'chorus', f"Chorus 3 -> chorus (got {styles[0]})")
         check(styles[1] == 'verse',  f"Verse 2 -> verse (got {styles[1]})")
-        check(styles[2] == 'verse',  f"Pre-Chorus 2 -> verse (got {styles[2]})")
+        check(styles[2] == 'prechorus', f"Pre-Chorus 2 -> prechorus (got {styles[2]})")
     finally: _rm(lf)
 
 
@@ -292,7 +296,7 @@ def test_parse_pt_es_edm_markers():
     try:
         lines = _parse_lyrics(lf)
         styles = [_resolve_section(l['section'])[1] for l in lines]
-        expected = ['chorus','bridge','chorus','chorus','verse']
+        expected = ['chorus','bridge','chorus','drop','verse']
         for i, (got, exp) in enumerate(zip(styles, expected)):
             check(got == exp, f"line {i} -> {exp} (got {got})")
     finally: _rm(lf)
@@ -409,14 +413,16 @@ def test_parse_known_after_unknown_restores_style():
 # _parse_lyrics — inline stripping
 # -----------------------------------------------------------------
 
-def test_parse_inline_parens_stripped():
-    heading("_parse_lyrics — inline (directions) stripped")
-    lf = _lf("[Chorus]\n(Please stop) Cause Im here (backing vocal)\nOh Fuck (screaming)\n")
+def test_parse_inline_parens_preserved():
+    heading("_parse_lyrics — inline parenthetical lyrics preserved")
+    lf = _lf("[Chorus]\nCause Im here (break in, break in)\nOh Fuck (screaming)\n")
     try:
         lines = _parse_lyrics(lf)
-        for line in lines:
-            check('(' not in line['text'] and ')' not in line['text'],
-                  f"No parens in '{line['text']}'")
+        texts = [line['text'] for line in lines]
+        check('Cause Im here (break in, break in)' in texts,
+              "Parenthetical lyric preserved")
+        check('Oh Fuck (screaming)' in texts,
+              "Inline parenthetical preserved by default")
     finally: _rm(lf)
 
 
@@ -580,7 +586,7 @@ I must carry on
 
 
 def test_parse_suno_adlib_patterns():
-    heading("_parse_lyrics — Suno adlib/backing stripped")
+    heading("_parse_lyrics — Suno adlib/backing handling")
     lf = _lf("""[Chorus]
 (adbl
 Cause Im still here
@@ -591,9 +597,9 @@ Carry on
 """)
     try:
         lines = _parse_lyrics(lf)
-        for line in lines:
-            check('(' not in line['text'] and ')' not in line['text'],
-                  f"Adlib stripped: '{line['text']}'")
+        texts = [line['text'] for line in lines]
+        check('(adbl' not in texts, "Unclosed parenthetical line skipped")
+        check('(Please stop move)' in texts, "Closed parenthetical lyric preserved")
     finally: _rm(lf)
 
 
@@ -778,7 +784,7 @@ def test_snap_negligible_delta_skipped():
 
 def test_property_resolve_always_valid_style():
     heading("PROPERTY: _resolve_section always returns a valid ASS style")
-    valid_styles = {"verse","chorus","bridge","intro","outro"}
+    valid_styles = supported_style_keys()
     test_labels = list(SECTION_TO_STYLE.keys()) + [
         "unknown xyz","chorus 99","verse 100","drop 5","refra xyz",
         "pont test","build test","pre test","intro xyz","outro xyz",
@@ -899,7 +905,7 @@ def main() -> int:
     test_parse_known_after_unknown_restores_style()
 
     # _parse_lyrics — stripping
-    test_parse_inline_parens_stripped()
+    test_parse_inline_parens_preserved()
     test_parse_inline_brackets_stripped()
     test_parse_apostrophes_preserved()
     test_parse_purely_inline_line_skipped()

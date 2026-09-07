@@ -1,6 +1,8 @@
+import math
 import tempfile
 import unittest
 import json
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
@@ -210,9 +212,36 @@ class ValidateContractsTests(unittest.TestCase):
 
             self.assertFalse(s08_validate._failures)
 
-    def test_ctc_forced_source_counts_as_recorded_fallback(self):
+    def test_ctc_forced_source_fails_without_reference_timing(self):
         with tempfile.TemporaryDirectory() as tmp:
             job_dir = Path(tmp)
+            self._write_transcript(job_dir, reference_timing_applied=False)
+            (job_dir / "aligned.json").write_text(
+                json.dumps(
+                    {
+                        "words": [
+                            {
+                                "word": "hello",
+                                "start": 0.0,
+                                "end": 1.0,
+                                "source": "ctc_forced",
+                                "phonemes": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("builtins.print"):
+                s08_validate.validate_aligned(job_dir)
+
+            self.assertTrue(any("fallback timings" in failure for failure in s08_validate._failures))
+
+    def test_ctc_forced_source_warns_with_reference_timing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            self._write_transcript(job_dir, reference_timing_applied=True)
             (job_dir / "aligned.json").write_text(
                 json.dumps(
                     {
@@ -236,6 +265,32 @@ class ValidateContractsTests(unittest.TestCase):
             self.assertFalse(s08_validate._failures)
             self.assertTrue(any("0% HubertFA" in warning for warning in s08_validate._warnings))
 
+    def test_automatic_timing_quality_fails_line_outside_vocal_region(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            self._write_sine_window(job_dir / "vocals.wav", duration_s=6.0, active_start_s=4.0, active_end_s=5.5)
+            transcript = {
+                "segments": [
+                    {"text": "too early", "start": 0.0, "end": 3.0, "words": []},
+                    {"text": "on vocal", "start": 4.1, "end": 5.0, "words": []},
+                ]
+            }
+
+            with patch("builtins.print"):
+                s08_validate.validate_automatic_timing_quality(job_dir, transcript)
+
+            self.assertTrue(any("low vocal overlap" in failure for failure in s08_validate._failures))
+
+    def test_automatic_timing_quality_skips_reference_backed_timing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            transcript = {"reference_timing_applied": True, "segments": []}
+
+            with patch("builtins.print"):
+                s08_validate.validate_automatic_timing_quality(job_dir, transcript)
+
+            self.assertFalse(s08_validate._failures)
+
     def test_ass_layer_zero_overlap_is_contract_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             job_dir = Path(tmp)
@@ -256,6 +311,453 @@ class ValidateContractsTests(unittest.TestCase):
                 s08_validate.validate_ass(job_dir)
 
             self.assertTrue(any("overlap" in failure for failure in s08_validate._failures))
+
+    def test_syllable_alignment_fails_when_syllable_exceeds_own_word(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "analysis.json").write_text(
+                json.dumps(
+                    {
+                        "lines": [
+                            {
+                                "id": "L001",
+                                "text": "beneath",
+                                "start": 10.0,
+                                "end": 11.0,
+                                "style": "verse",
+                                "words": [
+                                    {
+                                        "id": "L001_W001",
+                                        "word": "beneath",
+                                        "start": 10.0,
+                                        "end": 10.8,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "syllable_alignment.json").write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "line_id": "L001",
+                        "syllables": [
+                            {
+                                "syllable_id": "L001_W001_S001",
+                                "word_id": "L001_W001",
+                                "text": "neath",
+                                "start": 10.6,
+                                "end": 10.95,
+                                "phones": [{"phone": "IY", "start": 10.6, "end": 10.95}],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("builtins.print"):
+                s08_validate.validate_syllable_alignment(job_dir)
+
+            self.assertTrue(any("outside word" in failure for failure in s08_validate._failures))
+
+    def test_syllable_alignment_accepts_valid_word_scoped_syllables(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "analysis.json").write_text(
+                json.dumps(
+                    {
+                        "lines": [
+                            {
+                                "id": "L001",
+                                "text": "mama",
+                                "start": 10.0,
+                                "end": 10.8,
+                                "style": "verse",
+                                "words": [
+                                    {
+                                        "id": "L001_W001",
+                                        "word": "mama",
+                                        "start": 10.0,
+                                        "end": 10.8,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "syllable_alignment.json").write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "source": "stage05_word_phoneme_projection",
+                        "syllable_timing_mode": "projected_from_stage04_phonemes",
+                        "phonetic_backend": "stage04_existing_phonemes",
+                        "g2p_backend": None,
+                        "native_phone_aligner": False,
+                        "safe_for_final_export": True,
+                        "syllables": [
+                            {
+                                "syllable_id": "L001_W001_S001",
+                                "line_id": "L001",
+                                "word_id": "L001_W001",
+                                "text": "ma",
+                                "start": 10.05,
+                                "end": 10.30,
+                                "source": "phone_projection",
+                                "confidence": 0.9,
+                                "flags": [],
+                                "score_breakdown": {"phone_coverage": 1.0},
+                                "phones": [
+                                    {"phone": "M", "start": 10.0, "end": 10.05},
+                                    {"phone": "AA", "start": 10.05, "end": 10.30},
+                                ],
+                            },
+                            {
+                                "syllable_id": "L001_W001_S002",
+                                "line_id": "L001",
+                                "word_id": "L001_W001",
+                                "text": "ma",
+                                "start": 10.35,
+                                "end": 10.80,
+                                "source": "phone_projection",
+                                "confidence": 0.9,
+                                "flags": [],
+                                "score_breakdown": {"phone_coverage": 1.0},
+                                "phones": [
+                                    {"phone": "M", "start": 10.30, "end": 10.35},
+                                    {"phone": "AH", "start": 10.35, "end": 10.80},
+                                ],
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("builtins.print"):
+                s08_validate.validate_syllable_alignment(job_dir)
+
+            self.assertFalse(s08_validate._failures)
+
+    def test_syllable_alignment_rejects_missing_source_and_confidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "analysis.json").write_text(
+                json.dumps(
+                    {
+                        "lines": [
+                            {
+                                "id": "L001",
+                                "text": "mama",
+                                "start": 10.0,
+                                "end": 10.8,
+                                "style": "verse",
+                                "words": [{"id": "L001_W001", "word": "mama", "start": 10.0, "end": 10.8}],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "syllable_alignment.json").write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "source": "stage05_word_phoneme_projection",
+                        "safe_for_final_export": True,
+                        "syllables": [
+                            {
+                                "syllable_id": "L001_W001_S001",
+                                "line_id": "L001",
+                                "word_id": "L001_W001",
+                                "text": "ma",
+                                "start": 10.05,
+                                "end": 10.30,
+                                "phones": [{"phone": "AA", "start": 10.05, "end": 10.30}],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("builtins.print"):
+                s08_validate.validate_syllable_alignment(job_dir)
+
+            self.assertTrue(any("missing source" in failure for failure in s08_validate._failures))
+            self.assertTrue(any("missing confidence" in failure for failure in s08_validate._failures))
+
+    def test_syllable_alignment_rejects_fallback_source_for_final_export(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "analysis.json").write_text(
+                json.dumps(
+                    {
+                        "lines": [
+                            {
+                                "id": "L001",
+                                "text": "mama",
+                                "start": 10.0,
+                                "end": 10.8,
+                                "style": "verse",
+                                "words": [{"id": "L001_W001", "word": "mama", "start": 10.0, "end": 10.8}],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "syllable_alignment.json").write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "source": "stage05_word_phoneme_projection",
+                        "safe_for_final_export": True,
+                        "syllables": [
+                            {
+                                "syllable_id": "L001_W001_S001",
+                                "line_id": "L001",
+                                "word_id": "L001_W001",
+                                "text": "ma",
+                                "start": 10.05,
+                                "end": 10.30,
+                                "source": "duration_interpolation_fallback",
+                                "confidence": 0.32,
+                                "flags": ["not_phoneme_grounded"],
+                                "score_breakdown": {"phone_coverage": 0.0},
+                                "phones": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("builtins.print"):
+                s08_validate.validate_syllable_alignment(job_dir)
+
+            self.assertTrue(any("fallback source" in failure for failure in s08_validate._failures))
+
+    def test_syllable_alignment_rejects_syllables_outside_windows_and_long_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "analysis.json").write_text(
+                json.dumps(
+                    {
+                        "lines": [
+                            {
+                                "id": "L001",
+                                "text": "mama",
+                                "start": 10.0,
+                                "end": 10.8,
+                                "style": "verse",
+                                "words": [{"id": "L001_W001", "word": "mama", "start": 10.0, "end": 10.8}],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "alignment_windows.json").write_text(
+                json.dumps({"windows": [{"block_id": "B001", "line_ids": ["L001"], "audio_start": 9.0, "audio_end": 9.5}]}),
+                encoding="utf-8",
+            )
+            (job_dir / "vocal_regions.json").write_text(
+                json.dumps({"regions": [], "non_vocal_gaps": [{"start": 10.1, "end": 10.6, "duration": 9.0}]}),
+                encoding="utf-8",
+            )
+            (job_dir / "syllable_alignment.json").write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "source": "stage05_word_phoneme_projection",
+                        "safe_for_final_export": True,
+                        "syllables": [
+                            {
+                                "syllable_id": "L001_W001_S001",
+                                "line_id": "L001",
+                                "word_id": "L001_W001",
+                                "text": "ma",
+                                "start": 10.2,
+                                "end": 10.4,
+                                "source": "phone_projection",
+                                "confidence": 0.9,
+                                "flags": [],
+                                "score_breakdown": {"phone_coverage": 1.0},
+                                "phones": [{"phone": "AA", "start": 10.2, "end": 10.4}],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("builtins.print"):
+                s08_validate.validate_syllable_alignment(job_dir)
+
+            self.assertTrue(any("outside alignment window" in failure for failure in s08_validate._failures))
+            self.assertTrue(any("long non-vocal gap" in failure for failure in s08_validate._failures))
+
+    def test_syllable_window_containment_is_skipped_when_windows_were_declined(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "analysis.json").write_text(
+                json.dumps(
+                    {
+                        "lines": [
+                            {
+                                "id": "L001",
+                                "text": "mama",
+                                "start": 10.0,
+                                "end": 10.8,
+                                "style": "verse",
+                                "words": [{"id": "L001_W001", "word": "mama", "start": 10.0, "end": 10.8}],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "alignment_windows.json").write_text(
+                json.dumps({"windows": [{"block_id": "B001", "line_ids": ["L001"], "audio_start": 9.0, "audio_end": 9.5}]}),
+                encoding="utf-8",
+            )
+            (job_dir / "ctc_window_safety_report.json").write_text(
+                json.dumps({"safe_for_ctc": False, "summary": {"unsafe_windows": 1}, "windows": []}),
+                encoding="utf-8",
+            )
+            (job_dir / "transcript.json").write_text(
+                json.dumps({"alignment_mode": "forced", "ctc_windowed_alignment": False, "segments": []}),
+                encoding="utf-8",
+            )
+            (job_dir / "vocal_regions.json").write_text(
+                json.dumps({"regions": [], "non_vocal_gaps": []}),
+                encoding="utf-8",
+            )
+            (job_dir / "syllable_alignment.json").write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "source": "stage05_word_phoneme_projection",
+                        "safe_for_final_export": True,
+                        "syllables": [
+                            {
+                                "syllable_id": "L001_W001_S001",
+                                "line_id": "L001",
+                                "word_id": "L001_W001",
+                                "text": "ma",
+                                "start": 10.2,
+                                "end": 10.4,
+                                "source": "phone_projection",
+                                "confidence": 0.9,
+                                "flags": [],
+                                "score_breakdown": {"phone_coverage": 1.0},
+                                "phones": [{"phone": "AA", "start": 10.2, "end": 10.4}],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("builtins.print"):
+                s08_validate.validate_syllable_alignment(job_dir)
+
+            self.assertEqual(
+                [failure for failure in s08_validate._failures if "outside alignment window" in failure],
+                [],
+            )
+
+    def _write_syllable_job(self, job_dir: Path, syllable: dict) -> None:
+        (job_dir / "analysis.json").write_text(
+            json.dumps(
+                {
+                    "lines": [
+                        {
+                            "id": "L001",
+                            "text": "mama",
+                            "start": 10.0,
+                            "end": 11.0,
+                            "style": "verse",
+                            "words": [{"id": "L001_W001", "word": "mama", "start": 10.0, "end": 11.0}],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        (job_dir / "syllable_alignment.json").write_text(
+            json.dumps(
+                {
+                    "version": "1.0",
+                    "source": "stage05_word_phoneme_projection",
+                    "safe_for_final_export": True,
+                    "syllables": [syllable],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_syllable_stretched_to_the_min_floor_still_counts_as_phone_backed(self):
+        # s05 floors a short syllable to DEFAULT_MIN_SEGMENT_MS (80ms), which is
+        # more than the 50ms coverage tolerance — a documented stretch, not a defect.
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            self._write_syllable_job(
+                job_dir,
+                {
+                    "syllable_id": "L001_W001_S001",
+                    "line_id": "L001",
+                    "word_id": "L001_W001",
+                    "text": "ma",
+                    "start": 10.2,
+                    "end": 10.28,
+                    "source": "phone_projection",
+                    "confidence": 0.9,
+                    "flags": [],
+                    "score_breakdown": {"phone_coverage": 1.0},
+                    "phones": [{"phone": "AA", "start": 10.2, "end": 10.21}],
+                },
+            )
+
+            with patch("builtins.print"):
+                s08_validate.validate_syllable_alignment(job_dir)
+
+            self.assertEqual(
+                [failure for failure in s08_validate._failures if "phones do not cover" in failure],
+                [],
+            )
+
+    def test_syllable_longer_than_the_floor_still_needs_phone_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            self._write_syllable_job(
+                job_dir,
+                {
+                    "syllable_id": "L001_W001_S001",
+                    "line_id": "L001",
+                    "word_id": "L001_W001",
+                    "text": "ma",
+                    "start": 10.2,
+                    "end": 10.9,
+                    "source": "phone_projection",
+                    "confidence": 0.9,
+                    "flags": [],
+                    "score_breakdown": {"phone_coverage": 1.0},
+                    "phones": [{"phone": "AA", "start": 10.2, "end": 10.21}],
+                },
+            )
+
+            with patch("builtins.print"):
+                s08_validate.validate_syllable_alignment(job_dir)
+
+            self.assertTrue(any("phones do not cover" in failure for failure in s08_validate._failures))
 
     def test_main_writes_observability_summary_for_validation_failures(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -308,6 +810,46 @@ class ValidateContractsTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+
+    def _write_transcript(self, job_dir: Path, *, reference_timing_applied: bool) -> None:
+        (job_dir / "transcript.json").write_text(
+            json.dumps(
+                {
+                    "alignment_mode": "forced",
+                    "reference_timing_applied": reference_timing_applied,
+                    "segments": [
+                        {
+                            "text": "hello",
+                            "start": 0.0,
+                            "end": 1.0,
+                            "words": [{"word": "hello", "start": 0.0, "end": 1.0, "probability": 1.0}],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_sine_window(
+        self,
+        path: Path,
+        *,
+        duration_s: float,
+        active_start_s: float,
+        active_end_s: float,
+    ) -> None:
+        sample_rate = 16000
+        frames = int(duration_s * sample_rate)
+        with wave.open(str(path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(sample_rate)
+            payload = bytearray()
+            for index in range(frames):
+                t = index / sample_rate
+                amp = 0.35 * math.sin(2 * math.pi * 220 * t) if active_start_s <= t <= active_end_s else 0.0
+                payload.extend(int(max(-1.0, min(1.0, amp)) * 32767).to_bytes(2, "little", signed=True))
+            handle.writeframes(bytes(payload))
 
     def _write_ass(self, job_dir: Path, text: str = "hello") -> None:
         (job_dir / "output.ass").write_text(

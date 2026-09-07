@@ -426,7 +426,7 @@ def _run_pipeline(job_id: str) -> None:
     job_dir = resolve_job_dir(JOBS_DIR, job_id)
     write_event(job_dir, "pipeline_thread_started", "running", details={"job_id": job_id})
     meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
-    preset = meta.get("preset", "cyberpunk")
+    preset = meta.get("preset", DEFAULT_STYLE_PRESET_ID)
     runner = PipelineRunner(
         job_dir=job_dir,
         python_exe=sys.executable,
@@ -1360,11 +1360,16 @@ def _seg_time(seg: dict[str, Any], *names: str, default: float = 0.0) -> float:
     return default
 
 
-def _syllable_pending_queue(job_dir: Path, threshold: float) -> list[dict[str, Any]]:
-    """Words whose derived syllables carry a below-threshold confidence and have
-    not been manually locked (no ``highlight_segments`` override yet).
+def _syllable_pending_queue(
+    job_dir: Path, threshold: float, include_all: bool = False
+) -> list[dict[str, Any]]:
+    """Editable words for the syllable review UI, sorted worst-confidence first.
 
-    Sorted worst-first so the reviewer works the least-confident boundaries.
+    By default returns only words that need attention — derived syllables below
+    ``threshold``, not manually locked. With ``include_all`` it returns every
+    multi-syllable word (regardless of confidence) so the editor can be used to
+    refine any word's boundaries on demand, not just flagged ones; each item
+    carries an ``uncertain`` flag so the client can still highlight the pendings.
     """
     analysis = _read_metrics_json(job_dir / "analysis.json") or {}
     items: list[dict[str, Any]] = []
@@ -1393,7 +1398,13 @@ def _syllable_pending_queue(job_dir: Path, threshold: float) -> list[dict[str, A
                     "end": round(end, 3),
                     "confidence": round(conf, 4),
                 })
-            if manual or not segments or min_conf >= threshold:
+            if manual or not segments:
+                continue
+            uncertain = min_conf < threshold
+            if include_all:
+                if len(segments) < 2:  # browse mode: only words with real boundaries to adjust
+                    continue
+            elif not uncertain:
                 continue
             items.append({
                 "line_id": line_id,
@@ -1403,6 +1414,7 @@ def _syllable_pending_queue(job_dir: Path, threshold: float) -> list[dict[str, A
                 "word_start": round(_seg_time(word, "start", "start_s"), 3),
                 "word_end": round(_seg_time(word, "end", "end_s"), 3),
                 "min_confidence": round(min_conf, 4),
+                "uncertain": uncertain,
                 "segments": segments,
             })
     items.sort(key=lambda item: item["min_confidence"])
@@ -1418,11 +1430,14 @@ def review_wizard_syllable_pending(job_id: str):
     if not job_dir.exists():
         return jsonify({"error": "Job not found"}), 404
     threshold = APP_CONFIG.syllable_uncertain_threshold
-    items = _syllable_pending_queue(job_dir, threshold)
+    include_all = request.args.get("scope") == "all"
+    items = _syllable_pending_queue(job_dir, threshold, include_all=include_all)
     return jsonify({
         "job_id": job_id,
         "threshold": threshold,
+        "scope": "all" if include_all else "pending",
         "count": len(items),
+        "uncertain_count": sum(1 for it in items if it.get("uncertain")),
         "pending": items,
     })
 
@@ -1989,7 +2004,7 @@ def _run_retry_validate(job_id: str) -> None:
     runner = PipelineRunner(
         job_dir=job_dir,
         python_exe=sys.executable,
-        preset=meta.get("preset", "cyberpunk"),
+        preset=meta.get("preset", DEFAULT_STYLE_PRESET_ID),
         running_registry=_running,
         job_id=job_id,
     )

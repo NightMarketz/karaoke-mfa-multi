@@ -1,7 +1,7 @@
 """Style-contract tests for s06_generate_ass internal helpers.
 
-Guards the colour-parsing roundtrip, ASS structural validation, and
-metrics extraction that every render path depends on.
+Guards the karaoke text builder, ASS structural validation, and metrics
+extraction that every render path depends on.
 """
 
 import unittest
@@ -13,50 +13,51 @@ import_or_skip("pysubs2")
 
 from scripts.s06_generate_ass import (
     _ass_metrics,
-    _c,
-    _parse_color,
+    _build_karaoke_text,
     _validate_ass,
 )
 
 
-class ParseColorTests(unittest.TestCase):
-    def test_parse_white_returns_255_255_255(self):
-        r, g, b = _parse_color("&H00FFFFFF")
-        self.assertEqual((255, 255, 255), (r, g, b))
+class SyllableKaraokeTextTests(unittest.TestCase):
+    def test_long_word_with_syllables_emits_multiple_kf(self):
+        # A sustained word carrying two timed syllables must render 2+ \kf.
+        word = {
+            "word": "aah",
+            "id": "L001_W001",
+            "start": 10.0,
+            "end": 11.6,
+            "syllables": [
+                {"text": "aa", "karaoke_start": 10.0, "karaoke_end": 10.8, "confidence": 0.9},
+                {"text": "ah", "karaoke_start": 10.8, "karaoke_end": 11.6, "confidence": 0.9},
+            ],
+        }
+        text = _build_karaoke_text([word], line_start_ms=10000, effect="highlight")
+        self.assertGreaterEqual(text.count("\\kf"), 2)
 
-    def test_parse_black_returns_0_0_0(self):
-        r, g, b = _parse_color("&H00000000")
-        self.assertEqual((0, 0, 0), (r, g, b))
+    def test_short_word_without_phonemes_stays_single_kf(self):
+        # No regression: a short word with no syllable data gets exactly one \kf.
+        word = {"word": "go", "id": "L001_W001", "start": 1.0, "end": 1.3}
+        text = _build_karaoke_text([word], line_start_ms=1000, effect="highlight")
+        self.assertEqual(text.count("\\kf"), 1)
 
-    def test_parse_pure_red_bgr(self):
-        # R=255, G=0, B=0 → ASS BGR bytes: 000000FF → &H000000FF
-        r, g, b = _parse_color("&H000000FF")
-        self.assertEqual((255, 0, 0), (r, g, b))
-
-    def test_parse_pure_blue_bgr(self):
-        # B=255, G=0, R=0 → ASS BGR bytes: 00FF0000 → &H00FF0000
-        r, g, b = _parse_color("&H00FF0000")
-        self.assertEqual((0, 0, 255), (r, g, b))
-
-    def test_parse_color_ignores_alpha_channel(self):
-        # AA=80 (semi-transparent), same RGB as white
-        r, g, b = _parse_color("&H80FFFFFF")
-        self.assertEqual((255, 255, 255), (r, g, b))
-
-    def test_parse_color_roundtrip_with_c_helper(self):
-        # Build a color with _c() then parse it back — RGB should survive.
-        original = (100, 150, 200)
-        encoded = _c(*original)
-        r, g, b = _parse_color(encoded)
-        self.assertEqual(original, (r, g, b))
-
-    def test_parse_color_raises_on_too_short_string(self):
-        with self.assertRaises((ValueError, IndexError)):
-            _parse_color("&H00FF")
-
-    def test_parse_color_raises_on_non_hex(self):
-        with self.assertRaises(ValueError):
-            _parse_color("&H00GGGGGG")
+    def test_explicit_highlight_segments_override_syllables(self):
+        # Manual boundary edit (highlight_segments) wins over derived syllables.
+        word = {
+            "word": "aah",
+            "id": "L001_W001",
+            "start": 10.0,
+            "end": 11.6,
+            "syllables": [
+                {"text": "aah", "karaoke_start": 10.0, "karaoke_end": 11.6, "confidence": 0.9},
+            ],
+            "highlight_segments": [
+                {"id": "m1", "text": "aa", "start": 10.0, "end": 10.5, "role": "syllable"},
+                {"id": "m2", "text": "ah", "start": 10.5, "end": 11.0, "role": "syllable"},
+                {"id": "m3", "text": "h", "start": 11.0, "end": 11.6, "role": "syllable"},
+            ],
+        }
+        text = _build_karaoke_text([word], line_start_ms=10000, effect="highlight")
+        self.assertGreaterEqual(text.count("\\kf"), 3)
 
 
 class ValidateAssTests(unittest.TestCase):

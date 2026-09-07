@@ -37,9 +37,11 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts.karaoke_styles.library import supported_style_keys
 from scripts.common.observability import build_observability_summary, write_event
 from scripts.common.provenance import ProvenanceError, file_sha256, load_manifest, validate_file_hash
 from scripts.common.validation import find_timestamp_errors, find_word_coverage_errors
+from scripts.syllables import DEFAULT_MIN_SEGMENT_MS
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,22 @@ _failures: list[str] = []
 _warnings: list[str] = []
 _current_job_dir: Path | None = None
 _overlap_tolerance_s: float = 0.05
+MIN_BLOCK_ASSIGNMENT_CONFIDENCE = 0.45
+LONG_GAP_SECONDS = 8.0
+SYLLABLE_MIN_FLOOR_S = DEFAULT_MIN_SEGMENT_MS / 1000.0
+SYLLABLE_TIMING_MODE = "projected_from_stage04_phonemes"
+SYLLABLE_SOURCE_PHONE_PROJECTION = "phone_projection"
+SYLLABLE_SOURCE_REFERENCE = "reference"
+FALLBACK_SYLLABLE_SOURCES = {
+    "duration_interpolation_fallback",
+    "interpolation_fallback",
+    "fallback",
+}
+KNOWN_SYLLABLE_SOURCES = {
+    SYLLABLE_SOURCE_PHONE_PROJECTION,
+    SYLLABLE_SOURCE_REFERENCE,
+    *FALLBACK_SYLLABLE_SOURCES,
+}
 
 
 def _ok(msg: str) -> None:
@@ -129,6 +147,14 @@ def _manifest_sha(manifest: dict[str, Any], section: str, artifact: str) -> str:
 def _ass_dialogue_count(path: Path) -> int:
     content = path.read_text(encoding="utf-8-sig", errors="replace")
     return content.count("\nDialogue:")
+
+
+def _reference_timing_applied(transcript: dict[str, Any] | None) -> bool:
+    return bool(isinstance(transcript, dict) and transcript.get("reference_timing_applied"))
+
+
+def _interval_overlap(a_start: float, a_end: float, b_start: float, b_end: float) -> float:
+    return max(0.0, min(a_end, b_end) - max(a_start, b_start))
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +297,8 @@ def validate_aligned(job_dir: Path) -> dict[str, Any] | None:
     data = _load_json(job_dir / "aligned.json")
     if data is None:
         return None
+    transcript = _load_json(job_dir / "transcript.json")
+    has_reference_timing = _reference_timing_applied(transcript if isinstance(transcript, dict) else None)
 
     words = data.get("words", [])
     if not words:
@@ -293,7 +321,10 @@ def validate_aligned(job_dir: Path) -> dict[str, Any] | None:
     if hfa == 0:
         fallback_sources = {"ctc_forced", "whisper_fallback"}
         if any("fallback" in str(source) or source in fallback_sources for source in sources):
-            _warn("0% HubertFA alignment - using fallback timings")
+            if has_reference_timing:
+                _warn("0% HubertFA alignment - using reference-backed fallback timings")
+            else:
+                _fail("0% HubertFA alignment - fallback timings cannot produce automatic final export")
         else:
             _fail("0% HubertFA alignment - no fallback source was recorded")
     elif hfa / total < 0.6:
@@ -321,6 +352,449 @@ def validate_aligned(job_dir: Path) -> dict[str, Any] | None:
 # Stage 05 — analysis.json
 # ---------------------------------------------------------------------------
 
+def validate_automatic_timing_quality(job_dir: Path, transcript: dict[str, Any] | None) -> None:
+    _section("Automatic Timing Quality")
+    if transcript is None:
+        _warn("No transcript data - skipping automatic timing quality")
+        return
+    if _reference_timing_applied(transcript):
+        _ok("Reference-backed timing applied - automatic vocal-overlap gate skipped")
+        return
+
+    segments = transcript.get("segments", [])
+    if not isinstance(segments, list) or not segments:
+        _warn("No transcript segments - automatic vocal-overlap gate skipped")
+        return
+
+    regions = None
+    regions_path = job_dir / "vocal_regions.json"
+    if regions_path.exists():
+        payload = _load_json(regions_path)
+        if isinstance(payload, dict) and isinstance(payload.get("regions"), list):
+            regions = payload["regions"]
+            _ok(f"Vocal regions artifact: {len(regions)} regions")
+
+    if regions is None:
+        vocals_path = job_dir / "vocals.wav"
+        if not vocals_path.exists():
+            _warn("vocals.wav missing - automatic vocal-overlap gate skipped")
+            return
+
+        try:
+            from scripts.review_wizard.vocal_activity import VocalActivityProbe
+
+            probe = VocalActivityProbe.from_wav(vocals_path)
+        except Exception as exc:
+            _warn(f"Vocal activity unavailable - automatic vocal-overlap gate skipped: {exc}")
+            return
+
+        max_end = max(float(segment.get("end", 0.0) or 0.0) for segment in segments)
+        regions = probe.voiced_regions(0.0, max_end + 1.0, min_duration_s=0.50, merge_gap_s=0.50)
+
+    if not regions:
+        _fail("No vocal regions detected for automatic timing validation")
+        return
+
+    suspicious: list[tuple[int, float]] = []
+    for index, segment in enumerate(segments):
+        start = float(segment.get("start", 0.0) or 0.0)
+        end = float(segment.get("end", start) or start)
+        duration = max(0.0, end - start)
+        if duration < 0.5:
+            continue
+
+        overlap = sum(
+            _interval_overlap(
+                start,
+                end,
+                float(region.get("start_s", region.get("start", 0.0))),
+                float(region.get("end_s", region.get("end", 0.0))),
+            )
+            for region in regions
+        )
+        ratio = overlap / duration if duration else 0.0
+        if ratio < 0.25:
+            suspicious.append((index, ratio))
+
+    if suspicious:
+        shown = ", ".join(f"L{index}:{ratio:.2f}" for index, ratio in suspicious[:8])
+        _fail(
+            "Automatic timing has low vocal overlap for "
+            f"{len(suspicious)}/{len(segments)} line(s): {shown}"
+        )
+    else:
+        _ok(f"Automatic line vocal overlap OK: {len(segments)} lines")
+
+
+def validate_alignment_windows(job_dir: Path, transcript: dict[str, Any] | None) -> None:
+    _section("Alignment Windows")
+    if transcript is None:
+        _warn("No transcript data - alignment window gates skipped")
+        return
+    if _reference_timing_applied(transcript):
+        _ok("Reference-backed timing applied - alignment window hard gates skipped")
+        return
+
+    blocks = _load_json(job_dir / "lyrics_blocks.json")
+    assignments_payload = _load_json(job_dir / "block_region_assignments.json")
+    windows_payload = _load_json(job_dir / "alignment_windows.json")
+    vocal_payload = _load_json(job_dir / "vocal_regions.json")
+    safety_payload = _load_json(job_dir / "ctc_window_safety_report.json")
+    if not all(isinstance(item, dict) for item in [blocks, assignments_payload, windows_payload, vocal_payload]):
+        return
+
+    block_items = blocks.get("blocks", [])
+    assignments = assignments_payload.get("assignments", [])
+    windows = windows_payload.get("windows", [])
+    if not isinstance(block_items, list) or not isinstance(assignments, list) or not isinstance(windows, list):
+        _fail("Alignment window artifacts have invalid schema")
+        return
+
+    _ok(f"Alignment artifacts: {len(block_items)} blocks, {len(assignments)} assignments, {len(windows)} windows")
+    if isinstance(safety_payload, dict):
+        if not safety_payload.get("safe_for_ctc"):
+            for window in safety_payload.get("windows", []):
+                if not isinstance(window, dict):
+                    continue
+                for violation in window.get("violations", []):
+                    if isinstance(violation, dict):
+                        _fail(f"CTC window {window.get('block_id')} unsafe: {violation.get('code')}")
+        else:
+            _ok("CTC window safety report: all windows safe")
+    windows_declined = _alignment_windows_were_declined(job_dir)
+    if windows_declined:
+        _warn("Alignment windows declined by s03b - full-audio alignment used, containment gates skipped")
+    elif not transcript.get("ctc_windowed_alignment"):
+        _fail("Automatic alignment did not use alignment windows")
+
+    assignments_by_block = {
+        str(assignment.get("block_id")): assignment
+        for assignment in assignments
+        if isinstance(assignment, dict)
+    }
+    for block in block_items:
+        block_id = str(block.get("block_id"))
+        assignment = assignments_by_block.get(block_id)
+        if not assignment or "unassigned" in assignment.get("flags", []) or not assignment.get("region_ids"):
+            _fail(f"Block {block_id} has no alignment window assignment")
+            continue
+        confidence = float(assignment.get("confidence", 0.0) or 0.0)
+        if confidence < MIN_BLOCK_ASSIGNMENT_CONFIDENCE:
+            _fail(f"Block {block_id} assignment confidence {confidence:.2f} below {MIN_BLOCK_ASSIGNMENT_CONFIDENCE:.2f}")
+
+    windows_by_line: dict[str, dict[str, Any]] = {}
+    duplicate_lines: set[str] = set()
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        for line_id in window.get("line_ids", []):
+            line_key = str(line_id)
+            if line_key in windows_by_line:
+                duplicate_lines.add(line_key)
+            windows_by_line[line_key] = window
+    if duplicate_lines:
+        _fail(f"Line(s) assigned to multiple alignment windows: {sorted(duplicate_lines)}")
+
+    long_gaps = [
+        gap
+        for gap in vocal_payload.get("non_vocal_gaps", [])
+        if isinstance(gap, dict) and float(gap.get("duration", 0.0) or 0.0) >= LONG_GAP_SECONDS
+    ]
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        start = float(window.get("audio_start", 0.0) or 0.0)
+        end = float(window.get("audio_end", start) or start)
+        for gap in long_gaps:
+            gap_start = float(gap.get("start", 0.0) or 0.0)
+            gap_end = float(gap.get("end", gap_start) or gap_start)
+            if start < gap_start and end > gap_end:
+                _fail(f"Window {window.get('block_id')} crosses long non-vocal gap {gap_start:.2f}-{gap_end:.2f}")
+
+    outside = []
+    inside_long_gap = []
+    for index, segment in enumerate(transcript.get("segments", [])):
+        if not isinstance(segment, dict):
+            continue
+        line_id = str(segment.get("line_id") or f"L{index + 1:03d}")
+        window = windows_by_line.get(line_id)
+        if not window:
+            _fail(f"Line {line_id} has no alignment window")
+            continue
+        start = float(segment.get("start", 0.0) or 0.0)
+        end = float(segment.get("end", start) or start)
+        window_start = float(window.get("audio_start", 0.0) or 0.0)
+        window_end = float(window.get("audio_end", window_start) or window_start)
+        if not windows_declined and (
+            start < window_start - _overlap_tolerance_s or end > window_end + _overlap_tolerance_s
+        ):
+            outside.append(line_id)
+        for gap in long_gaps:
+            gap_start = float(gap.get("start", 0.0) or 0.0)
+            gap_end = float(gap.get("end", gap_start) or gap_start)
+            if _interval_overlap(start, end, gap_start, gap_end) > 0:
+                inside_long_gap.append(line_id)
+
+    if outside:
+        _fail(f"Line(s) outside alignment window: {outside[:8]}")
+    if inside_long_gap:
+        _fail(f"Line(s) inside long non-vocal gap: {inside_long_gap[:8]}")
+
+
+def _artifact_time(value: Any, default: float | None = None) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _syllable_start(syllable: dict[str, Any]) -> float | None:
+    for key in ("start", "karaoke_start", "phonetic_start", "vowel_start", "start_s"):
+        if key in syllable:
+            return _artifact_time(syllable.get(key))
+    return None
+
+
+def _syllable_end(syllable: dict[str, Any]) -> float | None:
+    for key in ("end", "karaoke_end", "phonetic_end", "end_s"):
+        if key in syllable:
+            return _artifact_time(syllable.get(key))
+    return None
+
+
+def _iter_syllable_entries(payload: dict[str, Any] | list[Any]) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+
+    entries: list[dict[str, Any]] = []
+    top_line_id = payload.get("line_id")
+    for item in payload.get("syllables", []) or []:
+        if isinstance(item, dict):
+            copy = dict(item)
+            copy.setdefault("line_id", top_line_id)
+            entries.append(copy)
+
+    for line in payload.get("lines", []) or []:
+        if not isinstance(line, dict):
+            continue
+        line_id = line.get("line_id") or line.get("id")
+        for item in line.get("syllables", []) or []:
+            if isinstance(item, dict):
+                copy = dict(item)
+                copy.setdefault("line_id", line_id)
+                entries.append(copy)
+        for word in line.get("words", []) or []:
+            if not isinstance(word, dict):
+                continue
+            word_id = word.get("word_id") or word.get("id")
+            for item in word.get("syllables", []) or []:
+                if isinstance(item, dict):
+                    copy = dict(item)
+                    copy.setdefault("line_id", line_id)
+                    copy.setdefault("word_id", word_id)
+                    entries.append(copy)
+    return entries
+
+
+def _analysis_bounds(job_dir: Path) -> tuple[dict[str, tuple[float, float]], dict[str, tuple[float, float]]]:
+    analysis = _load_json(job_dir / "analysis.json")
+    line_bounds: dict[str, tuple[float, float]] = {}
+    word_bounds: dict[str, tuple[float, float]] = {}
+    if not isinstance(analysis, dict):
+        return line_bounds, word_bounds
+
+    for line_index, line in enumerate(analysis.get("lines", []) or [], start=1):
+        if not isinstance(line, dict):
+            continue
+        line_id = str(line.get("line_id") or line.get("id") or f"L{line_index:03d}")
+        line_start = _artifact_time(line.get("start"), 0.0)
+        line_end = _artifact_time(line.get("end"), line_start)
+        if line_start is not None and line_end is not None:
+            line_bounds[line_id] = (line_start, line_end)
+        for word_index, word in enumerate(line.get("words", []) or [], start=1):
+            if not isinstance(word, dict):
+                continue
+            word_id = str(word.get("word_id") or word.get("id") or f"{line_id}_W{word_index:03d}")
+            word_start = _artifact_time(word.get("start", word.get("start_s")), line_start)
+            word_end = _artifact_time(word.get("end", word.get("end_s")), word_start)
+            if word_start is not None and word_end is not None:
+                word_bounds[word_id] = (word_start, word_end)
+    return line_bounds, word_bounds
+
+
+def _alignment_windows_were_declined(job_dir: Path) -> bool:
+    """True when s03b aligned on full audio instead of the windows, for a good reason.
+
+    Two legitimate reasons: the windows were judged unsafe up front, or they were
+    used and the quality guard measured the result as worse. Either way nothing was
+    timed against them, so containment checks measure nothing — the window defect
+    itself is still reported separately.
+    """
+    transcript = _load_json_quiet(job_dir / "transcript.json")
+    if not isinstance(transcript, dict) or transcript.get("ctc_windowed_alignment"):
+        return False
+    guard = transcript.get("ctc_window_quality_guard")
+    if isinstance(guard, dict) and guard.get("fallback_used"):
+        return True
+    safety = _load_json_quiet(job_dir / "ctc_window_safety_report.json")
+    return isinstance(safety, dict) and not safety.get("safe_for_ctc", True)
+
+
+def _load_json_quiet(path: Path) -> Any:
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _syllable_windows_by_line(job_dir: Path) -> dict[str, dict[str, Any]]:
+    path = job_dir / "alignment_windows.json"
+    if not path.exists() or path.stat().st_size == 0:
+        return {}
+    if _alignment_windows_were_declined(job_dir):
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        _fail("alignment_windows.json is not valid JSON")
+        return {}
+    windows: dict[str, dict[str, Any]] = {}
+    for window in payload.get("windows", []) if isinstance(payload, dict) else []:
+        if not isinstance(window, dict):
+            continue
+        for line_id in window.get("line_ids", []) or []:
+            windows[str(line_id)] = window
+    return windows
+
+
+def _syllable_long_non_vocal_gaps(job_dir: Path) -> list[dict[str, Any]]:
+    path = job_dir / "vocal_regions.json"
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        _fail("vocal_regions.json is not valid JSON")
+        return []
+    if not isinstance(payload, dict):
+        return []
+    return [
+        gap
+        for gap in payload.get("non_vocal_gaps", []) or []
+        if isinstance(gap, dict) and float(gap.get("duration", 0.0) or 0.0) >= LONG_GAP_SECONDS
+    ]
+
+
+def validate_syllable_alignment(job_dir: Path) -> None:
+    path = job_dir / "syllable_alignment.json"
+    if not path.exists():
+        return
+
+    _section("Syllable Alignment")
+    payload = _load_json(path)
+    if payload is None:
+        return
+
+    line_bounds, word_bounds = _analysis_bounds(job_dir)
+    windows_by_line = _syllable_windows_by_line(job_dir)
+    long_gaps = _syllable_long_non_vocal_gaps(job_dir)
+    syllables = _iter_syllable_entries(payload)
+    if not syllables:
+        _fail("No syllables in syllable_alignment.json")
+        return
+
+    if payload.get("syllable_timing_mode") != SYLLABLE_TIMING_MODE:
+        _fail("syllable_alignment.json missing syllable_timing_mode")
+    safe_for_final_export = bool(payload.get("safe_for_final_export", True))
+
+    _ok(f"Syllables: {len(syllables)}")
+    prev_end_by_line: dict[str, float] = {}
+    for index, syllable in enumerate(syllables):
+        label = str(syllable.get("syllable_id") or syllable.get("id") or f"#{index}")
+        start = _syllable_start(syllable)
+        end = _syllable_end(syllable)
+        if start is None or end is None:
+            _fail(f"Syllable '{label}' missing timestamp")
+            continue
+        if end <= start:
+            _fail(f"Syllable '{label}' invalid duration: {start:.4f} -> {end:.4f}")
+            continue
+
+        line_id = str(syllable.get("line_id") or "")
+        word_id = str(syllable.get("word_id") or "")
+        source = str(syllable.get("source") or "")
+        if not source:
+            _fail(f"Syllable '{label}' missing source")
+        elif source not in KNOWN_SYLLABLE_SOURCES:
+            _fail(f"Syllable '{label}' unknown source: {source}")
+        elif safe_for_final_export and source in FALLBACK_SYLLABLE_SOURCES:
+            _fail(f"Syllable '{label}' fallback source blocks final export: {source}")
+
+        if "confidence" not in syllable:
+            _fail(f"Syllable '{label}' missing confidence")
+        else:
+            try:
+                confidence = float(syllable.get("confidence"))
+            except (TypeError, ValueError):
+                _fail(f"Syllable '{label}' invalid confidence")
+            else:
+                if confidence < 0.0 or confidence > 1.0:
+                    _fail(f"Syllable '{label}' confidence out of range: {confidence:.4f}")
+        if not isinstance(syllable.get("score_breakdown"), dict):
+            _fail(f"Syllable '{label}' missing score_breakdown")
+        if not isinstance(syllable.get("flags", []), list):
+            _fail(f"Syllable '{label}' flags must be a list")
+
+        if line_id in line_bounds:
+            line_start, line_end = line_bounds[line_id]
+            if start < line_start - _overlap_tolerance_s or end > line_end + _overlap_tolerance_s:
+                _fail(f"Syllable '{label}' outside line {line_id}: {start:.4f} -> {end:.4f}")
+            prev_end = prev_end_by_line.get(line_id)
+            if prev_end is not None and start < prev_end - _overlap_tolerance_s:
+                _fail(f"Syllable '{label}' out of order in line {line_id}: {start:.4f} < {prev_end:.4f}")
+            prev_end_by_line[line_id] = max(prev_end or end, end)
+        if word_id in word_bounds:
+            word_start, word_end = word_bounds[word_id]
+            if start < word_start - _overlap_tolerance_s or end > word_end + _overlap_tolerance_s:
+                _fail(f"Syllable '{label}' outside word {word_id}: {start:.4f} -> {end:.4f}")
+        if line_id in windows_by_line:
+            window = windows_by_line[line_id]
+            window_start = _artifact_time(window.get("audio_start"), 0.0)
+            window_end = _artifact_time(window.get("audio_end"), window_start)
+            if (
+                window_start is not None
+                and window_end is not None
+                and (start < window_start - _overlap_tolerance_s or end > window_end + _overlap_tolerance_s)
+            ):
+                _fail(f"Syllable '{label}' outside alignment window {line_id}: {start:.4f} -> {end:.4f}")
+        for gap in long_gaps:
+            gap_start = _artifact_time(gap.get("start"), 0.0)
+            gap_end = _artifact_time(gap.get("end"), gap_start)
+            if gap_start is not None and gap_end is not None and _interval_overlap(start, end, gap_start, gap_end) > 0:
+                _fail(f"Syllable '{label}' overlaps long non-vocal gap {gap_start:.2f}-{gap_end:.2f}")
+
+        timed_phones = [
+            phone for phone in syllable.get("phones", []) or []
+            if isinstance(phone, dict)
+            and _artifact_time(phone.get("start", phone.get("start_s"))) is not None
+            and _artifact_time(phone.get("end", phone.get("end_s"))) is not None
+        ]
+        if timed_phones:
+            phone_start = min(float(phone.get("start", phone.get("start_s"))) for phone in timed_phones)
+            phone_end = max(float(phone.get("end", phone.get("end_s"))) for phone in timed_phones)
+            # A syllable held at the s05 min floor is longer than its phones by
+            # design (§8); only a syllable above the floor must be phone-backed.
+            at_min_floor = (end - start) <= SYLLABLE_MIN_FLOOR_S + 1e-6
+            if phone_start > start + _overlap_tolerance_s or (
+                phone_end < end - _overlap_tolerance_s and not at_min_floor
+            ):
+                _fail(f"Syllable '{label}' phones do not cover syllable")
+
+
 def validate_analysis(job_dir: Path, transcript: dict | None, aligned: dict | None) -> dict | None:
     _section("Stage 05 — analysis.json")
     data = _load_json(job_dir / "analysis.json")
@@ -335,7 +809,7 @@ def validate_analysis(job_dir: Path, transcript: dict | None, aligned: dict | No
 
     # Schema check
     required = {"text", "start", "end", "style", "words"}
-    valid_styles = {"verse", "prechorus", "chorus", "bridge", "drop", "intro", "outro", "ad_lib"}
+    valid_styles = supported_style_keys()
     bad_styles = []
 
     for i, line in enumerate(lines):
@@ -677,7 +1151,10 @@ def main() -> int:
         validate_job_contracts(job_dir)
         transcript = validate_transcript(job_dir)
         aligned    = validate_aligned(job_dir)
+        validate_automatic_timing_quality(job_dir, transcript)
+        validate_alignment_windows(job_dir, transcript)
         validate_analysis(job_dir, transcript, aligned)
+        validate_syllable_alignment(job_dir)
         validate_ass(job_dir)
         validate_provenance(job_dir)
         validate_drift(job_dir, args.reference, transcript)

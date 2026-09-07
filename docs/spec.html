@@ -1,0 +1,1239 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Karaoke MFA Multi - Spec do Projeto</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --panel: #151b24;
+      --panel-2: #1d2530;
+      --line: #303a48;
+      --text: #edf2f7;
+      --muted: #a5b1c2;
+      --accent: #59d7ff;
+      --ok: #62d394;
+      --warn: #ffcc66;
+      --bad: #ff7a7a;
+      --code: #0a0d12;
+      --shadow: rgba(0, 0, 0, 0.28);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.55 "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 290px minmax(0, 1fr);
+      min-height: 100vh;
+      width: 100%;
+      overflow-x: hidden;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      padding: 24px 18px;
+      background: #0a0e14;
+      border-right: 1px solid var(--line);
+    }
+
+    nav h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+
+    nav p {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    nav a {
+      display: block;
+      padding: 7px 8px;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    nav a:hover {
+      background: var(--panel);
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    main {
+      padding: 34px min(5vw, 64px) 80px;
+      max-width: 1280px;
+      width: 100%;
+      min-width: 0;
+    }
+
+    header {
+      padding: 28px;
+      margin-bottom: 22px;
+      background: linear-gradient(135deg, #151b24, #101620);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 20px 50px var(--shadow);
+    }
+
+    header h2 {
+      margin: 0 0 10px;
+      font-size: clamp(30px, 5vw, 54px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    header p {
+      max-width: 900px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    section {
+      margin: 26px 0;
+      padding: 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      max-width: 100%;
+      overflow-x: auto;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 24px;
+      line-height: 1.2;
+    }
+
+    h3 {
+      margin: 24px 0 10px;
+      color: var(--text);
+      font-size: 18px;
+    }
+
+    h4 {
+      margin: 20px 0 8px;
+      color: var(--muted);
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    p {
+      margin: 8px 0 12px;
+    }
+
+    ul,
+    ol {
+      margin: 10px 0 14px 20px;
+      padding: 0;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    table {
+      width: 100%;
+      margin: 14px 0 20px;
+      border-collapse: collapse;
+      table-layout: fixed;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+      border-bottom: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+    }
+
+    th:last-child,
+    td:last-child {
+      border-right: 0;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    th {
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 12px;
+      text-align: left;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+    }
+
+    td {
+      color: var(--muted);
+    }
+
+    code,
+    pre {
+      font-family: "Cascadia Code", Consolas, monospace;
+    }
+
+    code {
+      color: #d7f3ff;
+      background: rgba(89, 215, 255, .09);
+      border: 1px solid rgba(89, 215, 255, .14);
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-size: 0.92em;
+      overflow-wrap: anywhere;
+    }
+
+    pre {
+      margin: 12px 0 18px;
+      padding: 14px;
+      max-width: 100%;
+      overflow: auto;
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: #d8dee9;
+      font-size: 13px;
+    }
+
+    pre code {
+      padding: 0;
+      color: inherit;
+      background: transparent;
+      border: 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin: 18px 0;
+    }
+
+    .card {
+      padding: 16px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--text);
+    }
+
+    .card span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .tag {
+      display: inline-block;
+      margin: 2px 4px 2px 0;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(89, 215, 255, .11);
+      border: 1px solid rgba(89, 215, 255, .25);
+      color: var(--accent);
+      font-size: 12px;
+      font-family: "Cascadia Code", Consolas, monospace;
+    }
+
+    .ok {
+      color: var(--ok);
+    }
+
+    .warn {
+      color: var(--warn);
+    }
+
+    .bad {
+      color: var(--bad);
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .callout {
+      padding: 14px 16px;
+      margin: 14px 0;
+      background: rgba(255, 204, 102, .09);
+      border: 1px solid rgba(255, 204, 102, .3);
+      border-radius: 8px;
+    }
+
+    .callout strong {
+      color: var(--warn);
+    }
+
+    .two {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    @media (max-width: 980px) {
+      .shell {
+        display: block;
+      }
+
+      nav {
+        position: relative;
+        height: auto;
+      }
+
+      main {
+        padding: 22px 14px 50px;
+      }
+
+      .grid,
+      .two {
+        grid-template-columns: 1fr;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav>
+      <h1>Karaoke MFA Multi</h1>
+      <p>Spec organizado para refazer o projeto sem perder os contratos importantes.</p>
+      <a href="#visao">Visao geral</a>
+      <a href="#escopo">Escopo do produto</a>
+      <a href="#arquitetura">Arquitetura</a>
+      <a href="#pipeline">Pipeline s01-s08</a>
+      <a href="#artefatos">Artefatos e JSON</a>
+      <a href="#timing">Timing e alinhamento</a>
+      <a href="#review">Review Wizard</a>
+      <a href="#style">Style Library</a>
+      <a href="#ui">UI e rotas</a>
+      <a href="#config">Configuracao</a>
+      <a href="#observabilidade">Observabilidade</a>
+      <a href="#validacao">Validacao e testes</a>
+      <a href="#refazer">Plano para refazer</a>
+    </nav>
+
+    <main>
+      <header id="visao">
+        <h2>Spec do Projeto</h2>
+        <p>
+          Karaoke MFA Multi e um app local em Flask para transformar stems de musica
+          e letras em video MP4 com karaoke sincronizado, usando alinhamento forcado,
+          geracao ASS, render via ffmpeg e um fluxo de revisao antes da exportacao.
+        </p>
+      </header>
+
+      <section>
+        <h2>Resumo Executivo</h2>
+        <div class="grid">
+          <div class="card">
+            <strong>Produto</strong>
+            <span>Ferramenta local de karaoke para stems Suno ou stems separados.</span>
+          </div>
+          <div class="card">
+            <strong>Core tecnico</strong>
+            <span>Pipeline file-based com jobs em disco e etapas s03b, s04, s05, s06, s07, s08.</span>
+          </div>
+          <div class="card">
+            <strong>Qualidade</strong>
+            <span>Review Wizard com issues, previews, risco aceito e bloqueio de exportacao.</span>
+          </div>
+        </div>
+
+        <p>
+          O sistema atual tem duas entradas principais: <code>Suno ZIP</code> com stems
+          ou uploads separados de <code>vocals</code> e <code>instrumental</code>.
+          O MVP atual exige letra, porque o caminho confiavel e alinhamento forcado
+          por <code>s03b_lyrics_align.py</code>. Whisper existe como fallback tecnico,
+          mas nao e o caminho feliz do produto.
+        </p>
+
+        <div class="callout">
+          <strong>Regra principal:</strong>
+          saida de modelo local e rascunho. Timing, artefatos, manifests e exportacao final
+          precisam passar por validacao, provenance e, quando houver risco, preview aprovado.
+        </div>
+      </section>
+
+      <section id="escopo">
+        <h2>Escopo do Produto</h2>
+        <h3>Dentro do MVP</h3>
+        <ul>
+          <li>App local, sem SaaS, sem contas, sem cloud obrigatoria.</li>
+          <li>Upload de stems ZIP ou arquivos separados.</li>
+          <li>Letra com marcadores como <code>[Verse]</code>, <code>[Chorus]</code>, <code>[Bridge]</code>, <code>[Drop]</code>.</li>
+          <li>Escolha de preset visual para karaoke.</li>
+          <li>Pipeline com progresso por etapa e artefatos debuggaveis.</li>
+          <li>ASS Aegisub-compatible com tags <code>\kf</code>.</li>
+          <li>MP4 final com audio e legenda queimada.</li>
+          <li>Review Wizard para issues, aprovacoes, risco aceito e preview.</li>
+        </ul>
+
+        <h3>Fora do MVP</h3>
+        <ul>
+          <li>Autenticacao, billing, cloud storage ou fila distribuida.</li>
+          <li>Editor visual completo de estilos.</li>
+          <li>Marketplace de presets.</li>
+          <li>Colaboracao multiusuario.</li>
+          <li>Treinar modelo customizado com correcoes do usuario.</li>
+        </ul>
+      </section>
+
+      <section id="arquitetura">
+        <h2>Arquitetura</h2>
+        <p>
+          A arquitetura e deliberadamente baseada em arquivos. Cada job tem uma pasta
+          propria em <code>jobs/{job_id}</code>, e a pasta e a fonte da verdade para
+          inputs, outputs, status, eventos, manifests e estado de revisao.
+        </p>
+
+        <h3>Modulos principais</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Area</th>
+              <th>Arquivos</th>
+              <th>Responsabilidade</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Servidor</td>
+              <td><code>server.py</code></td>
+              <td>Rotas Flask, upload, lifecycle do job, Review Wizard, download/export gates.</td>
+            </tr>
+            <tr>
+              <td>Orquestracao</td>
+              <td><code>scripts/pipeline_runner.py</code></td>
+              <td>Plano de etapas, execucao subprocess, timeout, status, eventos e invalidacao downstream.</td>
+            </tr>
+            <tr>
+              <td>Pipeline</td>
+              <td><code>scripts/s01_*.py</code> ate <code>scripts/s08_*.py</code></td>
+              <td>Validar input, demix, transcrever/alinha letra, refinar timing, analisar, gerar ASS, renderizar, validar.</td>
+            </tr>
+            <tr>
+              <td>Contratos comuns</td>
+              <td><code>scripts/common/</code></td>
+              <td>Config, paths seguros, status, validacao, observabilidade, provenance.</td>
+            </tr>
+            <tr>
+              <td>Review</td>
+              <td><code>scripts/review_wizard/</code></td>
+              <td>Estado nao destrutivo, issues, pontos de revisao, qualidade, timeline, export gate.</td>
+            </tr>
+            <tr>
+              <td>Estilos</td>
+              <td><code>scripts/karaoke_styles/library.py</code></td>
+              <td>Fonte unica de presets, keys de estilo, efeitos e mapeamento de secoes.</td>
+            </tr>
+            <tr>
+              <td>UI</td>
+              <td><code>templates/</code>, <code>static/</code></td>
+              <td>Cockpit, formulario de job, detalhe, review wizard, CSS/JS.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Fluxo de alto nivel</h3>
+        <pre><code>Upload + lyrics
+  -> jobs/{job_id}/vocals.wav + instrumental.wav + lyrics.txt + meta.json
+  -> s03b lyrics alignment ou s03 Whisper
+  -> transcript.json
+  -> s04 HubertFA / fallback timing
+  -> aligned.json
+  -> s05 line/style analysis
+  -> analysis.json
+  -> s06 ASS + manifest
+  -> output.ass + output.ass.manifest.json
+  -> s07 MP4 + manifest
+  -> output.mp4 + output.mp4.manifest.json
+  -> s08 validation
+  -> status done/failed
+  -> Review Wizard export gate</code></pre>
+      </section>
+
+      <section id="pipeline">
+        <h2>Pipeline s01-s08</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Stage</th>
+              <th>Script</th>
+              <th>Inputs</th>
+              <th>Outputs</th>
+              <th>Contrato</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>s01 input</td>
+              <td><code>scripts/s01_input.py</code></td>
+              <td>Audio/video: mp3, wav, flac, ogg, m4a, wma, mp4, mkv, webm, avi, mov.</td>
+              <td><code>input.wav</code>, <code>metadata.json</code>, copia <code>original.*</code>.</td>
+              <td>Normaliza para WAV PCM 16-bit, 44.1 kHz, stereo. No produto novo, <code>meta.json</code> e preferido.</td>
+            </tr>
+            <tr>
+              <td>s02 demix</td>
+              <td><code>scripts/s02_demix.py</code></td>
+              <td><code>input.wav</code> ou input audio aceito.</td>
+              <td><code>vocals.wav</code>, <code>instrumental.wav</code>.</td>
+              <td>Usa Demucs <code>htdemucs</code> em env isolado. No fluxo web atual, stems ja chegam separados e s02 pode ser pulado.</td>
+            </tr>
+            <tr>
+              <td>s03 transcribe</td>
+              <td><code>scripts/s03_transcribe.py</code></td>
+              <td><code>vocals.wav</code>.</td>
+              <td><code>transcript.json</code>.</td>
+              <td>Usa faster-whisper com timestamps por palavra. CTranslate2 nao suporta DirectML; CPU e o caminho seguro no Z13 AMD.</td>
+            </tr>
+            <tr>
+              <td>s03b lyrics align</td>
+              <td><code>scripts/s03b_lyrics_align.py</code></td>
+              <td><code>vocals.wav</code>, <code>lyrics.txt</code>.</td>
+              <td><code>transcript.json</code>.</td>
+              <td>Alinhamento forcado por CTC/MMS. Preserva letra como ground truth, adiciona <code>alignment_mode: "forced"</code> e secoes.</td>
+            </tr>
+            <tr>
+              <td>s04 align</td>
+              <td><code>scripts/s04_align.py</code></td>
+              <td><code>vocals.wav</code>, <code>transcript.json</code>, modelo HubertFA.</td>
+              <td><code>aligned.json</code>.</td>
+              <td>Enriquece com phonemes quando possivel. Mantem CTC word timings no modo forced; fallback repara words com minimo de 50 ms.</td>
+            </tr>
+            <tr>
+              <td>s05 analyze</td>
+              <td><code>scripts/s05_analyze.py</code></td>
+              <td><code>transcript.json</code>, <code>aligned.json</code>, opcional <code>lyrics.txt</code>.</td>
+              <td><code>analysis.json</code>.</td>
+              <td>Modo forced e deterministico 1:1 por segmento. Modo Whisper usa Ollama para agrupar linhas, com fallback por regras.</td>
+            </tr>
+            <tr>
+              <td>s06 generate ASS</td>
+              <td><code>scripts/s06_generate_ass.py</code></td>
+              <td><code>analysis.json</code>, opcional <code>vocals.wav</code> para timing audio-backed.</td>
+              <td><code>output.ass</code>, <code>output.ass.manifest.json</code>.</td>
+              <td>Gera uma camada visivel com <code>\kf</code>. Aplica floors de display e registra provenance.</td>
+            </tr>
+            <tr>
+              <td>s07 output</td>
+              <td><code>scripts/s07_output.py</code></td>
+              <td><code>instrumental.wav</code>, <code>output.ass</code>, manifest ASS.</td>
+              <td><code>output.mp4</code>, <code>output.mp4.manifest.json</code>.</td>
+              <td>Renderiza canvas preto + ASS via ffmpeg. AMF usa CQP; libx264 usa CRF. Valida hash do ASS antes de render.</td>
+            </tr>
+            <tr>
+              <td>s08 validate</td>
+              <td><code>scripts/s08_validate.py</code></td>
+              <td>Todos os artefatos principais.</td>
+              <td>Status de validacao, eventos, summary.</td>
+              <td>Falha contratos quebrados; warnings para qualidade. Exit 0 se contratos passam, 1 se falham.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Plano de etapas no web runner</h3>
+        <p>
+          <code>PipelineRunner</code> escolhe <code>s03b</code> se existir
+          <code>lyrics.txt</code>; caso contrario usa <code>s03</code>. Depois sempre
+          roda <code>s04</code>, <code>s05</code>, <code>s06</code>, <code>s07</code> e
+          <code>s08</code>.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Stage name</th>
+              <th>Progress</th>
+              <th>Timeout base</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>aligning_lyrics</code> ou <code>transcribing</code></td><td>5%</td><td>config + 60s buffer</td></tr>
+            <tr><td><code>aligning</code></td><td>25%</td><td><code>align_hubertfa_timeout_s</code> + 60s</td></tr>
+            <tr><td><code>analyzing</code></td><td>50%</td><td><code>ollama_timeout_s</code> + 60s</td></tr>
+            <tr><td><code>generating</code></td><td>70%</td><td><code>generate_ass_timeout_s</code> + 60s</td></tr>
+            <tr><td><code>rendering</code></td><td>85%</td><td><code>output_ffmpeg_timeout_s</code> + 60s</td></tr>
+            <tr><td><code>validating</code></td><td>95%</td><td><code>validate_timeout_s</code> + 60s</td></tr>
+            <tr><td><code>done</code></td><td>100%</td><td>terminal</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Invalidacao downstream</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Antes de rerodar</th>
+              <th>Apagar</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>analyzing</code></td>
+              <td><code>analysis.json</code>, <code>output.ass</code>, <code>output.ass.manifest.json</code>, <code>output.mp4</code>, <code>output.mp4.manifest.json</code>, <code>preview_full.mp4</code>, <code>preview_full.manifest.json</code></td>
+            </tr>
+            <tr>
+              <td><code>generating</code></td>
+              <td><code>output.ass</code>, <code>output.ass.manifest.json</code>, <code>output.mp4</code>, <code>output.mp4.manifest.json</code>, <code>preview_full.mp4</code>, <code>preview_full.manifest.json</code></td>
+            </tr>
+            <tr>
+              <td><code>rendering</code></td>
+              <td><code>output.mp4</code>, <code>output.mp4.manifest.json</code>, <code>preview_full.mp4</code>, <code>preview_full.manifest.json</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="artefatos">
+        <h2>Artefatos e JSON</h2>
+        <h3>Diretorio de job</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Arquivo</th>
+              <th>Obrigatorio</th>
+              <th>Descricao</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>meta.json</code></td><td>Sim</td><td>Contrato novo de job: id, nome, preset, duracao, origem, letra.</td></tr>
+            <tr><td><code>metadata.json</code></td><td>Legado</td><td>Metadata antigo de s01. Ler so como fallback.</td></tr>
+            <tr><td><code>status.json</code></td><td>Sim</td><td>Stage, progress, error, updated_at, run_id quando rodado por runner.</td></tr>
+            <tr><td><code>lyrics.txt</code></td><td>Sim no MVP</td><td>Letra com marcadores de secao.</td></tr>
+            <tr><td><code>vocals.wav</code></td><td>Sim</td><td>Stem vocal normalizado.</td></tr>
+            <tr><td><code>instrumental.wav</code></td><td>Sim</td><td>Stem instrumental normalizado.</td></tr>
+            <tr><td><code>transcript.json</code></td><td>Sim</td><td>Segmentos e words por CTC forced ou Whisper.</td></tr>
+            <tr><td><code>aligned.json</code></td><td>Sim</td><td>Words ordenadas, timestamps finais, source e phonemes opcionais.</td></tr>
+            <tr><td><code>analysis.json</code></td><td>Sim</td><td>Linhas de karaoke com style/effect/words.</td></tr>
+            <tr><td><code>output.ass</code></td><td>Sim para export</td><td>Legenda ASS com secoes obrigatorias e <code>\kf</code>.</td></tr>
+            <tr><td><code>output.ass.manifest.json</code></td><td>Sim para render</td><td>Inputs, outputs, hashes, metricas de ASS e timing audio-backed.</td></tr>
+            <tr><td><code>output.mp4</code></td><td>Sim para final</td><td>Video final renderizado.</td></tr>
+            <tr><td><code>output.mp4.manifest.json</code></td><td>Sim para final</td><td>Provenance do MP4 e input ASS.</td></tr>
+            <tr><td><code>review_wizard.json</code></td><td>Quando abre review</td><td>Estado nao destrutivo de projeto/revisao.</td></tr>
+            <tr><td><code>events.jsonl</code></td><td>Recomendado</td><td>Eventos append-only por stage.</td></tr>
+            <tr><td><code>observability_summary.json</code></td><td>Recomendado</td><td>Resumo de failures, warnings, artifacts, durations e validation.</td></tr>
+          </tbody>
+        </table>
+
+        <h3><code>meta.json</code></h3>
+        <pre><code>{
+  "job_id": "abc123def456",
+  "song_name": "Song Title",
+  "preset": "section-coded",
+  "created_at": 1779380000.0,
+  "duration_s": 213.4,
+  "has_lyrics": true,
+  "source": "zip"
+}</code></pre>
+
+        <h3><code>status.json</code></h3>
+        <pre><code>{
+  "stage": "queued|running|aligning_lyrics|transcribing|aligning|analyzing|generating|rendering|validating|done|failed",
+  "progress": 0,
+  "error": "",
+  "updated_at": 1779380000.0,
+  "run_id": "run-..."
+}</code></pre>
+
+        <h3><code>transcript.json</code></h3>
+        <pre><code>{
+  "alignment_mode": "forced",
+  "language": "en",
+  "segments": [
+    {
+      "text": "hello world",
+      "section": "verse",
+      "start": 0.0,
+      "end": 1.0,
+      "words": [
+        {"word": "hello", "start": 0.0, "end": 0.4, "probability": 0.99},
+        {"word": "world", "start": 0.5, "end": 1.0, "probability": 0.98}
+      ]
+    }
+  ],
+  "section_distribution": {"verse": 1},
+  "unknown_section_markers": []
+}</code></pre>
+
+        <h3><code>aligned.json</code></h3>
+        <pre><code>{
+  "words": [
+    {
+      "word": "hello",
+      "start": 0.0,
+      "end": 0.4,
+      "source": "ctc_forced+hubertfa",
+      "phonemes": [
+        {"ph": "HH", "start": 0.01, "end": 0.05}
+      ]
+    }
+  ]
+}</code></pre>
+
+        <h3><code>analysis.json</code></h3>
+        <pre><code>{
+  "lines": [
+    {
+      "text": "hello world",
+      "start": 0.0,
+      "end": 1.0,
+      "style": "verse",
+      "color": "default",
+      "effect": "highlight",
+      "words": [
+        {"word": "hello", "start": 0.0, "end": 0.4},
+        {"word": "world", "start": 0.5, "end": 1.0}
+      ]
+    }
+  ]
+}</code></pre>
+
+        <h3>Manifest minimo de ASS</h3>
+        <pre><code>{
+  "renderer_mode": "standard",
+  "style_preset_id": "section-coded",
+  "style_version": 1,
+  "metrics": {
+    "dialogue_count": 1,
+    "analysis_line_count": 1
+  },
+  "inputs": {
+    "analysis.json": {
+      "path": "analysis.json",
+      "sha256": "..."
+    }
+  },
+  "outputs": {
+    "output.ass": {
+      "path": "output.ass",
+      "sha256": "...",
+      "size_bytes": 1234
+    }
+  }
+}</code></pre>
+
+        <h3>Projeto do Review Wizard</h3>
+        <pre><code>{
+  "project_id": "review-abc123def456",
+  "job_id": "abc123def456",
+  "schema_version": 1,
+  "media_assets": [],
+  "prepared_text": {},
+  "evidence_bundle": {},
+  "alignment_takes": [],
+  "edit_operations": [],
+  "issues": [],
+  "quality_reports": [],
+  "preview_renders": [],
+  "approved_take_id": null,
+  "style_preset_id": "default",
+  "style_overrides": {},
+  "exports": [],
+  "wizard_steps": {}
+}</code></pre>
+      </section>
+
+      <section id="timing">
+        <h2>Timing e Alinhamento</h2>
+        <h3>Constraints que nao podem sumir</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Valor</th>
+              <th>Default</th>
+              <th>Onde</th>
+              <th>Motivo</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>min_dur</code> de alinhamento</td>
+              <td>50 ms</td>
+              <td>s03b/s04</td>
+              <td>Evita words zero-duration entrando em <code>aligned.json</code>.</td>
+            </tr>
+            <tr>
+              <td><code>MIN_WORD_MS</code></td>
+              <td>80 ms</td>
+              <td>s06</td>
+              <td>Garante highlight perceptivel em <code>\kf</code>.</td>
+            </tr>
+            <tr>
+              <td><code>validation.min_duration</code></td>
+              <td>1 ms</td>
+              <td>s08 / common validation</td>
+              <td>Words menores que isso sao erro duro.</td>
+            </tr>
+            <tr>
+              <td><code>validate_overlap_tolerance_s</code></td>
+              <td>0.05 s</td>
+              <td>s08</td>
+              <td>Tolera pequenos overlaps CTC em bordas de frase.</td>
+            </tr>
+            <tr>
+              <td><code>snap_window</code></td>
+              <td>0.75 s</td>
+              <td>s03b</td>
+              <td>Janela para snap conservador em onset/pitch.</td>
+            </tr>
+            <tr>
+              <td><code>generate_ass_preroll_ms</code></td>
+              <td>200 ms</td>
+              <td>s06/config</td>
+              <td>Abre janela visual antes da primeira word.</td>
+            </tr>
+            <tr>
+              <td><code>generate_ass_postroll_ms</code></td>
+              <td>300 ms</td>
+              <td>s06/config</td>
+              <td>Mantem janela depois da ultima word.</td>
+            </tr>
+            <tr>
+              <td><code>generate_ass_gap_ms</code></td>
+              <td>50 ms</td>
+              <td>s06/config</td>
+              <td>Gap minimo entre janelas de linhas consecutivas.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Politica de evidencia</h3>
+        <ul>
+          <li>Voz vence beat quando existe ataque vocal claro.</li>
+          <li>CTC nao cria melisma sozinho.</li>
+          <li>Pitch nunca cria texto visivel.</li>
+          <li>Edicao manual vence, mas precisa ser gravada como operacao.</li>
+          <li>Conflitos acima do threshold viram issues.</li>
+          <li>Correcoes agressivas geram candidate take, nao substituicao silenciosa.</li>
+        </ul>
+
+        <h3>Timing audio-backed</h3>
+        <p>
+          Stage 06 mantem duas camadas: timing estrutural vindo de <code>analysis.json</code>
+          e timing baseado em audio vindo de <code>vocals.wav</code>. Apenas classes
+          seguras podem alterar render automaticamente; o resto vira ponto de revisao.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Classe</th>
+              <th>Render</th>
+              <th>Revisao</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>written_melisma_extension</code></td><td>Estende final word escrita.</td><td>Confirmar lead vocal.</td></tr>
+            <tr><td><code>probable_unwritten_vowel_extension</code></td><td>Estende se evidencia forte.</td><td>Confirmar sustain real.</td></tr>
+            <tr><td><code>possible_lost_tail</code></td><td>Nao altera automaticamente.</td><td>Revisar e decidir extensao.</td></tr>
+            <tr><td><code>unwritten_interline_melisma</code></td><td>Review-only.</td><td>Sem texto automatico.</td></tr>
+            <tr><td><code>false_long_tail</code></td><td>Trima tail fraco/inativo.</td><td>Confirmar que nao remove voz baixa.</td></tr>
+            <tr><td><code>review_only_backing_or_drift</code></td><td>Nao altera.</td><td>Checar backing vocal ou realinhamento.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="review">
+        <h2>Review Wizard</h2>
+        <p>
+          O Review Wizard e o fluxo de qualidade. Ele transforma artefatos de pipeline
+          em um projeto revisavel, cria issues, exibe pontos de revisao por stage e
+          controla quando exportacao final pode acontecer.
+        </p>
+
+        <h3>Fluxo</h3>
+        <ol>
+          <li><strong>Import</strong>: stems, letra, idioma, preset e validade basica.</li>
+          <li><strong>Text Review</strong>: texto preparado, secoes, linhas, palavras, silabas e ambiguidades.</li>
+          <li><strong>Alignment Processing</strong>: take conservador com evidencias de waveform, CTC/phoneme, pitch e energia.</li>
+          <li><strong>Quality Review</strong>: issues priorizadas por impacto perceptual e severidade tecnica.</li>
+          <li><strong>Focused Issue Editor</strong>: contexto curto, mini waveform, causa, evidencia e acoes rapidas.</li>
+          <li><strong>Advanced Timeline</strong>: ferramenta profunda para editar limites, melisma, snaps e takes.</li>
+          <li><strong>Preview Approval</strong>: previews de trechos criticos e preview completo quando existe risco.</li>
+          <li><strong>Export</strong>: MP4 final e ASS Aegisub-compatible, com audit trail.</li>
+        </ol>
+
+        <h3>Entidades</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Entidade</th>
+              <th>Campos chave</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>Project</code></td><td><code>project_id</code>, <code>job_id</code>, <code>schema_version</code>, assets, text, takes, issues, reports, previews, exports.</td></tr>
+            <tr><td><code>PreparedText</code></td><td><code>language</code>, <code>sections</code>, <code>source</code>, <code>review_status</code>.</td></tr>
+            <tr><td><code>LyricLine</code></td><td><code>id</code>, <code>text</code>, <code>section</code>, <code>words</code>, <code>start_s</code>, <code>end_s</code>.</td></tr>
+            <tr><td><code>Word</code></td><td><code>id</code>, <code>text</code>, <code>syllables</code>, <code>highlight_segments</code>, confidence e timing.</td></tr>
+            <tr><td><code>Issue</code></td><td><code>id</code>, <code>type</code>, <code>severity</code>, <code>perceptual_impact</code>, <code>confidence</code>, <code>priority_score</code>, range, affected ids, status.</td></tr>
+            <tr><td><code>QualityReport</code></td><td><code>id</code>, <code>take_id</code>, <code>status</code>, <code>score</code>, <code>issue_ids</code>.</td></tr>
+            <tr><td><code>EditOperation</code></td><td><code>operation</code>, <code>target_id</code>, <code>created_by</code>, <code>details</code>, <code>created_at</code>.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Export gate</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Estado</th>
+              <th>Resultado</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Sem quality report</td><td><code>quality_review_required</code>, bloqueia export.</td></tr>
+            <tr><td><code>ready</code></td><td>Export liberado sem preview obrigatorio.</td></tr>
+            <tr><td><code>needs_fix</code> sem preview</td><td><code>preview_required</code>, bloqueia export.</td></tr>
+            <tr><td><code>needs_fix</code> com critical snippets apenas</td><td><code>full_preview_required</code>, ainda bloqueia final.</td></tr>
+            <tr><td><code>needs_fix</code> com full preview aprovado</td><td><code>full_preview_approved_with_risk</code>, libera export.</td></tr>
+            <tr><td>Artefato mudou depois da aprovacao</td><td><code>artifact_changed</code>, bloqueia export.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Preview evidence obrigatorio</h3>
+        <p>
+          Para aprovar preview, a evidencia precisa incluir <code>artifact_path</code>,
+          <code>artifact_sha256</code>, <code>artifact_size_bytes</code>, <code>take_id</code>,
+          <code>quality_report_id</code> e <code>quality_status</code>.
+        </p>
+      </section>
+
+      <section id="style">
+        <h2>Style Library</h2>
+        <p>
+          <code>scripts/karaoke_styles/library.py</code> e a fonte unica para presets,
+          mapeamento de secoes, efeitos suportados e metadados usados pela UI.
+        </p>
+
+        <h3>Style keys suportadas</h3>
+        <p>
+          <span class="tag">intro</span>
+          <span class="tag">verse</span>
+          <span class="tag">prechorus</span>
+          <span class="tag">chorus</span>
+          <span class="tag">bridge</span>
+          <span class="tag">drop</span>
+          <span class="tag">outro</span>
+          <span class="tag">ad_lib</span>
+        </p>
+
+        <h3>Efeitos suportados</h3>
+        <p>
+          <span class="tag">highlight</span>
+          <span class="tag">fade_in</span>
+          <span class="tag">bounce</span>
+          <span class="tag">flash</span>
+          <span class="tag">none</span>
+        </p>
+
+        <h3>Preset ids atuais</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Familia</th>
+              <th>Ids</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Core</td>
+              <td><code>default</code>, <code>neon</code>, <code>cyberpunk</code>, <code>section-coded</code>, <code>single-style-kf</code></td>
+            </tr>
+            <tr>
+              <td>Aegisub</td>
+              <td><code>aegisub-classic-blue</code>, <code>aegisub-gold-chorus</code>, <code>aegisub-anime-pop</code>, <code>aegisub-soft-pastel</code>, <code>aegisub-night-glow</code>, <code>aegisub-impact-red</code>, <code>aegisub-dual-vocal</code>, <code>aegisub-clean-editorial</code>, <code>aegisub-cyber-minimal</code>, <code>aegisub-stage-lights</code></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Regras</h3>
+        <ul>
+          <li>Preset desconhecido falha claramente; nao trocar silenciosamente.</li>
+          <li>Secao desconhecida cai para <code>verse</code>, mas deve ser observavel quando vier da letra.</li>
+          <li>Stage 05 nao deve emitir style/effect fora da biblioteca.</li>
+          <li>Stage 06 registra preset/version no manifest.</li>
+          <li>UI deve listar presets por metadata, nao hardcode.</li>
+        </ul>
+      </section>
+
+      <section id="ui">
+        <h2>UI e Rotas</h2>
+        <h3>Telas</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Tela</th>
+              <th>Arquivo</th>
+              <th>Funcao</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Cockpit</td><td><code>templates/cockpit.html</code></td><td>Tela principal compacta com New Karaoke, Review rapido, timeline, diagnostics e projetos recentes.</td></tr>
+            <tr><td>New Job completo</td><td><code>templates/new_job.html</code></td><td>Formulario completo: titulo, ZIP/stems, lyrics, preset.</td></tr>
+            <tr><td>Job detail</td><td><code>templates/job.html</code></td><td>Progresso, output, metricas e download quando permitido.</td></tr>
+            <tr><td>Review Wizard</td><td><code>templates/review_wizard.html</code></td><td>Stages, pontos de revisao, timeline, filtros, export readiness e preview.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Rotas principais</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Metodo</th>
+              <th>Rota</th>
+              <th>Contrato</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/</code></td><td>Dashboard/cockpit. Pode receber job selecionado e modo review.</td></tr>
+            <tr><td>GET</td><td><code>/job/new</code></td><td>Formulario completo de upload. Mostra busy se max_concurrent_jobs atingido.</td></tr>
+            <tr><td>POST</td><td><code>/job/new</code></td><td>Cria job. Requer lyrics. Aceita ZIP ou stems. Retorna 429 se ocupado.</td></tr>
+            <tr><td>GET</td><td><code>/job/&lt;job_id&gt;</code></td><td>Detalhe do job, status, metricas e links.</td></tr>
+            <tr><td>GET</td><td><code>/job/&lt;job_id&gt;/review</code></td><td>Review Wizard, cria <code>review_wizard.json</code> se ainda nao existir.</td></tr>
+            <tr><td>POST</td><td><code>/job/&lt;job_id&gt;/review/points/&lt;point_id&gt;/approve</code></td><td>Aprova review point.</td></tr>
+            <tr><td>POST</td><td><code>/job/&lt;job_id&gt;/review/points/&lt;point_id&gt;/apply-suggestion</code></td><td>Registra operacao de sugestao aplicada.</td></tr>
+            <tr><td>POST</td><td><code>/job/&lt;job_id&gt;/review/points/&lt;point_id&gt;/skip-risk</code></td><td>Pula ponto com risco e motivo.</td></tr>
+            <tr><td>POST</td><td><code>/job/&lt;job_id&gt;/review/preview/critical-snippets/approve</code></td><td>Aprova preview de trechos criticos.</td></tr>
+            <tr><td>POST</td><td><code>/job/&lt;job_id&gt;/review/preview/full/render</code></td><td>Renderiza preview completo.</td></tr>
+            <tr><td>POST</td><td><code>/job/&lt;job_id&gt;/review/preview/full/approve</code></td><td>Aprova preview completo.</td></tr>
+            <tr><td>GET</td><td><code>/job/&lt;job_id&gt;/stream</code></td><td>SSE de <code>status.json</code> ate <code>done</code> ou <code>failed</code>.</td></tr>
+            <tr><td>GET</td><td><code>/job/&lt;job_id&gt;/output.mp4</code></td><td>Serve MP4 somente se export gate permitir.</td></tr>
+            <tr><td>GET</td><td><code>/job/&lt;job_id&gt;/output.ass</code></td><td>Serve ASS somente se export gate permitir.</td></tr>
+            <tr><td>GET</td><td><code>/job/&lt;job_id&gt;/metrics</code></td><td>Drift metrics se existir referencia; 404 sem referencia.</td></tr>
+            <tr><td>GET</td><td><code>/job/&lt;job_id&gt;/events</code></td><td>Eventos sanitizados e summary; query <code>limit</code> entre 1 e 300.</td></tr>
+            <tr><td>POST</td><td><code>/job/&lt;job_id&gt;/delete</code></td><td>Bloqueia se job esta rodando; remove pasta se permitido.</td></tr>
+            <tr><td>POST</td><td><code>/job/&lt;job_id&gt;/retry-validate</code></td><td>So permite retry quando job falhou em <code>validating</code> com progress 95.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Regras de upload</h3>
+        <ul>
+          <li><code>lyrics_text</code> e obrigatorio no MVP forced-alignment.</li>
+          <li><code>preset</code> precisa existir na style library antes de criar pasta de job.</li>
+          <li>ZIP precisa conter audio classificado como vocal e instrumental.</li>
+          <li>ZIP rejeita path traversal, <code>__MACOSX</code> e membros inseguros.</li>
+          <li>Arquivos individuais exigem <code>vocals</code> e <code>instrumental</code>.</li>
+          <li>Stems sao convertidos para WAV PCM 16-bit 44.1 kHz stereo.</li>
+          <li>So um job pesado roda por default.</li>
+        </ul>
+      </section>
+
+      <section id="config">
+        <h2>Configuracao</h2>
+        <p>
+          A fonte principal e <code>pipeline.toml</code>, lida por
+          <code>scripts/common/config.py</code>. Variaveis de ambiente podem sobrescrever
+          varios defaults.
+        </p>
+
+        <h3>Defaults principais</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Secao</th>
+              <th>Chaves importantes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>[general]</code></td><td><code>jobs_dir=jobs</code>, <code>log_level=INFO</code></td></tr>
+            <tr><td><code>[server]</code></td><td><code>host=0.0.0.0</code>, <code>port=5000</code>, <code>secret_key</code>, <code>max_upload_mb=512</code></td></tr>
+            <tr><td><code>[ui]</code></td><td><code>default_style_preset=single-style-kf</code></td></tr>
+            <tr><td><code>[hardware]</code></td><td><code>profile=auto</code> com perfis <code>z13</code> e <code>cpu_only</code>.</td></tr>
+            <tr><td><code>[demix]</code></td><td><code>model=htdemucs</code>, timeout, Python do env Demucs.</td></tr>
+            <tr><td><code>[transcribe]</code></td><td><code>mode=auto</code>, <code>model_size=large-v3</code>, language, forced_language, low confidence threshold.</td></tr>
+            <tr><td><code>[align]</code></td><td>HubertFA dir/checkpoint/language/timeout e overlap tolerance.</td></tr>
+            <tr><td><code>[analyze]</code></td><td>Ollama URL, language, temperature, timeout, max tokens.</td></tr>
+            <tr><td><code>[generate]</code></td><td>Style preset, resolution, fade in/out.</td></tr>
+            <tr><td><code>[output]</code></td><td>Audio codec/bitrate, volumes, framerate, ffmpeg timeout.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Hardware</h3>
+        <ul>
+          <li><code>auto</code>: detecta DirectML e AMF em runtime.</li>
+          <li><code>z13</code>: Demucs/HubertFA em DirectML, Whisper CPU, ffmpeg AMF.</li>
+          <li><code>cpu_only</code>: tudo em CPU e ffmpeg <code>libx264</code>.</li>
+          <li>CTranslate2 nao tem DirectML; transcricao forcada para CPU quando necessario.</li>
+          <li>AMF usa <code>-rc cqp</code> com <code>qp_i/qp_p/qp_b</code>; libx264 usa <code>-crf</code>.</li>
+        </ul>
+
+        <h3>Dependencias</h3>
+        <ul>
+          <li>Python com Flask, faster-whisper, pysubs2, phonemizer, requests, onnxruntime-gpu, numpy, textgrid, g2p_en, tomli, soundfile, librosa.</li>
+          <li>CTC forced aligner via GitHub pinned.</li>
+          <li><code>torchcrepe</code>, <code>uroman</code>, <code>Unidecode</code>, <code>torchcodec</code>.</li>
+          <li><code>ffmpeg</code> e <code>ffprobe</code> instalados no PATH.</li>
+          <li>Ollama local com modelo configurado, atualmente <code>gemma4:27b</code>.</li>
+          <li>Demucs instalado separadamente no env configurado para s02.</li>
+        </ul>
+      </section>
+
+      <section id="observabilidade">
+        <h2>Observabilidade e Provenance</h2>
+        <h3>Eventos</h3>
+        <p>
+          Cada job escreve <code>events.jsonl</code>. Um evento tem job id, timestamp,
+          event, stage, level, message, details, duration opcional e artifact opcional.
+        </p>
+        <pre><code>{
+  "job_id": "abc123def456",
+  "timestamp": 1779380000.0,
+  "event": "stage_command_finished",
+  "stage": "generating",
+  "level": "info",
+  "message": "return code 0",
+  "duration_ms": 1200,
+  "details": {"returncode": 0, "progress": 70, "run_id": "run-..."}
+}</code></pre>
+
+        <h3>Summary</h3>
+        <p>
+          <code>observability_summary.json</code> agrega failures, warnings, artefatos,
+          duracoes por stage e ultimo resultado de validacao.
+        </p>
+
+        <h3>Provenance</h3>
+        <ul>
+          <li>Manifests precisam carregar hashes SHA-256 de inputs/outputs importantes.</li>
+          <li>s07 valida manifest ASS e hash de <code>analysis.json</code>/<code>output.ass</code> antes de renderizar.</li>
+          <li>Download final revalida artifact graph e preview fingerprints quando aplicavel.</li>
+          <li>Artefato ausente, vazio ou com hash diferente deve bloquear export.</li>
+        </ul>
+      </section>
+
+      <section id="validacao">
+        <h2>Validacao e Testes</h2>
+        <h3>Contratos duros</h3>
+        <ul>
+          <li><code>transcript.json</code>: precisa de <code>segments</code>, cada segmento com <code>text/start/end/words</code>, cada word com <code>word/start/end/probability</code>.</li>
+          <li><code>aligned.json</code>: precisa de <code>words</code>, cada word com <code>word/start/end/source</code>.</li>
+          <li><code>analysis.json</code>: precisa de <code>lines</code>, cada linha com <code>text/start/end/style/words</code> e style suportado.</li>
+          <li><code>output.ass</code>: precisa de <code>[Script Info]</code>, <code>[V4+ Styles]</code>, <code>[Events]</code>, dialogs e tags <code>\kf</code>.</li>
+          <li>Manifests: ASS precisa de renderer/method, metrics, inputs e outputs; MP4 precisa de <code>output.ass</code> como input e <code>output.mp4</code> como output.</li>
+          <li>Timestamps precisam ser monotonicamente validos com tolerancia configurada.</li>
+          <li>Coverage de palavras nao pode perder repeticoes silenciosamente.</li>
+        </ul>
+
+        <h3>Testes que definem o spec</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Arquivo</th>
+              <th>O que protege</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>tests/test_pipeline_stage_contracts.py</code></td><td>Schema de artefatos e invalidacao downstream.</td></tr>
+            <tr><td><code>tests/test_audio_alignment_contracts.py</code></td><td>Floors e thresholds de alinhamento/display/validacao.</td></tr>
+            <tr><td><code>tests/test_ass_generation.py</code>, <code>tests/test_s06_style_contracts.py</code></td><td>ASS, styles, timing e render semantics.</td></tr>
+            <tr><td><code>tests/test_karaoke_style_library.py</code></td><td>Preset ids, efeitos, style keys, section mapping.</td></tr>
+            <tr><td><code>tests/test_review_wizard_contracts.py</code></td><td>Contrato do projeto de revisao e entidades.</td></tr>
+            <tr><td><code>tests/test_review_wizard_export_gate.py</code></td><td>Regras de preview e liberacao de export.</td></tr>
+            <tr><td><code>tests/test_server_contracts.py</code></td><td>Uploads, path safety, busy state, events, outputs, retry validate.</td></tr>
+            <tr><td><code>tests/test_provenance_contracts.py</code></td><td>Hashes e manifests.</td></tr>
+            <tr><td><code>tests/test_timing_layers.py</code></td><td>Timing audio-backed, tails, drift, review-only decisions.</td></tr>
+            <tr><td><code>scripts/test_lyrics_robustness.py</code></td><td>Parser de letras, sections, stage directions, snapping e regressao "Struggle".</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Comandos minimos</h3>
+        <pre><code>python -m pytest
+python scripts/s08_validate.py --job-dir jobs/&lt;job_id&gt;
+python scripts/test_lyrics_robustness.py</code></pre>
+      </section>
+
+      <section id="refazer">
+        <h2>Plano para Refazer</h2>
+        <p>
+          Se for reescrever, o menor caminho que preserva valor e manter os contratos
+          e trocar a implementacao por fatias. Nao comece por UI bonita nem por um
+          orquestrador novo demais.
+        </p>
+
+        <h3>Ordem recomendada</h3>
+        <ol>
+          <li>Recriar os contratos de job: <code>meta.json</code>, <code>status.json</code>, safe paths e events.</li>
+          <li>Implementar upload local com ZIP seguro e stems separados.</li>
+          <li>Materializar <code>vocals.wav</code>, <code>instrumental.wav</code> e <code>lyrics.txt</code>.</li>
+          <li>Portar <code>s03b</code> ou substituir por alinhador equivalente que escreva o mesmo <code>transcript.json</code>.</li>
+          <li>Portar <code>s04</code> com fallback e floors de 50 ms.</li>
+          <li>Portar <code>s05</code> deterministico para forced alignment antes de reintroduzir LLM.</li>
+          <li>Portar <code>s06</code> com <code>\kf</code>, style library e manifest.</li>
+          <li>Portar <code>s07</code> com ffmpeg e validation de provenance.</li>
+          <li>Portar <code>s08</code> e fazer ele bloquear o final.</li>
+          <li>So entao recriar cockpit e Review Wizard.</li>
+        </ol>
+
+        <h3>O que da para simplificar</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Parte</th>
+              <th>Versao lazy para v1</th>
+              <th>Adicionar quando</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>s01/s02</td><td>No web MVP, exigir stems separados ou ZIP de stems; deixar Demucs como ferramenta manual.</td><td>Quando houver demanda real por upload de mix unico.</td></tr>
+            <tr><td>LLM s05</td><td>Para letras com secoes, usar grouper deterministico.</td><td>Quando o usuario quiser transcricao sem letra ou agrupamento livre.</td></tr>
+            <tr><td>Advanced Timeline</td><td>Comecar com review points + approve/apply/skip.</td><td>Quando houver edicao manual real de timestamps.</td></tr>
+            <tr><td>Style editor</td><td>Somente presets versionados.</td><td>Quando presets fixos nao forem suficientes.</td></tr>
+            <tr><td>Fila</td><td>Um job por vez.</td><td>Quando hardware e UX provarem necessidade de concorrencia.</td></tr>
+            <tr><td>Cloud</td><td>Nao implementar.</td><td>Quando existir requisito de produto, auth e seguranca.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Checklist de aceite da reescrita</h3>
+        <ul>
+          <li>Um ZIP Suno valido + letra gera <code>output.ass</code>, <code>output.mp4</code> e manifests.</li>
+          <li>Um job invalido falha com mensagem em <code>status.json</code> e evento em <code>events.jsonl</code>.</li>
+          <li>Export final e bloqueado se manifest/hash/artifact graph estiver invalido.</li>
+          <li>ASS abre no Aegisub e tem dialogs com <code>\kf</code>.</li>
+          <li>Review Wizard consegue criar projeto, issues, quality report e preview approval.</li>
+          <li>Testes de contratos passam antes de mexer em visual.</li>
+          <li>Valores de timing listados nesta spec continuam cobertos por teste.</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

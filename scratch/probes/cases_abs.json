@@ -1,0 +1,7 @@
+[
+  [
+    "abs mode follows the attack after all",
+    "if track.time == \"abs\":\n            ms = max(0, int(round(at)))",
+    "if False:\n            ms = 0"
+  ]
+]

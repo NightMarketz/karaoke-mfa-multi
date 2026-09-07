@@ -55,7 +55,10 @@ class TestAppConfigAlignmentDefaults:
 
 class TestHardcodedAlignmentFloors:
     def test_min_word_ms_is_80(self):
-        value = _extract_constant("scripts/s06_generate_ass.py", "MIN_WORD_MS")
+        # MIN_WORD_MS lives inside _build_karaoke_text, which moved from
+        # s06_generate_ass.py to ass_emit.py (pure code move, task 1 of the
+        # 2026-08-20-camadas-cor-e-mascara plan).
+        value = _extract_constant("scripts/ass_emit.py", "MIN_WORD_MS")
         assert value == 80
 
     def test_s03b_alignment_min_dur_is_50ms(self):

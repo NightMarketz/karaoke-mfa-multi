@@ -70,7 +70,9 @@ function undo() {
 async function loadQueue() {
   let data;
   try {
-    const r = await fetch(`/job/${JOB}/review/syllables/pending`);
+    // scope=all → every multi-syllable word (browse/refine on demand), each
+    // tagged `uncertain` so the Pendentes filter still isolates the flagged ones.
+    const r = await fetch(`/job/${JOB}/review/syllables/pending?scope=all`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     data = await r.json();
   } catch (e) {
@@ -82,10 +84,15 @@ async function loadQueue() {
     return;
   }
   state.queue = (data.pending || []).map(it => ({ ...it, resolved: false }));
+  // If nothing is flagged, open in browse ('all') mode so the editor is usable;
+  // otherwise default to the flagged pendings.
+  const uncertainN = state.queue.filter(it => it.uncertain).length;
+  state.filter = uncertainN ? 'pending' : 'all';
+  document.querySelectorAll('#filters .chip').forEach(x => x.classList.toggle('on', x.dataset.f === state.filter));
   renderQueue();
   updateProgress();
   if (!state.queue.length) {
-    $('#main').innerHTML = '<div class="empty"><div class="big">✓</div>No uncertain syllables. Nothing to review.</div>';
+    $('#main').innerHTML = '<div class="empty"><div class="big">✓</div>Nenhuma palavra multi-sílaba para editar.</div>';
     return;
   }
   if (HAS_VOCALS && !state.audioEl) {
@@ -167,8 +174,8 @@ function computeOnsets() {
 function updateProgress() {
   const total = state.queue.length;
   const done = state.queue.filter(it => it.resolved).length;
-  const left = total - done;
-  $('#counter').textContent = total ? `${left} pending · ${done}/${total} done` : '—';
+  const flagged = state.queue.filter(it => it.uncertain && !it.resolved).length;
+  $('#counter').textContent = total ? `${flagged} flagged · ${total} editable · ${done} done` : '—';
   const fill = $('#pfill'); if (fill) fill.style.width = total ? (done / total * 100) + '%' : '0';
 }
 
@@ -189,7 +196,7 @@ function queueSections() {
   if (state.filter === 'worst') {
     return [{ header: null, rows: rows.filter(r => !r.it.resolved).sort((a, b) => a.it.min_confidence - b.it.min_confidence) }];
   }
-  const visible = state.filter === 'all' ? rows : rows.filter(r => !r.it.resolved);
+  const visible = state.filter === 'all' ? rows : rows.filter(r => !r.it.resolved && r.it.uncertain);
   const groups = new Map();
   for (const r of visible) {
     const k = r.it.line_id || '';

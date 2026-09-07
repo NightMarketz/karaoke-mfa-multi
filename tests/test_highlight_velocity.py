@@ -45,6 +45,23 @@ class HighlightVelocityTests(unittest.TestCase):
         self.assertEqual(segments[-1]["end"], 91.24)
         self.assertEqual(segments[0]["source"], "explicit")
 
+    def test_syllables_are_used_as_highlight_segments(self):
+        segments = build_word_highlight_segments(
+            {
+                "word": "beneath",
+                "start": 142.60,
+                "end": 143.38,
+                "syllables": [
+                    {"text": "be", "start": 142.66, "end": 143.20},
+                    {"text": "neath", "start": 143.20, "end": 143.38},
+                ],
+            }
+        )
+
+        self.assertEqual([segment["text"] for segment in segments], ["be", "neath"])
+        self.assertEqual([segment["role"] for segment in segments], ["syllable", "syllable"])
+        self.assertEqual([segment["source"] for segment in segments], ["syllable", "syllable"])
+
 
 class HighlightVelocityEdgeCaseTests(unittest.TestCase):
     def test_vowel_span_no_vowels_returns_none(self):
