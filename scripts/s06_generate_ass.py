@@ -18,6 +18,11 @@ Placement comes from the style itself — Alignment (2 = bottom centre in every
 shipped preset) plus MarginV. No \an or \pos override is emitted, so a player
 honouring the style's own margins renders what the preset asked for.
 
+The exception is an effect that animates position, rotation or uniform scale:
+libass cannot do those without owning the syllable's origin, so such a line
+becomes one Dialogue per syllable, each carrying its own \an2\pos computed from
+real font metrics. See _build_layout_events and Effect.needs_layout.
+
 Each line gets one \fad(fade_in, fade_out) and the \kf run built from its
 words.
 
@@ -50,15 +55,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from scripts.common.observability import record_artifact, write_event
 from scripts.common.config import load_app_config
 from scripts.common.provenance import file_sha256, write_manifest
-from scripts.review_wizard.highlight_velocity import build_word_highlight_segments
 from scripts.review_wizard.timing_layers import (
     SAFE_EXTENSION_CLASSES,
     apply_audio_backed_tail_extensions,
     build_audio_activity_map,
     build_audio_backed_timing,
     build_timing_diagnostics,
-    classify_line_timing,
-    gap_should_be_absorbed,
     is_review_only_audio_timing,
     summarize_audio_backed_timing,
     summarize_timing_layers,
@@ -72,14 +74,25 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 from scripts.karaoke_styles.library import PRESETS, KaraokeStyle
-from scripts.karaoke_styles.effects import syllable_ass
+from scripts.karaoke_styles.effects import (
+    DEFAULT_EFFECT,
+    resolve_effect,
+)
 
-# Preset pixel values (fontsize, outline, shadow, margin_v) are authored
-# against this canvas height and scaled to whatever the render asks for.
-DESIGN_HEIGHT = 720
-# Side margin as a share of frame width, so a long line wraps before the edge
-# instead of at the flat 20px the style line used to carry.
-SIDE_MARGIN_RATIO = 0.05
+# The emitter moved out (scripts/ass_emit.py) so this stage is what its name
+# says: read analysis.json, pick a preset, call the emitter, write the file.
+# Re-exported here because tests and preview_effects.py import them from this
+# module by these names.
+from scripts.ass_emit import (  # noqa: F401
+    DESIGN_HEIGHT,
+    SIDE_MARGIN_RATIO,
+    _build_karaoke_text,
+    _build_layout_events,
+    _effect_capability_gaps,
+    _escape_ass_text,
+    _quantize_kf_durations_to_centiseconds,
+    build_line_events,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -93,158 +106,6 @@ def _ms_to_ass(ms: int) -> str:
     m  = s  // 60;   s   %= 60
     h  = m  // 60;   m   %= 60
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
-
-
-def _escape_ass_text(text: str) -> str:
-    return (
-        text.replace("{", "")
-        .replace("}", "")
-        .replace("\\", "")
-        .replace("\n", " ")
-        .strip()
-    )
-
-
-def _quantize_kf_durations_to_centiseconds(
-    durations_ms: list[int],
-    *,
-    target_ms: int,
-    gap_cs: int = 0,
-) -> list[int]:
-    if not durations_ms:
-        return []
-    target_cs = max(len(durations_ms), int(round(target_ms / 10.0)) - gap_cs)
-    durations = [max(1, int(round(duration_ms / 10.0))) for duration_ms in durations_ms]
-    residual = target_cs - sum(durations)
-    durations[-1] += residual
-    if durations[-1] < 1:
-        deficit = 1 - durations[-1]
-        durations[-1] = 1
-        for index in range(len(durations) - 2, -1, -1):
-            if deficit <= 0:
-                break
-            available = max(0, durations[index] - 1)
-            take = min(available, deficit)
-            durations[index] -= take
-            deficit -= take
-    return durations
-
-
-def _build_karaoke_text(
-    words: list[dict],
-    line_start_ms: int,
-    effect: str,
-    use_flash_default: bool = False,
-    line_style: str | None = None,
-) -> str:
-    r"""
-    Build the \kf tagged text for one karaoke line.
-
-    Format: {\kf<duration_cs>}word {\kf<duration_cs>}word2 ...
-    duration = word end - word start in centiseconds.
-
-    A leading \k0 consumes time before the first word starts
-    (silence/intro gap within the line).
-    """
-    # Minimum word highlight duration: 80ms = 8 centiseconds.
-    # CTC forced alignment compresses function words (I, a, the) to zero
-    # duration. A floor of 80ms ensures the highlight is visible even on
-    # the fastest syllables without distorting the timing of longer words.
-    MIN_WORD_MS = 80
-
-    word_segment_groups = []
-    for word in words:
-        segments = build_word_highlight_segments(word)
-        if not segments:
-            continue
-        start_ms = int(min(float(segment["start"]) for segment in segments) * 1000)
-        end_ms = int(max(float(segment["end"]) for segment in segments) * 1000)
-        if end_ms - start_ms < MIN_WORD_MS:
-            end_ms = start_ms + MIN_WORD_MS
-        word_segment_groups.append((segments, start_ms, end_ms))
-
-    def append_segment(
-        target: list[str],
-        *,
-        duration_cs: int,
-        visible_segment: str,
-    ) -> None:
-        target.append(
-            syllable_ass(
-                effect,
-                duration_cs,
-                visible_segment,
-                flash_default=use_flash_default,
-            )
-        )
-
-    timing = classify_line_timing({"style": line_style or "", "words": words})
-    gap_policies = timing["inter_word_gaps"]
-
-    visual_parts = []
-    prev_end_ms = line_start_ms
-    for index, (segments, start_ms, end_ms) in enumerate(word_segment_groups):
-        next_start_ms = word_segment_groups[index + 1][1] if index + 1 < len(word_segment_groups) else None
-        gap_policy = gap_policies[index] if index < len(gap_policies) else None
-        should_absorb_gap = gap_policy is not None and gap_should_be_absorbed(gap_policy)
-        visual_end_ms = max(end_ms, next_start_ms) if next_start_ms is not None and should_absorb_gap else end_ms
-
-        # The inter-word gap rides with the word that follows it. As its own
-        # part it picked up a space on each side from the join below and burned
-        # as "the  tomb" — the tag carries no glyph, so the second space was
-        # pure padding that widened with the pause.
-        word_parts = []
-        gap_cs = max(0, (start_ms - prev_end_ms) // 10)
-        if gap_cs > 0:
-            word_parts.append(f"{{\\k{gap_cs}}}")
-
-        segment_prev_end_ms = start_ms
-        visible_segments = [segment for segment in segments if str(segment.get("text", ""))]
-        segment_runs = []
-        for segment_index, segment in enumerate(visible_segments):
-            visible_segment = _escape_ass_text(str(segment["text"]))
-            if not visible_segment:
-                continue
-            segment_start_ms = int(float(segment["start"]) * 1000)
-            segment_end_ms = int(float(segment["end"]) * 1000)
-            if segment_index == len(visible_segments) - 1:
-                segment_end_ms = max(segment_end_ms, visual_end_ms)
-            if segment_end_ms - segment_start_ms < MIN_WORD_MS:
-                segment_end_ms = segment_start_ms + MIN_WORD_MS
-            segment_gap_cs = max(0, (segment_start_ms - segment_prev_end_ms) // 10)
-            segment_runs.append(
-                {
-                    "gap_cs": segment_gap_cs,
-                    "duration_ms": max(1, segment_end_ms - segment_start_ms),
-                    "visible_segment": visible_segment,
-                }
-            )
-            segment_prev_end_ms = segment_end_ms
-        duration_cs_values = _quantize_kf_durations_to_centiseconds(
-            [run["duration_ms"] for run in segment_runs],
-            target_ms=max(1, visual_end_ms - start_ms),
-            gap_cs=sum(run["gap_cs"] for run in segment_runs),
-        )
-        for run, duration_cs in zip(segment_runs, duration_cs_values):
-            if run["gap_cs"] > 0:
-                word_parts.append(f"{{\\k{run['gap_cs']}}}")
-            append_segment(
-                word_parts,
-                duration_cs=duration_cs,
-                visible_segment=run["visible_segment"],
-            )
-
-        if word_parts:
-            chunk = "".join(word_parts)
-            if segment_runs or not visual_parts:
-                visual_parts.append(chunk)
-            else:
-                # Timing-only chunk (word had no visible text): glue it to the
-                # previous word so it never becomes a space-padded part.
-                visual_parts[-1] += chunk
-        prev_end_ms = visual_end_ms
-
-    return " ".join(visual_parts).strip()
 
 
 def _raw_display_window(line: dict, cfg) -> tuple[int, int]:
@@ -270,6 +131,36 @@ def _display_windows(lines: list[dict], cfg) -> list[tuple[int, int]]:
 
 def _bool_to_ass(b: bool) -> str:
     return "-1" if b else "0"
+
+
+def style_row(
+    style: KaraokeStyle,
+    *,
+    scale: float,
+    margin_lr: int,
+    name: str | None = None,
+) -> str:
+    r"""One [V4+ Styles] row for a preset style.
+
+    Its own function because it is written in two places -- here and in the
+    effect preview -- and the two details it encodes are both easy to get
+    silently wrong. libass \kf sweeps SecondaryColour -> PrimaryColour, so the
+    designer-facing secondary_color ("sung fill") goes in the ASS PRIMARY
+    field; a straight-through copy previews every effect filling backwards.
+    And every preset pixel is authored at 720p, so it scales here or the render
+    is the wrong size at any other height. The preview got both wrong while it
+    kept its own copy.
+    """
+    return (
+        f"Style: {name or style.name},"
+        f"{style.fontname},{round(style.fontsize * scale)},"
+        f"{style.secondary_color},{style.primary_color},"
+        f"{style.outline_color},{style.back_color},"
+        f"{_bool_to_ass(style.bold)},{_bool_to_ass(style.italic)},0,0,"
+        f"100,100,0,0,{style.border_style},"
+        f"{round(style.outline * scale, 1)},{round(style.shadow * scale, 1)},"
+        f"{style.alignment},{margin_lr},{margin_lr},{round(style.margin_v * scale)},1"
+    )
 
 
 def _generate_ass(
@@ -317,20 +208,7 @@ YCbCr Matrix: TV.601
                    "Alignment, MarginL, MarginR, MarginV, Encoding"]
 
     for style_key, s in styles.items():
-        # libass \kf sweeps SecondaryColour -> PrimaryColour, so the ASS
-        # PrimaryColour field must carry our "sung fill" (secondary_color) and
-        # SecondaryColour our "not-yet-sung" (primary_color). Presets keep the
-        # designer-intuitive field names; the mapping is swapped here, at the
-        # single write point.
-        style_lines.append(
-            f"Style: {s.name},"
-            f"{s.fontname},{round(s.fontsize * scale)},"
-            f"{s.secondary_color},{s.primary_color},{s.outline_color},{s.back_color},"
-            f"{_bool_to_ass(s.bold)},{_bool_to_ass(s.italic)},0,0,"
-            f"100,100,0,0,{s.border_style},"
-            f"{round(s.outline * scale, 1)},{round(s.shadow * scale, 1)},"
-            f"{s.alignment},{margin_lr},{margin_lr},{round(s.margin_v * scale)},1"
-        )
+        style_lines.append(style_row(s, scale=scale, margin_lr=margin_lr))
 
     styles_section = "\n".join(style_lines)
 
@@ -352,20 +230,23 @@ YCbCr Matrix: TV.601
         start_ts      = _ms_to_ass(display_start_ms)
         end_ts        = _ms_to_ass(display_end_ms)
         fade_tag      = f"{{\\fad({fade_in_ms},{fade_out_ms})}}"
-        kf_text = _build_karaoke_text(
-            line["words"],
-            start_ms,
-            line.get("effect", "highlight"),
-            use_flash_default=s.flash_on_highlight,
-            line_style=style_key,
-        )
-
-        # Single visible karaoke layer. The \kf text itself keeps the
-        # not-yet-sung text visible and applies the progressive fill.
-        event_lines.append(
-            f"Dialogue: 0,{start_ts},{end_ts},{s.name},,0,0,0,,"
-            f"{fade_tag}{kf_text}"
-        )
+        chosen_effect = resolve_effect(line.get("effect", DEFAULT_EFFECT), s.highlight_effect)
+        # One Dialogue per layer off the layout path, one per (layer, syllable)
+        # on it. A main-only effect is a single Layer 0 event, unchanged.
+        event_lines.extend(build_line_events(
+            line, s,
+            effect=chosen_effect,
+            style_effect=s.highlight_effect,
+            style_key=style_key,
+            scale=scale,
+            play_res=(int(width), int(height)),
+            margin_lr=margin_lr,
+            fade_tag=fade_tag,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            start_ms=display_start_ms,
+            line_start_ms=start_ms,
+        ))
 
     events_section = "\n".join(event_lines)
 
@@ -706,6 +587,20 @@ def main() -> int:
 
     # ── Generate ───────────────────────────────────────────────────────────
     styles = PRESETS[args.preset]
+
+    # An effect asking for something libass cannot draw must not render as a
+    # plain sweep in silence — the preview would disagree with the burn and
+    # nothing would say why.
+    for effect_id, dropped in _effect_capability_gaps(lines, styles).items():
+        logger.warning("effect %r: ASS cannot render %s", effect_id, ", ".join(dropped))
+        _stage06_event(
+            job_dir,
+            "stage06.effect_capability_gap",
+            level="warning",
+            message=f"effect {effect_id!r}: ASS cannot render {', '.join(dropped)}",
+            effect=effect_id,
+            dropped=dropped,
+        )
 
     # Log style distribution
     style_counts: dict[str, int] = {}

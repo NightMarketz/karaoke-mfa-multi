@@ -1,0 +1,5 @@
+[
+  ["byte order not reversed", "return f\"&H{text[4:6]}{text[2:4]}{text[0:2]}&\".upper()", "return f\"&H{text[0:2]}{text[2:4]}{text[4:6]}&\".upper()"],
+  ["malformed colour accepted", "if len(text) != 6 or any(c not in \"0123456789abcdefABCDEF\" for c in text):", "if False:"],
+  ["colour written to the wrong register", "\"outline_color\": lambda v: f\"\\\\3c{_ass_colour(v)}\",", "\"outline_color\": lambda v: f\"\\\\1c{_ass_colour(v)}\","]
+]

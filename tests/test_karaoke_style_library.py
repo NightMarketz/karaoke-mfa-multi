@@ -26,6 +26,53 @@ NEW_AEGISUB_PRESET_IDS = [
     "aegisub-stage-lights",
 ]
 
+# Modern presets: the box-caption look, and the blur focus pull that needs the
+# per-syllable \t offset to exist at all.
+MODERN_PRESET_IDS = [
+    "pill",
+    "focus-pull",
+    "bold-highlight",
+    "word-reveal",
+    "word-pop",
+    "typewriter",
+    "glitch",
+    "fly-in",
+    "swing",
+    "punch",
+    # Layer presets: the four looks that could not exist before colour, layers
+    # and a mask. Only "aberration" and "glow" cost extra events; "flare" is a
+    # single main layer animating c, and "sweep" adds one over layer.
+    "glow",
+    "aberration",
+    "flare",
+    "sweep",
+]
+
+# The four presets built out of the layer/colour/mask vocabulary.
+LAYER_PRESET_IDS = ["glow", "aberration", "flare", "sweep"]
+
+# The presets whose effects libass cannot draw in place, so s06 emits one
+# positioned Dialogue per syllable for them.
+MOTION_PRESET_IDS = ["fly-in", "swing", "punch"]
+
+# preset id -> the syllable effect its styles must select
+MODERN_PRESET_EFFECT = {
+    "pill": "highlight",
+    "focus-pull": "focus",
+    "bold-highlight": "highlight",
+    "word-reveal": "reveal",
+    "word-pop": "pop",
+    "typewriter": "typewriter",
+    "glitch": "highlight",
+    "fly-in": "fly-in",
+    "swing": "swing",
+    "punch": "punch",
+    "glow": "glow",
+    "aberration": "aberration",
+    "flare": "flare",
+    "sweep": "sweep",
+}
+
 
 class KaraokeStyleLibraryTests(unittest.TestCase):
     def test_existing_preset_ids_are_available(self):
@@ -37,9 +84,113 @@ class KaraokeStyleLibraryTests(unittest.TestCase):
                 "section-coded",
                 "single-style-kf",
                 *NEW_AEGISUB_PRESET_IDS,
+                *MODERN_PRESET_IDS,
             ],
             list_preset_ids(),
         )
+
+    def test_pill_preset_draws_an_opaque_box_behind_every_style(self):
+        styles = get_preset("pill").styles
+        self.assertEqual(supported_style_keys(), set(styles))   # count before verdict
+        self.assertEqual({3}, {s.border_style for s in styles.values()})
+
+    def test_focus_pull_preset_selects_the_focus_effect_everywhere(self):
+        styles = get_preset("focus-pull").styles
+        self.assertEqual(supported_style_keys(), set(styles))
+        self.assertEqual({"focus"}, {s.highlight_effect for s in styles.values()})
+
+    def test_each_modern_preset_selects_its_own_effect(self):
+        self.assertEqual(sorted(MODERN_PRESET_IDS), sorted(MODERN_PRESET_EFFECT))
+        for preset_id, effect in MODERN_PRESET_EFFECT.items():
+            with self.subTest(preset=preset_id):
+                styles = get_preset(preset_id).styles
+                self.assertEqual(supported_style_keys(), set(styles))
+                self.assertEqual({effect}, {s.highlight_effect for s in styles.values()})
+
+    def test_motion_presets_ask_for_layout(self):
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        self.assertEqual(3, len(MOTION_PRESET_IDS))
+        for preset_id in MOTION_PRESET_IDS:
+            with self.subTest(preset=preset_id):
+                styles = get_preset(preset_id).styles
+                self.assertEqual(supported_style_keys(), set(styles))
+                effect = EFFECTS[preset_id]
+                self.assertTrue(effect.needs_layout, f"{preset_id} does not move")
+
+    def test_motion_presets_rest_in_a_neutral_pose(self):
+        r"""A track's first key is what the syllable LOOKS like at rest.
+
+        libass holds that static value from the Dialogue's first frame until
+        the key's own time, which for a syllable late in the line is most of
+        the time it is on screen. punch opening on scale 0.86 drew every unsung
+        word narrower than the width we measured and placed it at, so the words
+        visibly came apart -- "ilusão" rendered "i lu são". swing opening on
+        -9 degrees left the whole unsung tail looking italic.
+
+        The one exemption is an effect that also rests INVISIBLE: fly-in holds
+        offset_y at +80 with alpha at 0, which is the point of a fly-in.
+        """
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        neutral = {"scale": 1.0, "scale_x": 1.0, "scale_y": 1.0,
+                   "rotate": 0.0, "offset_x": 0.0, "offset_y": 0.0}
+        checked = 0
+        for preset_id in MOTION_PRESET_IDS:
+            effect = EFFECTS[preset_id]
+            alpha = next((t for t in effect.tracks if t.prop == "alpha"), None)
+            hidden_at_rest = alpha is not None and alpha.keys[0][1] == 0.0
+            for track in effect.tracks:
+                if track.prop not in neutral:
+                    continue
+                checked += 1
+                if hidden_at_rest:
+                    continue
+                with self.subTest(preset=preset_id, prop=track.prop):
+                    self.assertEqual(
+                        neutral[track.prop], track.keys[0][1],
+                        f"{preset_id}.{track.prop} rests in its animated extreme",
+                    )
+        # Cardinality: zero tracks examined would make the loop vacuously true.
+        self.assertEqual(3, checked)
+
+    def test_no_other_preset_takes_the_layout_path(self):
+        # The layout path is new and costs one Dialogue per syllable. Every
+        # preset that was shipping before must keep the single-event path, or
+        # this change is not the addition it claims to be.
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        others = [p for p in MODERN_PRESET_EFFECT if p not in MOTION_PRESET_IDS]
+        # 7 before the layer presets, 11 with them: all four stay off layout.
+        self.assertEqual(11, len(others))
+        for preset_id in others:
+            with self.subTest(preset=preset_id):
+                effect = EFFECTS[MODERN_PRESET_EFFECT[preset_id]]
+                self.assertFalse(effect.needs_layout, preset_id)
+
+    def test_glitch_preset_offsets_a_coloured_shadow_copy(self):
+        # Chromatic aberration on one Dialogue line: the shadow IS the offset
+        # colour copy, so it must be far enough out to read and fully opaque.
+        styles = get_preset("glitch").styles
+        self.assertEqual(supported_style_keys(), set(styles))
+        self.assertTrue(all(s.shadow >= 3.0 for s in styles.values()))
+        self.assertTrue(all(s.back_color.startswith("&H00") for s in styles.values()))
+
+    def test_bold_highlight_preset_keeps_the_heavy_outline_contrast(self):
+        # The researched best-performer is contrast, not motion: hot fill over a
+        # near-black rim thick enough to survive any background.
+        styles = get_preset("bold-highlight").styles
+        self.assertEqual(supported_style_keys(), set(styles))
+        self.assertEqual({"highlight"}, {s.highlight_effect for s in styles.values()})
+        self.assertTrue(all(s.outline >= 4.0 for s in styles.values()))
+
+    def test_every_modern_preset_covers_all_style_keys(self):
+        # Cardinality guard: a preset missing a section key silently falls back
+        # to "verse" at render time, which reads as "the preset did nothing".
+        self.assertEqual(14, len(MODERN_PRESET_IDS))
+        for preset_id in MODERN_PRESET_IDS:
+            with self.subTest(preset=preset_id):
+                self.assertEqual(supported_style_keys(), set(get_preset(preset_id).styles))
 
     def test_preset_metadata_is_ui_ready(self):
         metadata = list_preset_metadata()
@@ -306,6 +457,62 @@ class StyleLibraryEdgeCaseTests(unittest.TestCase):
         )
         errors = validate_preset(preset)
         self.assertTrue(any("version" in e for e in errors), errors)
+
+
+class LayerPresetTests(unittest.TestCase):
+    def test_every_layer_preset_selects_its_own_effect_on_every_style(self):
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        checked = 0
+        for preset_id in LAYER_PRESET_IDS:
+            styles = get_preset(preset_id).styles
+            # Count before verdict: an empty styles dict would pass the loop.
+            self.assertEqual(supported_style_keys(), set(styles))
+            for key, style in styles.items():
+                with self.subTest(preset=preset_id, style=key):
+                    self.assertEqual(preset_id, style.highlight_effect)
+                    self.assertIn(style.highlight_effect, EFFECTS)
+                    checked += 1
+        self.assertEqual(len(LAYER_PRESET_IDS) * len(supported_style_keys()), checked)
+
+    def test_no_layer_preset_exceeds_the_measured_ceiling(self):
+        from scripts.karaoke_styles.effects import EFFECTS
+        from scripts.karaoke_styles.keyframes import MAX_LAYERS
+
+        self.assertEqual(4, len(LAYER_PRESET_IDS))
+        for preset_id in LAYER_PRESET_IDS:
+            with self.subTest(preset=preset_id):
+                self.assertLessEqual(len(EFFECTS[preset_id].layers), MAX_LAYERS)
+
+    def test_each_layer_preset_costs_the_events_it_says_it_does(self):
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        self.assertEqual(1, len(EFFECTS["flare"].layers))
+        self.assertEqual(2, len(EFFECTS["sweep"].layers))
+        self.assertEqual(2, len(EFFECTS["glow"].layers))
+        self.assertEqual(3, len(EFFECTS["aberration"].layers))
+
+    def test_no_layer_preset_needs_the_positioned_path(self):
+        # The whole reason the T0 gate was run first: a ghost that forced
+        # needs_layout would multiply these presets by ten events per line.
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        for preset_id in LAYER_PRESET_IDS:
+            with self.subTest(preset=preset_id):
+                self.assertFalse(EFFECTS[preset_id].needs_layout)
+
+    def test_flare_rests_in_a_neutral_pose(self):
+        # A track's FIRST key is the resting pose, held from the Dialogue's
+        # first frame. An effect opening on its animated extreme leaves the
+        # whole unsung tail of the line sitting in that extreme -- measured on
+        # burned frames when punch rested at 0.86 and swing at -9 degrees.
+        from scripts.karaoke_styles.effects import EFFECTS
+
+        tracks = EFFECTS["flare"].main.tracks
+        self.assertEqual(2, len(tracks))          # count before verdict
+        for track in tracks:
+            with self.subTest(prop=track.prop):
+                self.assertEqual(track.keys[0][1], track.keys[-1][1])
 
 
 if __name__ == "__main__":
