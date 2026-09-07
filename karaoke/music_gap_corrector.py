@@ -25,6 +25,7 @@ class CorrectionReport:
     lines_split:       int = 0
     initial_sync_offset: float = 0.0
     max_duration_before: float = 0.0
+    max_duration_after: float = 0.0
     huge_gaps_before:   int = 0
     unmapped_vocal_regions: List[Tuple[float, float]] = field(default_factory=list)
 
@@ -169,6 +170,13 @@ def correct_alignment(
         if idx not in mapped_voice_indices:
             # This vocal region has no lyrics aligned to it!
             report.unmapped_vocal_regions.append((seg.start, seg.end))
+
+    # Simétrico a max_duration_before (calculado antes do laço de correção):
+    # mede a MESMA grandeza sobre a lista já corrigida, para que o relatório
+    # deixe conferir o efeito do clamp em vez de só declarar a intenção dele.
+    # `default` cobre o caso de `corrected` vazia — hoje impossível com `words`
+    # não-vazia, mas 0.0 mantém a simetria com o retorno antecipado lá em cima.
+    report.max_duration_after = max((w.duration for w in corrected), default=0.0)
 
     return CorrectedAlignment(corrected, line_breaks, report)
 
