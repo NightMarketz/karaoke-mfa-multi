@@ -122,6 +122,14 @@ resolution   = "1920x1080"
 fade_in_ms   = 300
 fade_out_ms  = 500
 
+# Fundo procedural (fatia A). c0/c1 sao fixos: gradients nao aceita comando
+# nesses parametros — a variacao por secao vem do huesaturation a jusante.
+backdrop       = true
+backdrop_c0    = "0x0a0a18"
+backdrop_c1    = "0x2a1060"
+backdrop_type  = "radial"   # linear | radial | circular | spiral | square
+backdrop_speed = 0.02
+
 [output]
 audio_codec    = "aac"
 audio_bitrate  = "192k"

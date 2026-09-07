@@ -19,6 +19,11 @@ DEFAULT_GENERATE_STYLE_PRESET_ID = DEFAULT_STYLE_PRESET_ID
 DEFAULT_GENERATE_RESOLUTION = "1920x1080"
 DEFAULT_GENERATE_FADE_IN_MS = 300
 DEFAULT_GENERATE_FADE_OUT_MS = 500
+DEFAULT_GENERATE_BACKDROP = True
+DEFAULT_GENERATE_BACKDROP_C0 = "0x0a0a18"
+DEFAULT_GENERATE_BACKDROP_C1 = "0x2a1060"
+DEFAULT_GENERATE_BACKDROP_TYPE = "radial"
+DEFAULT_GENERATE_BACKDROP_SPEED = 0.02
 DEFAULT_OUTPUT_AUDIO_CODEC = "aac"
 DEFAULT_OUTPUT_AUDIO_BITRATE = "192k"
 DEFAULT_OUTPUT_VOCALS_VOLUME = 1.0
@@ -101,6 +106,11 @@ class AppConfig:
     generate_resolution: str
     generate_fade_in_ms: int
     generate_fade_out_ms: int
+    generate_backdrop: bool
+    generate_backdrop_c0: str
+    generate_backdrop_c1: str
+    generate_backdrop_type: str
+    generate_backdrop_speed: float
     output_audio_codec: str
     output_audio_bitrate: str
     output_vocals_volume: float
@@ -305,6 +315,26 @@ def load_app_config(path: Path | str = DEFAULT_PIPELINE_CONFIG) -> AppConfig:
             "KARAOKE_GENERATE_FADE_OUT_MS",
             generate.get("fade_out_ms"),
             DEFAULT_GENERATE_FADE_OUT_MS,
+        ),
+        generate_backdrop=_bool_value(
+            _env_or_value("KARAOKE_GENERATE_BACKDROP", generate.get("backdrop"), None),
+            DEFAULT_GENERATE_BACKDROP,
+        ),
+        generate_backdrop_c0=str(
+            _env_or_value("KARAOKE_GENERATE_BACKDROP_C0",
+                          generate.get("backdrop_c0"), DEFAULT_GENERATE_BACKDROP_C0)
+        ),
+        generate_backdrop_c1=str(
+            _env_or_value("KARAOKE_GENERATE_BACKDROP_C1",
+                          generate.get("backdrop_c1"), DEFAULT_GENERATE_BACKDROP_C1)
+        ),
+        generate_backdrop_type=str(
+            _env_or_value("KARAOKE_GENERATE_BACKDROP_TYPE",
+                          generate.get("backdrop_type"), DEFAULT_GENERATE_BACKDROP_TYPE)
+        ),
+        generate_backdrop_speed=_float_env_or_value(
+            "KARAOKE_GENERATE_BACKDROP_SPEED",
+            generate.get("backdrop_speed"), DEFAULT_GENERATE_BACKDROP_SPEED,
         ),
         output_audio_codec=str(
             _env_or_value(

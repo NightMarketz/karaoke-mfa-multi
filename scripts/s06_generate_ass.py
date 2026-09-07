@@ -37,6 +37,7 @@ Writes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import sys
@@ -408,6 +409,7 @@ SECTION_CODED_STYLES: dict[str, KaraokeStyle] = {
 }
 
 from scripts.karaoke_styles.library import PRESETS
+from scripts.karaoke_styles.backdrop import emit_backdrop_commands
 
 
 # ---------------------------------------------------------------------------
@@ -888,6 +890,52 @@ def _stage06_missing_job_event(
 # Main
 # ---------------------------------------------------------------------------
 
+def _write_backdrop(job_dir: Path, lines: list[dict]) -> tuple[Path, int] | None:
+    """
+    Escreve backdrop.cmd a partir das cores de analysis.json.
+
+    Cosmetico: qualquer falha devolve None e o s07 cai para canvas preto.
+    Nunca levanta — um fundo ruim nao pode impedir um export. Devolve o
+    path e a contagem de linhas de comando, para o chamador nao precisar
+    reabrir o arquivo so' para contar (ver stage06.backdrop_written).
+
+    Um backdrop.cmd antigo e' removido quando o conteudo atual da' invalido
+    ou vazio — a analise mudou e o fundo anterior nao corresponde mais a
+    ela; sem isso, um re-run com analise ruim deixaria o s07 renderizando
+    com os timings da corrida anterior enquanto o manifesto diz que nao ha
+    backdrop. Ja' uma falha de ESCRITA (I/O transiente, ex.: disco cheio)
+    preserva o arquivo existente: o conteudo seria valido, so' nao foi
+    possivel grava-lo, e um write nao-atomico nao pode corromper o que ja'
+    estava bom.
+    """
+    path = job_dir / "backdrop.cmd"
+    tmp_path = path.with_name(path.name + ".tmp")
+
+    try:
+        content = emit_backdrop_commands(lines)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        logger.warning("backdrop.cmd nao gerado: %s", exc)
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+        return None
+
+    if not content:
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+        return None
+
+    try:
+        tmp_path.write_text(content + "\n", encoding="utf-8")  # sem BOM
+        tmp_path.replace(path)  # atomic: nunca deixa um arquivo parcial em backdrop.cmd
+    except OSError as exc:
+        logger.warning("backdrop.cmd nao gravado: %s", exc)
+        with contextlib.suppress(OSError):
+            tmp_path.unlink(missing_ok=True)
+        return None
+
+    return path, content.count("\n") + 1
+
+
 def main() -> int:
     app_config = load_app_config()
     parser = argparse.ArgumentParser(
@@ -1155,6 +1203,8 @@ def main() -> int:
     output_path.write_bytes(ass_content.encode("utf-8-sig"))
     logger.info("Written: %s (%.1f KB)", output_path.name,
                 output_path.stat().st_size / 1e3)
+    backdrop_result = _write_backdrop(job_dir, lines)
+    backdrop_path, backdrop_cmd_count = backdrop_result if backdrop_result else (None, 0)
     manifest_path = write_manifest(
         job_dir / "output.ass.manifest.json",
         {
@@ -1171,7 +1221,8 @@ def main() -> int:
             "outputs": {
                 "output.ass": {
                     "path": "output.ass",
-                }
+                },
+                **({"backdrop.cmd": {"path": "backdrop.cmd"}} if backdrop_path else {}),
             },
             "metrics": {
                 "analysis_line_count": len(lines),
@@ -1183,7 +1234,10 @@ def main() -> int:
             "timing_diagnostics": timing_diagnostics,
             "timing_audio_layers": timing_audio_layers,
         },
-        output_paths={"output.ass": output_path},
+        output_paths={
+            "output.ass": output_path,
+            **({"backdrop.cmd": backdrop_path} if backdrop_path else {}),
+        },
     )
     artifact_details = record_artifact(job_dir, "generating", output_path)
     _stage06_event(
@@ -1193,6 +1247,12 @@ def main() -> int:
         size_bytes=artifact_details["size_bytes"],
         manifest_path=str(manifest_path),
         manifest_sha256=file_sha256(manifest_path),
+    )
+    _stage06_event(
+        job_dir,
+        "stage06.backdrop_written" if backdrop_path else "stage06.backdrop_skipped",
+        path=str(backdrop_path) if backdrop_path else "",
+        command_count=backdrop_cmd_count,
     )
 
     _update_status(job_dir, "generating", 100)
