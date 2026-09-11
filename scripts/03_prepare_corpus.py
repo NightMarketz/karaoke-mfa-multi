@@ -147,7 +147,8 @@ def main():
     from karaoke.lyrics_cleaner import clean_lyrics_with_adlibs
     
     # Captura parênteses para o Gemini (Step 03c)
-    cleaned_with_hints, adlib_hints = clean_lyrics_with_adlibs(raw_lyrics)
+    _parse_result = clean_lyrics_with_adlibs(raw_lyrics)
+    cleaned_with_hints, adlib_hints = _parse_result.lyrics, _parse_result.adlib_hints
     
     # Salva hints no diretório de alinhamento para o Gemini consumir depois
     align_dir = kpaths.alignment_dir(job_id)

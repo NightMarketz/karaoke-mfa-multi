@@ -14,42 +14,48 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import karaoke.paths as kpaths
 
+# lang -> nome do modelo/dicionario MFA instalado. Acoustic e dictionary usam o
+# mesmo nome nos modelos oficiais do MFA (english_mfa, portuguese_mfa, ...).
+MFA_MODELS = {"en": "english_mfa", "pt": "portuguese_mfa"}
+
+# Beam alargado de proposito: os modelos acusticos do MFA sao treinados em FALA, e
+# voz cantada estica vogais e desvia do timing esperado o suficiente para o beam
+# default (10/40) nao fechar nenhum alinhamento — media NoAlignmentsError mesmo com
+# OOV em 1.4%. 100/400 e o valor que a propria mensagem de erro do MFA sugere.
+# Knob de calibracao: material com voz mais limpa aceita beam menor (mais rapido).
+MFA_BEAM = 100
+MFA_RETRY_BEAM = 400
+
+
 def _progress(pct: int, msg: str = ""):
     print(f"PROGRESS: {pct} | {msg}", flush=True)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-id", required=True)
+    parser.add_argument("--lang", default="pt",
+                        help="Codigo de idioma; escolhe o modelo/dicionario MFA (ver MFA_MODELS)")
     args = parser.parse_args()
     job_id = args.job_id
+    lang = args.lang
 
     print(f"=== Step 04: MFA Alignment for {job_id} ===")
     _progress(0, "Iniciando alinhamento MFA...")
 
-    # 1. Preparar Corpus
+    # 1. Corpus: usa o que 03_prepare_corpus.py ja preparou (song.wav + song.lab).
+    # Este passo ANTES reimplementava o preparo lendo lyrics.txt cru e aplicando
+    # .upper() — e os dicionarios oficiais do MFA sao inteiramente minusculos
+    # (english_mfa: 0 de 42353 entradas em maiuscula), entao 100% das palavras
+    # ficavam OOV e o align morria com NoAlignmentsError. O texto normalizado do
+    # step 03 da 1.4% de OOV no mesmo material.
     corpus_dir = kpaths.mfa_corpus_dir(job_id)
-    corpus_dir.mkdir(parents=True, exist_ok=True)
-    
-    vocals_raw = kpaths.vocals_raw(job_id)
-    lyrics_txt = kpaths.lyrics_path(job_id)
-    
-    if not vocals_raw.exists():
-        print(f"ERRO: {vocals_raw} não encontrado. Execute Step 03 primeiro.")
+    corpus_lab = corpus_dir / "song.lab"
+    corpus_wav = corpus_dir / "song.wav"
+
+    if not corpus_lab.exists() or not corpus_wav.exists():
+        print(f"ERRO: corpus incompleto em {corpus_dir}. Rode 03_prepare_corpus.py primeiro.")
+        print(f"  esperado: {corpus_lab.name} e {corpus_wav.name}")
         sys.exit(1)
-        
-    # Copy vocals to corpus
-    shutil.copy(vocals_raw, corpus_dir / "vocals.wav")
-    
-    # Simple lyrics pre-processing for MFA (remove punctuation, uppercase)
-    # MFA works best with uppercase in many cases, but here we just clean it.
-    with open(lyrics_txt, 'r', encoding='utf-8') as f:
-        text = f.read().replace('\n', ' ').strip()
-        # Basic cleanup: remove special chars
-        import re
-        text = re.sub(r'[^\w\s]', '', text).upper()
-        
-    with open(corpus_dir / "vocals.txt", 'w', encoding='utf-8') as f:
-        f.write(text)
         
     _progress(30, "Corpus preparado. Iniciando alinhamento...")
 
@@ -57,11 +63,12 @@ def main():
     out_tg = kpaths.mfa_textgrid(job_id)
     out_tg.parent.mkdir(parents=True, exist_ok=True)
     
-    # Command structure using conda run
-    # MFA 'align' with CTC model is faster and more robust for karaoke
-    # We use a Portuguese dictionary if available
-    dict_path = "input/dicts/pt_mfa.dict"
-    model_name = "portuguese_mfa" # Or "portuguese_mfa"
+    # Command structure using conda run.
+    # Dicionario e modelo vao por NOME (o MFA resolve o que esta instalado via
+    # `mfa model download`), nao por caminho de arquivo: o antigo
+    # "input/dicts/pt_mfa.dict" nunca existiu no repo — input/ e gitignored.
+    model_name = MFA_MODELS.get(lang, MFA_MODELS["pt"])
+    dict_path = model_name
     
     cmd = [
         "conda", "run", "-n", "mfa_env",
@@ -70,7 +77,9 @@ def main():
         dict_path,
         model_name,
         str(out_tg.parent),
-        "--clean", "--overwrite"
+        "--clean", "--overwrite",
+        "--beam", str(MFA_BEAM),
+        "--retry_beam", str(MFA_RETRY_BEAM),
     ]
     
     print(f"CMD: {' '.join(cmd)}")
@@ -86,7 +95,8 @@ def main():
 
     # Validate output
     # MFA usually outputs as {job_id}/vocals.TextGrid in the output folder
-    mfa_result = out_tg.parent / "vocals.TextGrid"
+    # MFA nomeia o TextGrid pelo stem da utterance — agora song.lab, nao vocals.txt
+    mfa_result = out_tg.parent / "song.TextGrid"
     if mfa_result.exists() and mfa_result != out_tg:
         shutil.move(mfa_result, out_tg)
 
