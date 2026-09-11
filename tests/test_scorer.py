@@ -185,3 +185,53 @@ def test_take_sem_ataque_suficiente_nao_inventa_nota(ref):
     assert r.n_frames_compared == 0, "sem contorno nao ha frames comparados"
     assert r.rhythm == 0.0 and r.melody == 0.0
     assert r.total < 25.0, f"take mudo recebeu {r.total:.1f}"
+
+
+from karaoke.scorer import track_from_word_timing
+
+
+def test_karaoke_usa_inicios_de_palavra_como_ataques():
+    """Os ataques vem do gabarito, o contorno vem do audio."""
+    words = [
+        {"word": "um", "start": 0.30, "end": 0.55, "score": 1.0},
+        {"word": "dois", "start": 0.90, "end": 1.15, "score": 1.0},
+        {"word": "tres", "start": 1.50, "end": 1.75, "score": 1.0},
+        {"word": "quatro", "start": 2.40, "end": 2.65, "score": 1.0},
+        {"word": "cinco", "start": 3.00, "end": 3.25, "score": 1.0},
+    ]
+    audio = bursts(TIMES, FREQS)
+    track = track_from_word_timing(words, audio, SR)
+
+    assert len(track.onsets) == len(words), (
+        f"{len(track.onsets)} ataques de {len(words)} palavras"
+    )
+    assert track.onsets[0] == pytest.approx(0.30)
+    assert track.n_voiced >= MIN_VOICED_FRAMES, (
+        f"{track.n_voiced} frames voiced de {track.n_frames}"
+    )
+
+
+def test_karaoke_gabarito_vazio_e_erro_nao_nota_zero():
+    """Populacao vazia tem que explodir, nao virar nota. Zero itens nao e sucesso."""
+    with pytest.raises(ValueError, match="vazio"):
+        track_from_word_timing([], bursts(TIMES, FREQS), SR)
+
+
+def test_karaoke_gabarito_fora_de_ordem_e_erro():
+    words = [
+        {"word": "um", "start": 1.00, "end": 1.20, "score": 1.0},
+        {"word": "dois", "start": 0.50, "end": 0.70, "score": 1.0},
+    ]
+    with pytest.raises(ValueError, match="monot"):
+        track_from_word_timing(words, bursts(TIMES, FREQS), SR)
+
+
+def test_karaoke_pontua_contra_si_mesmo():
+    """O take que reproduz o gabarito recebe nota alta — mesmo score() dos dois modos."""
+    words = [{"word": f"w{i}", "start": t, "end": t + 0.25, "score": 1.0}
+             for i, t in enumerate(TIMES)]
+    audio = bursts(TIMES, FREQS)
+    ref = track_from_word_timing(words, audio, SR)
+    r = score(ref, track_from_audio(audio, SR))
+    assert r.n_frames_compared > 0
+    assert r.total >= 80.0, f"karaoke contra si mesmo deu {r.total:.1f}"

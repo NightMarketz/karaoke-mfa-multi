@@ -141,3 +141,34 @@ def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
         n_onsets_ref=n_ref, n_onsets_take=n_take,
         n_frames_compared=n_frames_compared, rhythm_tol_s=tol,
     )
+
+
+def track_from_word_timing(words: list[dict], samples: np.ndarray,
+                           sr: int) -> ReferenceTrack:
+    """Referencia do modo karaoke: ataques vem do gabarito alinhado
+    (work/jobs/<id>/05_alignment/word_timing.json), contorno vem do audio vocal.
+
+    Precisao medida do gabarito em 2026-09-10: 66% das palavras a <=100ms de um
+    ataque detectado, contra 47% do acaso. A nota herda esse erro — o modo karaoke
+    e "melhor que acaso", nao "correto".
+    """
+    if not words:
+        raise ValueError("word_timing vazio: gabarito sem palavras nao produz referencia")
+
+    starts = np.asarray([float(w["start"]) for w in words], dtype=np.float64)
+    if np.any(np.diff(starts) < 0):
+        fora = int(np.sum(np.diff(starts) < 0))
+        raise ValueError(
+            f"word_timing nao e monotonico: {fora} de {len(starts) - 1} pares fora de ordem"
+        )
+
+    base = track_from_audio(samples, sr)
+    return ReferenceTrack(
+        onsets=starts,
+        semitones=base.semitones,
+        frame_dur=base.frame_dur,
+        duration=base.duration,
+        n_voiced=base.n_voiced,
+        n_frames=base.n_frames,
+        n_octave_suspect=base.n_octave_suspect,
+    )
