@@ -50,9 +50,25 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const estado = $("estado");
+const player = $("player");
 let rec = null, chunks = [], gravando = false;
 
 function diz(texto) { estado.textContent = texto; }
+
+// A referência que o jogador ouve antes de gravar. Reflete os campos ref/mode.
+function carregaReferencia() {
+  const mode = $("mode").value, ref = $("ref").value.trim();
+  player.src = "/api/score/ref?mode=" + encodeURIComponent(mode) +
+               "&ref=" + encodeURIComponent(ref);
+}
+player.addEventListener("error", () => {
+  diz("Referência não encontrada para " + $("mode").value + "/" + $("ref").value.trim() + ".");
+});
+$("ref").addEventListener("change", carregaReferencia);
+$("mode").addEventListener("change", carregaReferencia);
+carregaReferencia();
+
+function soltaMic(stream) { stream.getTracks().forEach((t) => t.stop()); }
 
 $("rec").addEventListener("click", async () => {
   if (gravando) {
@@ -66,49 +82,63 @@ $("rec").addEventListener("click", async () => {
     diz("Sem acesso ao microfone: " + e.name);
     return;
   }
-  chunks = [];
-  rec = new MediaRecorder(stream);
-  rec.ondataavailable = (e) => chunks.push(e.data);
-  rec.onstop = async () => {
-    stream.getTracks().forEach((t) => t.stop());
+  // Tudo que pode estourar depois de já ter o mic fica dentro do try: se
+  // MediaRecorder não existir ou o MIME padrão não for suportado, o mic é solto
+  // e o jogador é avisado — nunca fica capturado em silêncio.
+  try {
+    chunks = [];
+    rec = new MediaRecorder(stream);
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    rec.onstop = async () => {
+      soltaMic(stream);
+      gravando = false;
+      $("rec").textContent = "● Gravar";
+      $("rec").setAttribute("aria-pressed", "false");
+      $("rec").disabled = true;          // sem segundo take enquanto pontua
+      diz("Pontuando…");
+
+      const fd = new FormData();
+      fd.append("mode", $("mode").value);
+      fd.append("ref", $("ref").value.trim());
+      fd.append("take", new Blob(chunks, { type: rec.mimeType || "audio/webm" }), "take.webm");
+
+      let r, data = null;
+      try {
+        r = await fetch("/api/score", { method: "POST", body: fd });
+      } catch (e) {
+        diz("Falha de rede ao pontuar.");
+        $("rec").disabled = false;
+        return;
+      }
+      try { data = await r.json(); } catch (e) { data = null; }
+      if (!r.ok) {
+        diz("Erro " + r.status + ": " + (data && data.error ? data.error : "resposta sem detalhe"));
+        $("rec").disabled = false;
+        return;
+      }
+      $("n-total").textContent = data.total;
+      $("n-melody").textContent = data.melody;
+      $("n-rhythm").textContent = data.rhythm;
+      $("n-attacks").textContent = data.attacks;
+      $("notas").hidden = false;
+      // denominador a vista: nota sem populacao examinada e opiniao com numero
+      $("auditoria").textContent =
+        `ataques: ${data.n_onsets_take} no take contra ${data.n_onsets_ref} na referência · ` +
+        `${data.n_frames_compared} frames de contorno comparados · ` +
+        `tolerância de ritmo ${data.rhythm_tol_s}s · ` +
+        `oitava suspeita na referência: ${data.n_octave_suspect_ref} de ${data.n_voiced_ref} frames`;
+      diz(data.n_frames_compared === 0
+        ? "Atenção: nenhum frame de melodia foi comparado — a nota de melodia não vale."
+        : "Pronto.");
+      $("rec").disabled = false;
+    };
+    rec.start();
+  } catch (e) {
+    soltaMic(stream);
     gravando = false;
-    $("rec").textContent = "● Gravar";
-    $("rec").setAttribute("aria-pressed", "false");
-    diz("Pontuando…");
-
-    const fd = new FormData();
-    fd.append("mode", $("mode").value);
-    fd.append("ref", $("ref").value);
-    fd.append("take", new Blob(chunks, { type: "audio/webm" }), "take.webm");
-
-    let r, data;
-    try {
-      r = await fetch("/api/score", { method: "POST", body: fd });
-      data = await r.json();
-    } catch (e) {
-      diz("Falha de rede ao pontuar.");
-      return;
-    }
-    if (!r.ok) {
-      diz("Erro " + r.status + ": " + (data && data.error ? data.error : "desconhecido"));
-      return;
-    }
-    $("n-total").textContent = data.total;
-    $("n-melody").textContent = data.melody;
-    $("n-rhythm").textContent = data.rhythm;
-    $("n-attacks").textContent = data.attacks;
-    $("notas").hidden = false;
-    // denominador a vista: nota sem populacao examinada e opiniao com numero
-    $("auditoria").textContent =
-      `ataques: ${data.n_onsets_take} no take contra ${data.n_onsets_ref} na referência · ` +
-      `${data.n_frames_compared} frames de contorno comparados · ` +
-      `tolerância de ritmo ${data.rhythm_tol_s}s · ` +
-      `oitava suspeita na referência: ${data.n_octave_suspect_ref} de ${data.n_voiced_ref} frames`;
-    diz(data.n_frames_compared === 0
-      ? "Atenção: nenhum frame de melodia foi comparado — a nota de melodia não vale."
-      : "Pronto.");
-  };
-  rec.start();
+    diz("Gravação não suportada neste navegador: " + e.name);
+    return;
+  }
   gravando = true;
   $("rec").textContent = "■ Parar";
   $("rec").setAttribute("aria-pressed", "true");

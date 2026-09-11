@@ -76,6 +76,39 @@ def test_wav_valido_sem_amostras_da_400_nao_500(client):
     assert "amostra" in r.get_json()["error"]
 
 
+# ── GET /api/score/ref ───────────────────────────────────────────────────────
+def test_ref_audio_modo_invalido_da_400(client):
+    r = client.get("/api/score/ref?mode=sabotagem&ref=abc")
+    assert r.status_code == 400
+    assert "mode" in r.get_json()["error"]
+
+
+def test_ref_audio_travessia_da_400(client):
+    r = client.get("/api/score/ref?mode=karaoke&ref=../../etc/passwd")
+    assert r.status_code == 400
+    assert "ref" in r.get_json()["error"]
+
+
+def test_ref_audio_inexistente_da_404(client):
+    r = client.get("/api/score/ref?mode=mimic&ref=nao_existe_xyz")
+    assert r.status_code == 404
+    assert "nao_existe_xyz" in r.get_json()["error"]
+
+
+def test_ref_audio_mimic_serve_wav(client, tmp_path, monkeypatch):
+    """Caminho feliz sem depender de work/ (gitignored): aponta MIMIC_REF_DIR para um
+    tmp com um WAV real de 0,1s e confere que volta 200 audio/wav com bytes."""
+    import numpy as np
+    import soundfile as sf
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    sf.write(tmp_path / "abc.wav", np.zeros(1600, dtype="float32"), 16000)
+    r = client.get("/api/score/ref?mode=mimic&ref=abc")
+    assert r.status_code == 200, f"veio {r.status_code}: {r.data[:120]}"
+    assert r.mimetype == "audio/wav"
+    assert len(r.data) > 44, f"corpo com {len(r.data)} bytes — menor que um header WAV"
+
+
 def test_lista_de_modos_e_fechada():
     assert MODES == frozenset({"mimic", "karaoke"})
     assert len(MODES) == 2, f"MODES tem {len(MODES)} entradas"

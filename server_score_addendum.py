@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from flask import jsonify, request
+from flask import jsonify, request, send_file
 
 from karaoke import paths as kpaths
 from karaoke.scorer import score, track_from_audio, track_from_word_timing
@@ -112,3 +112,24 @@ def make_score_route(app) -> None:
             "n_octave_suspect_ref": ref.n_octave_suspect,
             "n_voiced_ref": ref.n_voiced,
         })
+
+    @app.route("/api/score/ref", methods=["GET"])
+    def api_score_ref():
+        """Audio de referencia que a pagina toca antes de gravar. Mesma fronteira do POST:
+        mode em lista fechada, ref pela regex ANTES de tocar em caminho. Karaoke toca a
+        MISTURA (song.wav do job) — o jogador canta junto da musica; a pontuacao usa
+        vocals_raw. Decisao de 2026-09-11: o /api/result/audio existente le input/jobs/,
+        nao work/jobs/, e interpola job_id sem validar."""
+        mode = (request.args.get("mode") or "").strip()
+        if mode not in MODES:
+            return _erro(f"mode invalido: esperado um de {sorted(MODES)}", 400)
+        ref_id = (request.args.get("ref") or "").strip()
+        if REF_ID_RE.match(ref_id) is None:
+            return _erro("ref invalido: use [A-Za-z0-9_-], no maximo 64 caracteres", 400)
+        if mode == "karaoke":
+            path = kpaths.input_job_dir(ref_id) / "song.wav"
+        else:
+            path = MIMIC_REF_DIR / f"{ref_id}.wav"
+        if not path.exists():
+            return _erro(f"referencia {ref_id} nao encontrada", 404)
+        return send_file(str(path), mimetype="audio/wav")
