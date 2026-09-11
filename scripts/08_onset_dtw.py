@@ -6,19 +6,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import karaoke.paths as kpaths
+from karaoke.onset import compute_rms, detect_onsets
 
 # Force UTF-8 for Windows
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
- 
+
 # ── CONFIGURAÇÕES ──────────────────────────────────────────────────────────
 SCORE_THRESHOLD  = 0.5    # só confia em palavras com score >= isso
-ONSET_THRESHOLD  = 0.008  # sensibilidade do detector de onsets
-MIN_GAP          = 0.08   # gap mínimo entre onsets (80ms)
-ENERGY_MIN       = 0.02   # RMS mínimo para contar como onset
-WINDOW_MS        = 25     # janela de análise em ms
-HOP_MS           = 10     # passo entre janelas em ms
- 
+
 # ── PASSO 1: Carregar o áudio ───────────────────────────────────────────────
 def load_audio(wav_path):
     with wave.open(str(wav_path), 'rb') as wf:
@@ -27,35 +23,7 @@ def load_audio(wav_path):
         audio  = np.frombuffer(frames, dtype=np.int16).astype(np.float32)
         audio /= np.abs(audio).max() + 1e-8
     return audio, sr
- 
-# ── PASSO 2: Calcular RMS frame a frame ────────────────────────────────────
-def compute_rms(audio, sr):
-    hop = int(sr * HOP_MS  / 1000)
-    win = int(sr * WINDOW_MS / 1000)
-    rms = []
-    for i in range(0, len(audio) - win, hop):
-        chunk = audio[i:i+win]
-        rms.append(float(np.sqrt(np.mean(chunk**2))))
-    return np.array(rms), hop / sr  # retorna array e segundos por frame
- 
-# ── PASSO 3: Detectar onsets ────────────────────────────────────────────────
-# Um onset é detectado quando:
-#   a) A derivada do RMS é positiva acima do threshold
-#   b) O RMS atual está acima do mínimo de energia
-#   c) Passou o gap mínimo desde o último onset
-def detect_onsets(rms, frame_dur):
-    drms   = np.diff(rms)
-    onsets = []
-    last   = -1
-    for i, d in enumerate(drms):
-        t = i * frame_dur
-        if (d > ONSET_THRESHOLD
-                and rms[i+1] > ENERGY_MIN
-                and (t - last) > MIN_GAP):
-            onsets.append(t)
-            last = t
-    return np.array(onsets)
- 
+
 # ── PASSO 4: Separar âncoras de palavras não-alinhadas ──────────────────────
 # Âncoras: score >= SCORE_THRESHOLD E não interpolated
 # Não-alinhadas: tudo que o WhisperX não encontrou com confiança
