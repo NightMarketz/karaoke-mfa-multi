@@ -103,6 +103,26 @@ def _resample(contour: np.ndarray, n: int = MELODY_POINTS) -> np.ndarray:
                      contour)
 
 
+def _mad_intervalos(on_ref: np.ndarray, on_take: np.ndarray) -> float:
+    """Diferenca media absoluta entre as sequencias de intervalos, tolerando UM onset
+    espurio na borda inicial de cada lado (o clique do botao, uma respiracao antes da
+    primeira nota). Medido em 2026-09-11: sem isto, identidade + 1 onset antes dava
+    rhythm 0.0 e total 45.9 — abaixo do p95 do acaso (49.5). Com isto, 80.9.
+    ponytail: comparacao posicional ate min(len); DTW sobre intervalos e o upgrade
+    quando um onset espurio no MEIO do take importar."""
+    best = None
+    for drop_ref in (0, 1):
+        for drop_take in (0, 1):
+            a, b = on_ref[drop_ref:], on_take[drop_take:]
+            if len(a) < 2 or len(b) < 2:
+                continue
+            ia, ib = np.diff(a), np.diff(b)
+            k = min(len(ia), len(ib))
+            mad = float(np.mean(np.abs(ia[:k] - ib[:k])))
+            best = mad if best is None else min(best, mad)
+    return best if best is not None else float("inf")
+
+
 def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
     """Compara forma relativa, nunca alinhamento absoluto: um atraso global
     constante na captura nao altera nota nenhuma."""
@@ -111,23 +131,25 @@ def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
     # ataques: quanto as contagens batem
     attacks = 100.0 * max(0.0, 1.0 - abs(n_ref - n_take) / max(n_ref, n_take, 1))
 
-    # ritmo: intervalos ENTRE ataques, nao instantes
+    # ritmo: intervalos ENTRE ataques, nao instantes. A tolerancia e calibrada
+    # na REFERENCIA (calibrar no take premia take esticado: medido 3.6 vs 25.8).
     tol = RHYTHM_TOL_FLOOR_S
     if n_ref >= 2 and n_take >= 2:
-        iv_ref = np.diff(ref.onsets)
-        iv_take = np.diff(take.onsets)
-        tol = max(RHYTHM_TOL_FLOOR_S, RHYTHM_TOL_RATIO * float(np.median(iv_ref)))
-        k = min(len(iv_ref), len(iv_take))
-        mad = float(np.mean(np.abs(iv_ref[:k] - iv_take[:k])))
-        rhythm = 100.0 * max(0.0, 1.0 - mad / tol)
+        tol = max(RHYTHM_TOL_FLOOR_S,
+                  RHYTHM_TOL_RATIO * float(np.median(np.diff(ref.onsets))))
+        rhythm = 100.0 * max(0.0, 1.0 - _mad_intervalos(ref.onsets, take.onsets) / tol)
     else:
         rhythm = 0.0
 
     # melodia: correlacao dos contornos centrados, reamostrados a tamanho comum
     if len(ref.semitones) >= MIN_VOICED_FRAMES and len(take.semitones) >= MIN_VOICED_FRAMES:
-        r = float(np.corrcoef(_resample(ref.semitones), _resample(take.semitones))[0, 1])
+        # ponytail: correlacao mede a DIRECAO do contorno, nao o tamanho dos
+        # intervalos — cantar "flat" (intervalos x0.5) da melody ~100. Upgrade:
+        # distancia RMS em semitons apos centragem, quando isso importar.
+        with np.errstate(invalid="ignore"):
+            r = float(np.corrcoef(_resample(ref.semitones), _resample(take.semitones))[0, 1])
         melody = 0.0 if np.isnan(r) else 100.0 * max(0.0, r)
-        n_frames_compared = MELODY_POINTS
+        n_frames_compared = min(len(ref.semitones), len(take.semitones))
     else:
         melody = 0.0
         n_frames_compared = 0
@@ -151,6 +173,14 @@ def track_from_word_timing(words: list[dict], samples: np.ndarray,
     Precisao medida do gabarito em 2026-09-10: 66% das palavras a <=100ms de um
     ataque detectado, contra 47% do acaso. A nota herda esse erro — o modo karaoke
     e "melhor que acaso", nao "correto".
+
+    ponytail: ref.onsets sao INICIOS DE PALAVRA (71 no job de teste) enquanto
+    take.onsets sao ATAQUES do detector (163 no mesmo audio) — attacks e rhythm
+    comparam populacoes diferentes e o self-score do gabarito fica em ~54 (melody
+    100, attacks ~44, rhythm ~0). Decisao de spec pendente (2026-09-11): (a) ref
+    tambem via track_from_audio no trecho [words[0].start, words[-1].end] e o
+    gabarito so para validar/janelar (self-score 100 em prototipo), ou (b) reduzir
+    os ataques do take aos mais proximos de cada palavra. Nao mude aqui sem o spec.
     """
     if not words:
         raise ValueError("word_timing vazio: gabarito sem palavras nao produz referencia")

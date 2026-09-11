@@ -160,6 +160,7 @@ def test_relacoes_de_ordem_completas(ref):
     assert abs(ident - transp) <= 5.0, f"identidade {ident:.1f} vs transposto {transp:.1f}"
     assert ident > emb > dif, f"ordem quebrou: {ident:.1f} > {emb:.1f} > {dif:.1f}"
     assert ident > p95, f"identidade {ident:.1f} nao supera acaso p95 {p95:.1f}"
+    assert dif < p95, f"clipe diferente {dif:.1f} nao ficou abaixo do acaso p95 {p95:.1f}"
 
 
 def test_ritmo_calibra_na_referencia_nao_no_take(ref):
@@ -175,6 +176,22 @@ def test_ritmo_calibra_na_referencia_nao_no_take(ref):
     assert esticado.rhythm < 15.0, (
         f"take esticado 1.3x recebeu rhythm {esticado.rhythm:.1f} "
         f"(tol {esticado.rhythm_tol_s:.3f}s) — calibracao esta no take, nao na referencia?"
+    )
+
+
+def test_onset_espurio_antes_nao_derruba_abaixo_do_acaso(ref):
+    """O clique do botao ou uma respiracao antes da primeira nota e o take NORMAL.
+    Medido em 2026-09-11: com truncamento posicional dava total 45.9 < p95 49.5;
+    com tolerancia a um onset de borda da 80.9 (rhythm 100, attacks 83.3)."""
+    espurio = _total(ref, [0.1] + TIMES, [300.0] + FREQS)
+    assert espurio.n_onsets_take == len(TIMES) + 1, (
+        f"{espurio.n_onsets_take} ataques de {len(TIMES) + 1} esperados"
+    )
+    assert espurio.rhythm >= 95.0, f"rhythm {espurio.rhythm:.1f} com um onset espurio antes"
+    p95 = float(np.percentile(_baseline_aleatorio(ref), 95))
+    assert espurio.total > p95, (
+        f"take perfeito com onset espurio antes ({espurio.total:.1f}) "
+        f"nao supera o p95 do acaso ({p95:.1f})"
     )
 
 
@@ -205,7 +222,7 @@ def test_karaoke_usa_inicios_de_palavra_como_ataques():
     assert len(track.onsets) == len(words), (
         f"{len(track.onsets)} ataques de {len(words)} palavras"
     )
-    assert track.onsets[0] == pytest.approx(0.30)
+    np.testing.assert_allclose(track.onsets, [w["start"] for w in words])
     assert track.n_voiced >= MIN_VOICED_FRAMES, (
         f"{track.n_voiced} frames voiced de {track.n_frames}"
     )

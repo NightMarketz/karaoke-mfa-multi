@@ -75,11 +75,15 @@ $("rec").addEventListener("click", async () => {
     rec.stop();
     return;
   }
+  // Desabilita ANTES do await: um segundo clique durante o prompt de permissão
+  // abriria um segundo stream que nunca seria solto.
+  $("rec").disabled = true;
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
     diz("Sem acesso ao microfone: " + e.name);
+    $("rec").disabled = false;
     return;
   }
   // Tudo que pode estourar depois de já ter o mic fica dentro do try: se
@@ -111,7 +115,7 @@ $("rec").addEventListener("click", async () => {
         return;
       }
       try { data = await r.json(); } catch (e) { data = null; }
-      if (!r.ok) {
+      if (!r.ok || !data) {
         diz("Erro " + r.status + ": " + (data && data.error ? data.error : "resposta sem detalhe"));
         $("rec").disabled = false;
         return;
@@ -124,7 +128,7 @@ $("rec").addEventListener("click", async () => {
       // denominador a vista: nota sem populacao examinada e opiniao com numero
       $("auditoria").textContent =
         `ataques: ${data.n_onsets_take} no take contra ${data.n_onsets_ref} na referência · ` +
-        `${data.n_frames_compared} frames de contorno comparados · ` +
+        `${data.n_frames_compared} frames de contorno comparados (${data.n_voiced_take} voiced no take) · ` +
         `tolerância de ritmo ${data.rhythm_tol_s}s · ` +
         `oitava suspeita na referência: ${data.n_octave_suspect_ref} de ${data.n_voiced_ref} frames`;
       diz(data.n_frames_compared === 0
@@ -133,10 +137,12 @@ $("rec").addEventListener("click", async () => {
       $("rec").disabled = false;
     };
     rec.start();
+    $("rec").disabled = false;
   } catch (e) {
     soltaMic(stream);
     gravando = false;
     diz("Gravação não suportada neste navegador: " + e.name);
+    $("rec").disabled = false;
     return;
   }
   gravando = true;

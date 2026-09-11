@@ -13,7 +13,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import numpy as np
 import soundfile as sf
 from flask import jsonify, request, send_file
 
@@ -21,23 +20,39 @@ from karaoke import paths as kpaths
 from karaoke.scorer import score, track_from_audio, track_from_word_timing
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024          # take de uma rodada nao passa disso
+MAX_TAKE_S = 30                             # ffmpeg corta aqui: 8 MB de Opus sao ~3 h
+FFMPEG_TIMEOUT_S = 60                       # container malformado nao pendura o worker
 MODES = frozenset({"mimic", "karaoke"})     # lista FECHADA
 REF_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-MIMIC_REF_DIR = Path("input") / "mimic_refs"
+# Ancorado na raiz do repo como todos os acessores de kpaths. Relativo ao CWD,
+# path.exists() e send_file() resolviam contra raizes DIFERENTES (CWD vs app.root_path).
+MIMIC_REF_DIR = kpaths.repos_root() / "input" / "mimic_refs"
 
 
 def _erro(msg: str, status: int):
     return jsonify({"error": msg}), status
 
 
+class FfmpegAusente(RuntimeError):
+    """ffmpeg nao esta no PATH: falha de ambiente, nao do cliente."""
+
+
 def _webm_para_wav(src: Path, dst: Path) -> bool:
     """16k mono, mesmo padrao de scripts/03_vocal_cleaning.py — incluindo o mkdir
-    do diretorio de saida, cuja ausencia foi bug real naquele script."""
+    do diretorio de saida, cuja ausencia foi bug real naquele script.
+    -t limita a duracao decodificada (um take de rodada cabe em MAX_TAKE_S) e
+    timeout impede que um container malformado pendure o worker."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        ["ffmpeg", "-y", "-i", str(src), "-ar", "16000", "-ac", "1", str(dst)],
-        capture_output=True,
-    )
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(src), "-t", str(MAX_TAKE_S),
+             "-ar", "16000", "-ac", "1", str(dst)],
+            capture_output=True, timeout=FFMPEG_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    except FileNotFoundError as exc:
+        raise FfmpegAusente(str(exc)) from exc
     return proc.returncode == 0 and dst.exists() and dst.stat().st_size > 0
 
 
@@ -62,12 +77,27 @@ def make_score_route(app) -> None:
         if not blob:
             return _erro("take vazio", 400)
 
+        # Checa a referencia antes de pagar ffmpeg + pyin no take: 404 e barato.
+        if mode == "karaoke":
+            wt = kpaths.word_timing_json(ref_id)
+            vocals = kpaths.vocals_raw(ref_id)
+            if not wt.exists() or not vocals.exists():
+                return _erro(f"job {ref_id} nao tem gabarito alinhado", 404)
+        else:
+            clip = MIMIC_REF_DIR / f"{ref_id}.wav"
+            if not clip.exists():
+                return _erro(f"clipe de referencia {ref_id} nao existe", 404)
+
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
             src = tmpdir / "take.upload"
             src.write_bytes(blob)
             wav = tmpdir / "take.wav"
-            if not _webm_para_wav(src, wav):
+            try:
+                ok = _webm_para_wav(src, wav)
+            except FfmpegAusente:
+                return _erro("ffmpeg indisponivel no servidor", 503)
+            if not ok:
                 return _erro("take nao pudemos decodificar como audio", 400)
 
             take_samples, sr = sf.read(wav, dtype="float32")
@@ -80,10 +110,6 @@ def make_score_route(app) -> None:
             take = track_from_audio(take_samples, sr)
 
             if mode == "karaoke":
-                wt = kpaths.word_timing_json(ref_id)
-                vocals = kpaths.vocals_raw(ref_id)
-                if not wt.exists() or not vocals.exists():
-                    return _erro(f"job {ref_id} nao tem gabarito alinhado", 404)
                 words = json.loads(wt.read_text(encoding="utf-8"))
                 ref_samples, ref_sr = sf.read(vocals, dtype="float32")
                 try:
@@ -91,9 +117,6 @@ def make_score_route(app) -> None:
                 except ValueError as exc:
                     return _erro(f"gabarito invalido: {exc}", 422)
             else:
-                clip = MIMIC_REF_DIR / f"{ref_id}.wav"
-                if not clip.exists():
-                    return _erro(f"clipe de referencia {ref_id} nao existe", 404)
                 ref_samples, ref_sr = sf.read(clip, dtype="float32")
                 if ref_samples.ndim > 1:
                     ref_samples = ref_samples.mean(axis=1)
@@ -111,6 +134,7 @@ def make_score_route(app) -> None:
             "rhythm_tol_s": round(report.rhythm_tol_s, 4),
             "n_octave_suspect_ref": ref.n_octave_suspect,
             "n_voiced_ref": ref.n_voiced,
+            "n_voiced_take": take.n_voiced,
         })
 
     @app.route("/api/score/ref", methods=["GET"])
@@ -127,7 +151,7 @@ def make_score_route(app) -> None:
         if REF_ID_RE.match(ref_id) is None:
             return _erro("ref invalido: use [A-Za-z0-9_-], no maximo 64 caracteres", 400)
         if mode == "karaoke":
-            path = kpaths.input_job_dir(ref_id) / "song.wav"
+            path = kpaths.song_wav(ref_id)
         else:
             path = MIMIC_REF_DIR / f"{ref_id}.wav"
         if not path.exists():
