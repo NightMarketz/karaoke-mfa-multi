@@ -36,6 +36,7 @@ Valem para **toda** tarefa. Os requisitos de cada tarefa incluem esta seção im
 | clipe diferente | melody 0,0 · rhythm 0,0 · attacks 60,0 · **total 12,0** |
 | baseline aleatório (n=30, seed 7) | média 24,6 · **p95 49,5** · max 57,9 |
 | tolerância de ritmo resultante | 0,210s no material sintético; piso 0,050s no modo karaoke |
+| ganho de entrada (2026-09-11) | `vocals_raw.wav` cru: 39 ataques; normalizado por pico: 163. Fixture sintética a −26dB: 0 de 5 cru, 5 de 5 normalizado. Identidade a −20dB normalizada: total 100,0 |
 
 **As três relações inegociáveis:** `identidade ≈ transposto` (diferença ≤ 5), `identidade > embaralhado > clipe diferente`, `identidade > p95(acaso)`. Acaso é distribuição, não piso: nota ruim ficar abaixo do p95 é correto.
 
@@ -259,10 +260,17 @@ Antes desta tarefa, o detector original achou **163 onsets** em
 achar os mesmos 163 — mesmo algoritmo, mesmas constantes, mesmo arquivo.
 
 ```bash
-python -c "import sys; sys.path.insert(0,'.'); import soundfile as sf; from karaoke.onset import compute_rms, detect_onsets; a,sr=sf.read('work/jobs/mimic_gab_01/03_vocals_clean/vocals_raw.wav',dtype='float32'); rms,fd=compute_rms(a,sr); on=detect_onsets(rms,fd); print(f'onsets={len(on)} (esperado 163) frames_rms={len(rms)}'); sys.exit(0 if len(on)==163 else 1)"
+python -c "import sys; sys.path.insert(0,'.'); import numpy as np, soundfile as sf; from karaoke.onset import compute_rms, detect_onsets; a,sr=sf.read('work/jobs/mimic_gab_01/03_vocals_clean/vocals_raw.wav',dtype='float32'); a=a/(np.abs(a).max()+1e-8); rms,fd=compute_rms(a,sr); on=detect_onsets(rms,fd); print(f'onsets={len(on)} (esperado 163) frames_rms={len(rms)}'); sys.exit(0 if len(on)==163 else 1)"
 ```
 Expected: `onsets=163 (esperado 163)`, exit 0. Se der outro número, o colapso alterou
 o algoritmo — pare e reporte, não ajuste o número esperado.
+
+**Nota de execução (2026-09-11):** a primeira versão deste comando lia o WAV sem
+normalizar por pico e imprimia `onsets=39`. O `load_audio` original do script divide
+pelo pico do arquivo (`np.abs(audio).max()`), e este arquivo está 3,2× abaixo do fundo
+de escala (pico int16 = 10343). Os limiares do detector são absolutos em amplitude, logo
+**o resultado depende do ganho de entrada** — 163 normalizado, 39 cru. O comando acima
+já normaliza. A consequência para o scorer está na Task 2 (`track_from_audio`).
 
 Se o arquivo não existir, o job `mimic_gab_01` não está neste checkout (`work/` é
 gitignored); reporte NEEDS_CONTEXT em vez de pular o passo.
@@ -355,6 +363,19 @@ def test_conta_suspeita_de_erro_de_oitava():
     )
 
 
+def test_ganho_baixo_nao_perde_ataques():
+    """Os limiares do detector sao absolutos; sem normalizar por pico, esta fixture a
+    -30dB (pico ~0.019, abaixo de ENERGY_MIN=0.02) da ZERO ataques. Medido em 2026-09-11:
+    0 de 5 sem normalizar, 5 de 5 com. E o mesmo fenomeno que deu 39 vs 163 no
+    material real."""
+    baixo = bursts(TIMES, FREQS) * 10 ** (-30 / 20)
+    assert float(np.abs(baixo).max()) < 0.02, "fixture nao ficou abaixo de ENERGY_MIN"
+    track = track_from_audio(baixo, SR)
+    assert len(track.onsets) == len(TIMES), (
+        f"{len(track.onsets)} ataques de {len(TIMES)} com ganho a -30dB"
+    )
+
+
 def test_silencio_nao_produz_contorno():
     """Controle negativo: audio mudo da populacao vazia, e isso deve ser visivel."""
     track = track_from_audio(np.zeros(int(2.0 * SR), dtype=np.float32), SR)
@@ -412,6 +433,12 @@ class ReferenceTrack:
 def track_from_audio(samples: np.ndarray, sr: int) -> ReferenceTrack:
     """Extrai ataques e contorno de f0 de um audio mono."""
     samples = np.asarray(samples, dtype=np.float32)
+    # Normaliza por pico ANTES de detectar: os limiares de karaoke/onset.py
+    # (ENERGY_MIN, ONSET_THRESHOLD) sao absolutos em amplitude. Medido em
+    # 2026-09-11 no vocals_raw.wav de 60s (pico a 0.316 do fundo de escala):
+    # 163 ataques normalizado, 39 cru. Mic com ganho desconhecido seria pontuado
+    # de forma inconsistente sem isto. Silencio absoluto fica silencio (1e-8).
+    samples = samples / (np.abs(samples).max() + 1e-8)
     rms, frame_dur = compute_rms(samples, sr)
     onsets = detect_onsets(rms, frame_dur)
 
@@ -445,14 +472,20 @@ def track_from_audio(samples: np.ndarray, sr: int) -> ReferenceTrack:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_scorer.py -v`
-Expected: PASS, 5 passed
+Expected: PASS, 6 passed
 
-- [ ] **Step 5: Ver a cerca vermelha**
+- [ ] **Step 5: Ver a cerca vermelha (duas sabotagens)**
 
-Troque `12.0 * np.log2(vals / np.nanmedian(vals))` por `12.0 * np.log2(vals / 440.0)`
-(remove a centragem na mediana). Rode `python -m pytest tests/test_scorer.py -v` e
-confirme que `test_contorno_centrado_na_mediana` **e** `test_transposicao_nao_muda_o_contorno`
-ficam vermelhos. Restaure e confirme 4 passed.
+1. Troque `12.0 * np.log2(vals / np.nanmedian(vals))` por `12.0 * np.log2(vals / 440.0)`
+   (remove a centragem na mediana). Rode `python -m pytest tests/test_scorer.py -v` e
+   confirme que `test_contorno_centrado_na_mediana` **e** `test_transposicao_nao_muda_o_contorno`
+   ficam vermelhos. Restaure.
+2. Apague a linha `samples = samples / (np.abs(samples).max() + 1e-8)`. Rode de novo e
+   confirme que `test_ganho_baixo_nao_perde_ataques` fica vermelho com `0 ataques de 5`.
+   Restaure.
+
+Confirme 6 passed ao final. Se qualquer uma das duas sabotagens não deixar nada
+vermelho, a cerca correspondente não existe: pare e reporte.
 
 - [ ] **Step 6: Commit**
 
@@ -659,7 +692,7 @@ def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_scorer.py -v`
-Expected: PASS, 12 passed (5 da Task 2 + 7 desta)
+Expected: PASS, 13 passed (6 da Task 2 + 7 desta)
 
 Valores esperados, medidos em protótipo: identidade 100,0 · transposto 100,0 ·
 embaralhado 35,6 · diferente 12,0 · acaso média 24,6 e p95 49,5.
@@ -672,7 +705,7 @@ de calibração, as relações não.
 Troque `np.median(iv_ref)` por `np.median(iv_take)` na tolerância — passa a calibrar
 pelo take em vez da referência, o que premia take esticado. Rode
 `python -m pytest tests/test_scorer.py -v` e confirme vermelho em
-`test_controle_3_embaralhado_derruba_ritmo`. Restaure e confirme 12 passed.
+`test_controle_3_embaralhado_derruba_ritmo`. Restaure e confirme 13 passed.
 
 - [ ] **Step 6: Commit**
 
@@ -793,13 +826,13 @@ def track_from_word_timing(words: list[dict], samples: np.ndarray,
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_scorer.py -v`
-Expected: PASS, 16 passed
+Expected: PASS, 17 passed
 
 - [ ] **Step 5: Ver a cerca vermelha**
 
 Remova o bloco `if np.any(np.diff(starts) < 0)`. Rode
 `python -m pytest tests/test_scorer.py::test_karaoke_gabarito_fora_de_ordem_e_erro -v`
-e confirme vermelho (`DID NOT RAISE`). Restaure e confirme 16 passed.
+e confirme vermelho (`DID NOT RAISE`). Restaure e confirme 17 passed.
 
 - [ ] **Step 6: Verificação contra dado real**
 
@@ -1237,9 +1270,9 @@ headless — fora do escopo do marco A.
 - [ ] **Step 4: Rodar a suíte inteira**
 
 Run: `python -m pytest tests/ --ignore=tests/test_critical_pipeline.py -q`
-Expected: os 190 testes que já passavam **mais** os 36 novos (`test_onset.py` 4,
-`test_scorer.py` 16 = 5+7+4 das Tasks 2/3/4, `test_score_route.py` 16) =
-**226 passed**, 2 skipped, 1 xfailed, 7 errors.
+Expected: os 190 testes que já passavam **mais** os 37 novos (`test_onset.py` 4,
+`test_scorer.py` 17 = 6+7+4 das Tasks 2/3/4, `test_score_route.py` 16) =
+**227 passed**, 2 skipped, 1 xfailed, 7 errors.
 
 Os 7 errors são pré-existentes e não seus: `tests/integration/test_pipeline_orchestrator.py`
 faz mock de `run_pipeline.execute_external`, função que não existe no módulo. Se
