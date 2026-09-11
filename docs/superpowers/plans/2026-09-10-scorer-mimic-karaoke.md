@@ -47,7 +47,7 @@ Valem para **toda** tarefa. Os requisitos de cada tarefa incluem esta seção im
 |---|---|
 | `karaoke/onset.py` (novo) | RMS por janela e detecção de ataques. Sem I/O. |
 | `karaoke/scorer.py` (novo) | `ReferenceTrack`, `ScoreReport`, as duas fábricas e `score()`. Sem I/O. |
-| `karaoke/audio_fixtures.py` (novo) | Gerador de áudio sintético determinístico, usado pelos testes das duas tarefas seguintes. Sem I/O. |
+| `karaoke/audio_fixtures.py` (novo, Task 1) | Gerador de áudio sintético determinístico, usado por `test_onset.py` e `test_scorer.py`. Sem I/O. |
 | `server_score_addendum.py` (novo, raiz) | Rota `POST /api/score`: upload, ffmpeg, resolução de referência, validação. Molde: `server_preview_addendum.py`. |
 | `web/mimic.html` (novo) | Página de uma rodada: toca referência, grava mic, mostra notas. |
 | `tests/test_onset.py` (novo) | Cerca do detector de ataques. |
@@ -62,12 +62,14 @@ Valem para **toda** tarefa. Os requisitos de cada tarefa incluem esta seção im
 ### Task 1: `karaoke/onset.py` — detecção de ataques
 
 **Files:**
-- Create: `karaoke/onset.py`
+- Create: `karaoke/onset.py`, `karaoke/audio_fixtures.py`
 - Test: `tests/test_onset.py`
 
 **Interfaces:**
 - Consumes: nada.
 - Produces:
+  - `karaoke.audio_fixtures.SR: int = 16000`
+  - `karaoke.audio_fixtures.bursts(times: list[float], freqs: list[float], dur: float = 0.25, sr: int = 16000) -> np.ndarray`
   - `WIN_MS: int = 25`, `HOP_MS: int = 10`, `ONSET_THRESHOLD: float = 0.008`, `MIN_GAP_S: float = 0.08`, `ENERGY_MIN: float = 0.02`
   - `compute_rms(samples: np.ndarray, sr: int) -> tuple[np.ndarray, float]` — devolve `(rms, frame_dur_s)`
   - `detect_onsets(rms: np.ndarray, frame_dur: float) -> np.ndarray` — devolve array de instantes em segundos
@@ -80,22 +82,8 @@ Crie `tests/test_onset.py`:
 import numpy as np
 import pytest
 
+from karaoke.audio_fixtures import SR, bursts as _bursts
 from karaoke.onset import compute_rms, detect_onsets
-
-SR = 16000
-
-
-def _bursts(times, freqs, dur=0.25, sr=SR):
-    """Bursts senoidais com ataque seco — verdade de terreno conhecida."""
-    total = max(times) + dur + 0.3
-    out = np.zeros(int(total * sr), dtype=np.float32)
-    for t, f in zip(times, freqs):
-        i0 = int(t * sr)
-        k = int(dur * sr)
-        tt = np.arange(k) / sr
-        env = np.minimum(1.0, np.exp(-3 * tt) + 0.15)
-        out[i0:i0 + k] += (0.6 * env * np.sin(2 * np.pi * f * tt)).astype(np.float32)
-    return np.clip(out, -1, 1)
 
 
 def test_detecta_todos_os_ataques_conhecidos():
@@ -140,9 +128,46 @@ def test_cardinalidade_do_rms():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_onset.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'karaoke.onset'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'karaoke.audio_fixtures'`
 
 - [ ] **Step 3: Write minimal implementation**
+
+Crie `karaoke/audio_fixtures.py`:
+
+```python
+"""
+audio_fixtures.py — Gerador de audio sintetico determinístico para teste do scorer.
+Logica pura. Mora em karaoke/ (nao em tests/) porque e usado por tests/test_onset.py,
+tests/test_scorer.py e pelo notebook de calibracao.
+"""
+from __future__ import annotations
+
+import numpy as np
+
+SR = 16000
+
+
+def bursts(times: list[float], freqs: list[float], dur: float = 0.25,
+           sr: int = SR) -> np.ndarray:
+    """Sequencia de bursts senoidais com ataque seco e decaimento.
+
+    Verdade de terreno conhecida: um ataque por instante em `times`, f0 igual ao
+    `freqs` correspondente. E o que permite testar o scorer sem microfone.
+    """
+    if len(times) != len(freqs):
+        raise ValueError(f"times ({len(times)}) e freqs ({len(freqs)}) diferem")
+    if not times:
+        raise ValueError("times vazio: fixture sem conteudo nao valida nada")
+    total = max(times) + dur + 0.3
+    out = np.zeros(int(total * sr), dtype=np.float32)
+    for t, f in zip(times, freqs):
+        i0 = int(t * sr)
+        k = int(dur * sr)
+        tt = np.arange(k) / sr
+        env = np.minimum(1.0, np.exp(-3 * tt) + 0.15)
+        out[i0:i0 + k] += (0.6 * env * np.sin(2 * np.pi * f * tt)).astype(np.float32)
+    return np.clip(out, -1.0, 1.0)
+```
 
 Crie `karaoke/onset.py`:
 
@@ -211,23 +236,21 @@ Se a sabotagem não deixar nenhum teste vermelho, a cerca não existe: pare e re
 - [ ] **Step 6: Commit**
 
 ```bash
-git add karaoke/onset.py tests/test_onset.py
-git commit -m "feat(scorer): deteccao de ataques por energia, com cerca"
+git add karaoke/onset.py karaoke/audio_fixtures.py tests/test_onset.py
+git commit -m "feat(scorer): deteccao de ataques por energia e fixture sintetica, com cerca"
 ```
 
 ---
 
-### Task 2: `karaoke/audio_fixtures.py` + `ReferenceTrack`
+### Task 2: `ReferenceTrack` e `track_from_audio`
 
 **Files:**
-- Create: `karaoke/audio_fixtures.py`, `karaoke/scorer.py`
+- Create: `karaoke/scorer.py`
 - Test: `tests/test_scorer.py`
 
 **Interfaces:**
-- Consumes: `karaoke.onset.compute_rms`, `karaoke.onset.detect_onsets`
+- Consumes: `karaoke.onset.compute_rms`, `karaoke.onset.detect_onsets`, `karaoke.audio_fixtures.{SR, bursts}` (Task 1)
 - Produces:
-  - `karaoke.audio_fixtures.bursts(times: list[float], freqs: list[float], dur: float = 0.25, sr: int = 16000) -> np.ndarray`
-  - `karaoke.audio_fixtures.SR: int = 16000`
   - `karaoke.scorer.MELODY_POINTS: int = 200`, `MIN_VOICED_FRAMES: int = 10`, `F0_MIN_HZ: float = 65.0`, `F0_MAX_HZ: float = 1000.0`
   - `karaoke.scorer.ReferenceTrack` — dataclass com `onsets: np.ndarray`, `semitones: np.ndarray`, `frame_dur: float`, `duration: float`, `n_voiced: int`, `n_frames: int`, `n_octave_suspect: int`
   - `karaoke.scorer.track_from_audio(samples: np.ndarray, sr: int) -> ReferenceTrack`
@@ -303,46 +326,9 @@ def test_silencio_nao_produz_contorno():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_scorer.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'karaoke.audio_fixtures'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'karaoke.scorer'`
 
 - [ ] **Step 3: Write minimal implementation**
-
-Crie `karaoke/audio_fixtures.py`:
-
-```python
-"""
-audio_fixtures.py — Gerador de audio sintetico determinístico para teste do scorer.
-Logica pura. Mora em karaoke/ (nao em tests/) porque a rota e o notebook de
-calibracao tambem o usam.
-"""
-from __future__ import annotations
-
-import numpy as np
-
-SR = 16000
-
-
-def bursts(times: list[float], freqs: list[float], dur: float = 0.25,
-           sr: int = SR) -> np.ndarray:
-    """Sequencia de bursts senoidais com ataque seco e decaimento.
-
-    Verdade de terreno conhecida: um ataque por instante em `times`, f0 igual ao
-    `freqs` correspondente. E o que permite testar o scorer sem microfone.
-    """
-    if len(times) != len(freqs):
-        raise ValueError(f"times ({len(times)}) e freqs ({len(freqs)}) diferem")
-    if not times:
-        raise ValueError("times vazio: fixture sem conteudo nao valida nada")
-    total = max(times) + dur + 0.3
-    out = np.zeros(int(total * sr), dtype=np.float32)
-    for t, f in zip(times, freqs):
-        i0 = int(t * sr)
-        k = int(dur * sr)
-        tt = np.arange(k) / sr
-        env = np.minimum(1.0, np.exp(-3 * tt) + 0.15)
-        out[i0:i0 + k] += (0.6 * env * np.sin(2 * np.pi * f * tt)).astype(np.float32)
-    return np.clip(out, -1.0, 1.0)
-```
 
 Crie `karaoke/scorer.py`:
 
@@ -429,7 +415,7 @@ ficam vermelhos. Restaure e confirme 4 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add karaoke/audio_fixtures.py karaoke/scorer.py tests/test_scorer.py
+git add karaoke/scorer.py tests/test_scorer.py
 git commit -m "feat(scorer): ReferenceTrack com ataques e contorno de f0 centrado"
 ```
 
