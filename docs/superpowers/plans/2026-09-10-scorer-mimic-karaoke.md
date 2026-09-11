@@ -843,6 +843,7 @@ def track_from_word_timing(words: list[dict], samples: np.ndarray,
         duration=base.duration,
         n_voiced=base.n_voiced,
         n_frames=base.n_frames,
+        n_octave_suspect=base.n_octave_suspect,
     )
 ```
 
