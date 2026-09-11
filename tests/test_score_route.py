@@ -60,6 +60,22 @@ def test_audio_indecodificavel_da_400_nao_500(client):
     assert r.status_code == 400, f"veio {r.status_code}: {r.data[:200]}"
 
 
+def test_wav_valido_sem_amostras_da_400_nao_500(client):
+    """Container valido com ZERO amostras: ffmpeg aceita e escreve so o header,
+    sf.read devolve shape (0,), e track_from_audio estouraria em np.abs(x).max().
+    Achado na revisao da Task 5 (2026-09-11): dava 500. Fronteira nunca da 500."""
+    import numpy as np
+    import soundfile as sf
+    vazio = io.BytesIO()
+    sf.write(vazio, np.zeros(0, dtype="float32"), 16000, format="WAV")
+    vazio.seek(0)
+    r = client.post("/api/score", data={
+        "mode": "mimic", "ref": "abc", "take": (vazio, "take.wav"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400, f"veio {r.status_code}: {r.data[:200]}"
+    assert "amostra" in r.get_json()["error"]
+
+
 def test_lista_de_modos_e_fechada():
     assert MODES == frozenset({"mimic", "karaoke"})
     assert len(MODES) == 2, f"MODES tem {len(MODES)} entradas"

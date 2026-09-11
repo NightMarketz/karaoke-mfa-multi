@@ -73,6 +73,10 @@ def make_score_route(app) -> None:
             take_samples, sr = sf.read(wav, dtype="float32")
             if take_samples.ndim > 1:
                 take_samples = take_samples.mean(axis=1)
+            # Container valido com zero amostras passa pelo ffmpeg (header-only, tamanho > 0)
+            # e estouraria em track_from_audio (np.abs(x).max() em array vazio) -> 500.
+            if take_samples.size == 0:
+                return _erro("take sem amostras de audio", 400)
             take = track_from_audio(take_samples, sr)
 
             if mode == "karaoke":
