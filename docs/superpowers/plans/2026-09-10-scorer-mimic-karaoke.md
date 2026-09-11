@@ -36,6 +36,7 @@ Valem para **toda** tarefa. Os requisitos de cada tarefa incluem esta seção im
 | clipe diferente | melody 0,0 · rhythm 0,0 · attacks 60,0 · **total 12,0** |
 | baseline aleatório (n=30, seed 7) | média 24,6 · **p95 49,5** · max 57,9 |
 | tolerância de ritmo resultante | 0,210s no material sintético; piso 0,050s no modo karaoke |
+| calibração do ritmo (2026-09-11) | take esticado 1,3×: rhythm 3,6 calibrando na referência, 25,8 calibrando no take. Embaralhado: 0,0 nos dois (mad 0,45s satura) — não discrimina |
 | ganho de entrada (2026-09-11) | `vocals_raw.wav` cru: 39 ataques; normalizado por pico: 163. Fixture sintética a −26dB: 0 de 5 cru, 5 de 5 normalizado. Identidade a −20dB normalizada: total 100,0 |
 
 **As três relações inegociáveis:** `identidade ≈ transposto` (diferença ≤ 5), `identidade > embaralhado > clipe diferente`, `identidade > p95(acaso)`. Acaso é distribuição, não piso: nota ruim ficar abaixo do p95 é correto.
@@ -602,6 +603,22 @@ def test_relacoes_de_ordem_completas(ref):
     assert ident > p95, f"identidade {ident:.1f} nao supera acaso p95 {p95:.1f}"
 
 
+def test_ritmo_calibra_na_referencia_nao_no_take(ref):
+    """A tolerancia de ritmo e derivada do intervalo mediano da REFERENCIA. Calibrar no
+    take premiaria take esticado: medido em 2026-09-11, take a 1.3x da tempo tem
+    rhythm 3.6 calibrando na referencia e 25.8 calibrando em si mesmo. O embaralhado
+    nao distingue os dois (mad 0.45s satura em 0 de qualquer jeito) — por isso esta
+    fixture existe."""
+    esticado = _total(ref, [t * 1.3 for t in TIMES], FREQS)
+    assert esticado.n_onsets_take == len(TIMES), (
+        f"{esticado.n_onsets_take} ataques de {len(TIMES)} no take esticado"
+    )
+    assert esticado.rhythm < 15.0, (
+        f"take esticado 1.3x recebeu rhythm {esticado.rhythm:.1f} "
+        f"(tol {esticado.rhythm_tol_s:.3f}s) — calibracao esta no take, nao na referencia?"
+    )
+
+
 def test_take_sem_ataque_suficiente_nao_inventa_nota(ref):
     """Controle negativo: take mudo tem que dar nota baixa com denominador visivel."""
     r = score(ref, track_from_audio(np.zeros(int(2.0 * SR), dtype=np.float32), SR))
@@ -692,7 +709,7 @@ def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_scorer.py -v`
-Expected: PASS, 13 passed (6 da Task 2 + 7 desta)
+Expected: PASS, 14 passed (6 da Task 2 + 8 desta)
 
 Valores esperados, medidos em protótipo: identidade 100,0 · transposto 100,0 ·
 embaralhado 35,6 · diferente 12,0 · acaso média 24,6 e p95 49,5.
@@ -705,7 +722,13 @@ de calibração, as relações não.
 Troque `np.median(iv_ref)` por `np.median(iv_take)` na tolerância — passa a calibrar
 pelo take em vez da referência, o que premia take esticado. Rode
 `python -m pytest tests/test_scorer.py -v` e confirme vermelho em
-`test_controle_3_embaralhado_derruba_ritmo`. Restaure e confirme 13 passed.
+`test_ritmo_calibra_na_referencia_nao_no_take` (rhythm sobe de 3,6 para 25,8, acima
+do limiar 15). Restaure e confirme 14 passed.
+
+**Nota de execução (2026-09-11):** a primeira versão deste passo apontava para
+`test_controle_3_embaralhado_derruba_ritmo`, que **não fica vermelho** com essa
+sabotagem: o embaralhado tem mad 0,45s e satura o ritmo em 0 com qualquer tolerância.
+O implementador da Task 3 reportou isso em vez de forçar, e o teste acima nasceu daí.
 
 - [ ] **Step 6: Commit**
 
@@ -826,13 +849,13 @@ def track_from_word_timing(words: list[dict], samples: np.ndarray,
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_scorer.py -v`
-Expected: PASS, 17 passed
+Expected: PASS, 18 passed
 
 - [ ] **Step 5: Ver a cerca vermelha**
 
 Remova o bloco `if np.any(np.diff(starts) < 0)`. Rode
 `python -m pytest tests/test_scorer.py::test_karaoke_gabarito_fora_de_ordem_e_erro -v`
-e confirme vermelho (`DID NOT RAISE`). Restaure e confirme 17 passed.
+e confirme vermelho (`DID NOT RAISE`). Restaure e confirme 18 passed.
 
 - [ ] **Step 6: Verificação contra dado real**
 
@@ -1270,9 +1293,9 @@ headless — fora do escopo do marco A.
 - [ ] **Step 4: Rodar a suíte inteira**
 
 Run: `python -m pytest tests/ --ignore=tests/test_critical_pipeline.py -q`
-Expected: os 190 testes que já passavam **mais** os 37 novos (`test_onset.py` 4,
-`test_scorer.py` 17 = 6+7+4 das Tasks 2/3/4, `test_score_route.py` 16) =
-**227 passed**, 2 skipped, 1 xfailed, 7 errors.
+Expected: os 190 testes que já passavam **mais** os 38 novos (`test_onset.py` 4,
+`test_scorer.py` 18 = 6+8+4 das Tasks 2/3/4, `test_score_route.py` 16) =
+**228 passed**, 2 skipped, 1 xfailed, 7 errors.
 
 Os 7 errors são pré-existentes e não seus: `tests/integration/test_pipeline_orchestrator.py`
 faz mock de `run_pipeline.execute_external`, função que não existe no módulo. Se
