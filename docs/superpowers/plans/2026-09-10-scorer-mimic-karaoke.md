@@ -890,7 +890,7 @@ git commit -m "feat(scorer): modo karaoke com referencia vinda de word_timing.js
   - `server_score_addendum.MAX_UPLOAD_BYTES: int = 8 * 1024 * 1024`
   - `server_score_addendum.MODES: frozenset = frozenset({"mimic", "karaoke"})`
   - `server_score_addendum.REF_ID_RE` — `re.compile(r"^[A-Za-z0-9_-]{1,64}$")`
-  - `server_score_addendum.make_score_route(app) -> None` — registra `POST /api/score`
+  - `server_score_addendum.make_score_route(app) -> None` — registra `POST /api/score` **e** `GET /api/score/ref?mode=&ref=` (serve o áudio de referência: karaoke → `kpaths.input_job_dir(ref)/song.wav`, mimic → `MIMIC_REF_DIR/<ref>.wav`; mesma validação de `mode`/`ref`; 404 se não existir)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -975,6 +975,39 @@ def test_wav_valido_sem_amostras_da_400_nao_500(client):
     assert "amostra" in r.get_json()["error"]
 
 
+# ── GET /api/score/ref ───────────────────────────────────────────────────────
+def test_ref_audio_modo_invalido_da_400(client):
+    r = client.get("/api/score/ref?mode=sabotagem&ref=abc")
+    assert r.status_code == 400
+    assert "mode" in r.get_json()["error"]
+
+
+def test_ref_audio_travessia_da_400(client):
+    r = client.get("/api/score/ref?mode=karaoke&ref=../../etc/passwd")
+    assert r.status_code == 400
+    assert "ref" in r.get_json()["error"]
+
+
+def test_ref_audio_inexistente_da_404(client):
+    r = client.get("/api/score/ref?mode=mimic&ref=nao_existe_xyz")
+    assert r.status_code == 404
+    assert "nao_existe_xyz" in r.get_json()["error"]
+
+
+def test_ref_audio_mimic_serve_wav(client, tmp_path, monkeypatch):
+    """Caminho feliz sem depender de work/ (gitignored): aponta MIMIC_REF_DIR para um
+    tmp com um WAV real de 0,1s e confere que volta 200 audio/wav com bytes."""
+    import numpy as np
+    import soundfile as sf
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    sf.write(tmp_path / "abc.wav", np.zeros(1600, dtype="float32"), 16000)
+    r = client.get("/api/score/ref?mode=mimic&ref=abc")
+    assert r.status_code == 200, f"veio {r.status_code}: {r.data[:120]}"
+    assert r.mimetype == "audio/wav"
+    assert len(r.data) > 44, f"corpo com {len(r.data)} bytes — menor que um header WAV"
+
+
 def test_lista_de_modos_e_fechada():
     assert MODES == frozenset({"mimic", "karaoke"})
     assert len(MODES) == 2, f"MODES tem {len(MODES)} entradas"
@@ -1017,7 +1050,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from flask import jsonify, request
+from flask import jsonify, request, send_file
 
 from karaoke import paths as kpaths
 from karaoke.scorer import score, track_from_audio, track_from_word_timing
@@ -1114,12 +1147,33 @@ def make_score_route(app) -> None:
             "n_octave_suspect_ref": ref.n_octave_suspect,
             "n_voiced_ref": ref.n_voiced,
         })
+
+    @app.route("/api/score/ref", methods=["GET"])
+    def api_score_ref():
+        """Audio de referencia que a pagina toca antes de gravar. Mesma fronteira do POST:
+        mode em lista fechada, ref pela regex ANTES de tocar em caminho. Karaoke toca a
+        MISTURA (song.wav do job) — o jogador canta junto da musica; a pontuacao usa
+        vocals_raw. Decisao de 2026-09-11: o /api/result/audio existente le input/jobs/,
+        nao work/jobs/, e interpola job_id sem validar."""
+        mode = (request.args.get("mode") or "").strip()
+        if mode not in MODES:
+            return _erro(f"mode invalido: esperado um de {sorted(MODES)}", 400)
+        ref_id = (request.args.get("ref") or "").strip()
+        if REF_ID_RE.match(ref_id) is None:
+            return _erro("ref invalido: use [A-Za-z0-9_-], no maximo 64 caracteres", 400)
+        if mode == "karaoke":
+            path = kpaths.input_job_dir(ref_id) / "song.wav"
+        else:
+            path = MIMIC_REF_DIR / f"{ref_id}.wav"
+        if not path.exists():
+            return _erro(f"referencia {ref_id} nao encontrada", 404)
+        return send_file(str(path), mimetype="audio/wav")
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_score_route.py -v`
-Expected: PASS, 17 passed (os dois `parametrize` contam 6 e 4)
+Expected: PASS, 21 passed (os dois `parametrize` contam 6 e 4)
 
 - [ ] **Step 5: Registrar no `server.py`**
 
@@ -1144,8 +1198,12 @@ Troque a checagem `if mode not in MODES` por `if False`. Rode
 `python -m pytest tests/test_score_route.py -v` e confirme vermelho em
 `test_modo_fora_da_lista_fechada_da_400`. Faça o mesmo com a regex de `ref`
 (troque por `if False`) e confirme vermelho em
-`test_ref_com_travessia_de_caminho_da_400`. Restaure as duas e confirme 17 passed.
+`test_ref_com_travessia_de_caminho_da_400`. Restaure as duas e confirme 21 passed.
 **Validação de fronteira sem cerca vermelha não conta como validação.**
+
+**Nota de execução 2 (2026-09-11):** a rota `GET /api/score/ref` e seus 4 testes nasceram
+da revisão da Task 6 (o `<audio>` da página estava inerte — o plano nunca definiu quem
+serve a referência). Decisão humana: rota nova no mesmo adendo, em vez de remover o player.
 
 **Nota de execução (2026-09-11):** a revisão desta tarefa provocou um 500 com um WAV
 válido de zero amostras — o guard `take_samples.size == 0` e o teste
@@ -1167,7 +1225,7 @@ git commit -m "feat(scorer): rota POST /api/score com validacao de fronteira"
 - Create: `web/mimic.html`
 
 **Interfaces:**
-- Consumes: `POST /api/score` com `multipart/form-data` (`mode`, `ref`, `take`), resposta JSON com `melody`, `rhythm`, `attacks`, `total`, `n_onsets_ref`, `n_onsets_take`, `n_frames_compared`, `rhythm_tol_s`
+- Consumes: `GET /api/score/ref?mode=&ref=` (áudio de referência, `audio/wav`, 404 se ausente); `POST /api/score` com `multipart/form-data` (`mode`, `ref`, `take`), resposta JSON com `melody`, `rhythm`, `attacks`, `total`, `n_onsets_ref`, `n_onsets_take`, `n_frames_compared`, `rhythm_tol_s`
 - Produces: nada consumido por tarefa posterior.
 
 - [ ] **Step 1: Escrever a página**
@@ -1227,9 +1285,25 @@ Crie `web/mimic.html`:
 <script>
 const $ = (id) => document.getElementById(id);
 const estado = $("estado");
+const player = $("player");
 let rec = null, chunks = [], gravando = false;
 
 function diz(texto) { estado.textContent = texto; }
+
+// A referência que o jogador ouve antes de gravar. Reflete os campos ref/mode.
+function carregaReferencia() {
+  const mode = $("mode").value, ref = $("ref").value.trim();
+  player.src = "/api/score/ref?mode=" + encodeURIComponent(mode) +
+               "&ref=" + encodeURIComponent(ref);
+}
+player.addEventListener("error", () => {
+  diz("Referência não encontrada para " + $("mode").value + "/" + $("ref").value.trim() + ".");
+});
+$("ref").addEventListener("change", carregaReferencia);
+$("mode").addEventListener("change", carregaReferencia);
+carregaReferencia();
+
+function soltaMic(stream) { stream.getTracks().forEach((t) => t.stop()); }
 
 $("rec").addEventListener("click", async () => {
   if (gravando) {
@@ -1243,49 +1317,63 @@ $("rec").addEventListener("click", async () => {
     diz("Sem acesso ao microfone: " + e.name);
     return;
   }
-  chunks = [];
-  rec = new MediaRecorder(stream);
-  rec.ondataavailable = (e) => chunks.push(e.data);
-  rec.onstop = async () => {
-    stream.getTracks().forEach((t) => t.stop());
+  // Tudo que pode estourar depois de já ter o mic fica dentro do try: se
+  // MediaRecorder não existir ou o MIME padrão não for suportado, o mic é solto
+  // e o jogador é avisado — nunca fica capturado em silêncio.
+  try {
+    chunks = [];
+    rec = new MediaRecorder(stream);
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    rec.onstop = async () => {
+      soltaMic(stream);
+      gravando = false;
+      $("rec").textContent = "● Gravar";
+      $("rec").setAttribute("aria-pressed", "false");
+      $("rec").disabled = true;          // sem segundo take enquanto pontua
+      diz("Pontuando…");
+
+      const fd = new FormData();
+      fd.append("mode", $("mode").value);
+      fd.append("ref", $("ref").value.trim());
+      fd.append("take", new Blob(chunks, { type: rec.mimeType || "audio/webm" }), "take.webm");
+
+      let r, data = null;
+      try {
+        r = await fetch("/api/score", { method: "POST", body: fd });
+      } catch (e) {
+        diz("Falha de rede ao pontuar.");
+        $("rec").disabled = false;
+        return;
+      }
+      try { data = await r.json(); } catch (e) { data = null; }
+      if (!r.ok) {
+        diz("Erro " + r.status + ": " + (data && data.error ? data.error : "resposta sem detalhe"));
+        $("rec").disabled = false;
+        return;
+      }
+      $("n-total").textContent = data.total;
+      $("n-melody").textContent = data.melody;
+      $("n-rhythm").textContent = data.rhythm;
+      $("n-attacks").textContent = data.attacks;
+      $("notas").hidden = false;
+      // denominador a vista: nota sem populacao examinada e opiniao com numero
+      $("auditoria").textContent =
+        `ataques: ${data.n_onsets_take} no take contra ${data.n_onsets_ref} na referência · ` +
+        `${data.n_frames_compared} frames de contorno comparados · ` +
+        `tolerância de ritmo ${data.rhythm_tol_s}s · ` +
+        `oitava suspeita na referência: ${data.n_octave_suspect_ref} de ${data.n_voiced_ref} frames`;
+      diz(data.n_frames_compared === 0
+        ? "Atenção: nenhum frame de melodia foi comparado — a nota de melodia não vale."
+        : "Pronto.");
+      $("rec").disabled = false;
+    };
+    rec.start();
+  } catch (e) {
+    soltaMic(stream);
     gravando = false;
-    $("rec").textContent = "● Gravar";
-    $("rec").setAttribute("aria-pressed", "false");
-    diz("Pontuando…");
-
-    const fd = new FormData();
-    fd.append("mode", $("mode").value);
-    fd.append("ref", $("ref").value);
-    fd.append("take", new Blob(chunks, { type: "audio/webm" }), "take.webm");
-
-    let r, data;
-    try {
-      r = await fetch("/api/score", { method: "POST", body: fd });
-      data = await r.json();
-    } catch (e) {
-      diz("Falha de rede ao pontuar.");
-      return;
-    }
-    if (!r.ok) {
-      diz("Erro " + r.status + ": " + (data && data.error ? data.error : "desconhecido"));
-      return;
-    }
-    $("n-total").textContent = data.total;
-    $("n-melody").textContent = data.melody;
-    $("n-rhythm").textContent = data.rhythm;
-    $("n-attacks").textContent = data.attacks;
-    $("notas").hidden = false;
-    // denominador a vista: nota sem populacao examinada e opiniao com numero
-    $("auditoria").textContent =
-      `ataques: ${data.n_onsets_take} no take contra ${data.n_onsets_ref} na referência · ` +
-      `${data.n_frames_compared} frames de contorno comparados · ` +
-      `tolerância de ritmo ${data.rhythm_tol_s}s · ` +
-      `oitava suspeita na referência: ${data.n_octave_suspect_ref} de ${data.n_voiced_ref} frames`;
-    diz(data.n_frames_compared === 0
-      ? "Atenção: nenhum frame de melodia foi comparado — a nota de melodia não vale."
-      : "Pronto.");
-  };
-  rec.start();
+    diz("Gravação não suportada neste navegador: " + e.name);
+    return;
+  }
   gravando = true;
   $("rec").textContent = "■ Parar";
   $("rec").setAttribute("aria-pressed", "true");
@@ -1306,11 +1394,14 @@ Expected: log de inicialização sem traceback, incluindo a linha `Worker Python
 Abra `http://127.0.0.1:5000/static/mimic.html`. Com `mode=karaoke` e
 `ref=mimic_gab_01`, grave 5 segundos falando ou cantando e confirme:
 
+0. O `<audio>` carrega e toca a música do job (`GET /api/score/ref?mode=karaoke&ref=mimic_gab_01`).
 1. As quatro notas aparecem, todas entre 0 e 100.
 2. A linha de auditoria mostra `71` ataques na referência (o gabarito tem 71 palavras)
    e `200` frames de contorno comparados.
 3. O botão alterna entre `● Gravar` e `■ Parar`, e `aria-pressed` acompanha.
 4. Negar a permissão do microfone mostra "Sem acesso ao microfone", não trava a página.
+5. Durante "Pontuando…" o botão fica desabilitado; volta a habilitar em qualquer saída.
+6. Com `ref` inexistente, o status diz "Referência não encontrada" e o player não toca.
 
 Este passo é manual de propósito: `MediaRecorder` e `getUserMedia` exigem gesto do
 usuário e dispositivo real, e um teste automatizado disso precisaria de navegador
@@ -1319,9 +1410,9 @@ headless — fora do escopo do marco A.
 - [ ] **Step 4: Rodar a suíte inteira**
 
 Run: `python -m pytest tests/ --ignore=tests/test_critical_pipeline.py -q`
-Expected: os 190 testes que já passavam **mais** os 39 novos (`test_onset.py` 4,
-`test_scorer.py` 18 = 6+8+4 das Tasks 2/3/4, `test_score_route.py` 17) =
-**229 passed**, 2 skipped, 1 xfailed, 7 errors.
+Expected: os 190 testes que já passavam **mais** os 43 novos (`test_onset.py` 4,
+`test_scorer.py` 18 = 6+8+4 das Tasks 2/3/4, `test_score_route.py` 21) =
+**233 passed**, 2 skipped, 1 xfailed, 7 errors.
 
 Os 7 errors são pré-existentes e não seus: `tests/integration/test_pipeline_orchestrator.py`
 faz mock de `run_pipeline.execute_external`, função que não existe no módulo. Se
