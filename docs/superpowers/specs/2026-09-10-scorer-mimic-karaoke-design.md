@@ -193,9 +193,12 @@ três sub-notas com a nota final.
 Acessibilidade básica não é opcional: o disparo é um `<button>` com rótulo textual, o
 estado de gravação é anunciado via `aria-live`, e nenhuma informação depende só de cor.
 
-### Componente 4 — nada de deleção
+### Componente 4 — uma deleção no pipeline (exceção decidida em 2026-09-11)
 
-Não há código de scoring legado para apagar. O marco A não toca o pipeline.
+`scripts/08_onset_dtw.py` perde `compute_rms`, `detect_onsets` e cinco constantes, que
+passam a viver em `karaoke/onset.py`; o script importa de lá. É a única alteração de
+pipeline no marco A, e existe para não duplicar ~25 linhas de lógica. Cerca: o detector
+colapsado acha os mesmos 163 onsets no `vocals_raw.wav` de 60s que o original achou.
 
 ## Teste — `tests/test_scorer.py`
 

@@ -21,7 +21,7 @@ Valem para **toda** tarefa. Os requisitos de cada tarefa incluem esta seção im
 - **Denominador junto do número**: toda estrutura de saída que reporta contagem reporta também o total sobre o qual a conta foi feita.
 - **Cardinalidade antes do veredito**: `n_frames_compared == 0` é **falha**, nunca sucesso. Cheque sobre conjunto vazio é verde universal.
 - **Controle negativo não é etapa opcional.** Nenhuma tarefa está pronta se a sua cerca nunca foi vista vermelha.
-- **O pipeline não é tocado.** Nenhuma tarefa modifica `run_pipeline.py`, `scripts/*` ou `karaoke/paths.py`.
+- **O pipeline não é tocado — com UMA exceção decidida em 2026-09-11.** Nenhuma tarefa modifica `run_pipeline.py`, `karaoke/paths.py` ou `scripts/*`, **exceto** a Task 1, que faz `scripts/08_onset_dtw.py` importar `compute_rms`/`detect_onsets` de `karaoke/onset.py` e apagar as cópias locais. Nada além disso no script.
 - Constantes de calibração ficam nomeadas no topo do módulo, nunca embutidas em expressão.
 
 ### Valores medidos em protótipo (2026-09-10) que as tarefas vão reproduzir
@@ -54,8 +54,9 @@ Valem para **toda** tarefa. Os requisitos de cada tarefa incluem esta seção im
 | `tests/test_scorer.py` (novo) | Os cinco controles. |
 | `tests/test_score_route.py` (novo) | Cerca da validação de fronteira da rota. |
 | `server.py` (modificar, 1 linha de registro) | Registra a rota do adendo. |
+| `scripts/08_onset_dtw.py` (modificar, Task 1) | Deixa de definir `compute_rms`/`detect_onsets` e 5 constantes; importa de `karaoke/onset.py`. `SCORE_THRESHOLD` e `load_audio` ficam. |
 
-`karaoke/onset.py` duplica deliberadamente as três funções de `scripts/08_onset_dtw.py` (`compute_rms`, `detect_onsets` e suas constantes). Motivo: o script começa com dígito e não é importável sem `importlib`, e o spec proíbe tocar o pipeline no marco A. A duplicação leva comentário `ponytail:` nomeando a dívida e o caminho de colapso.
+`karaoke/onset.py` passa a ser o **único** dono de `compute_rms`/`detect_onsets`: as definições saem de `scripts/08_onset_dtw.py` (que começa com dígito e não é importável sem `importlib`) e o script passa a importá-las. Decisão humana de 2026-09-11, revertendo o plano original de duplicar. É a única alteração de pipeline no marco A.
 
 ---
 
@@ -63,6 +64,7 @@ Valem para **toda** tarefa. Os requisitos de cada tarefa incluem esta seção im
 
 **Files:**
 - Create: `karaoke/onset.py`, `karaoke/audio_fixtures.py`
+- Modify: `scripts/08_onset_dtw.py:14-55` (apaga 5 constantes e 2 funções; importa de `karaoke.onset`)
 - Test: `tests/test_onset.py`
 
 **Interfaces:**
@@ -176,11 +178,9 @@ Crie `karaoke/onset.py`:
 onset.py — Deteccao de ataques (onsets) por energia. Logica pura.
 No subprocess, no file I/O.
 
-ponytail: estas tres funcoes e suas constantes sao uma copia deliberada de
-scripts/08_onset_dtw.py (linhas 15-21 e 31-55). Motivo: aquele modulo comeca com
-digito e nao e importavel sem importlib, e o marco A do scorer nao pode tocar o
-pipeline. Caminho de colapso: quando alguem proximo mexer em 08_onset_dtw.py,
-trocar as definicoes de la por `from karaoke.onset import ...` e apagar esta nota.
+Unico dono de compute_rms/detect_onsets. Nasceram em scripts/08_onset_dtw.py
+(que nao e importavel: comeca com digito) e foram movidas para ca em 2026-09-11;
+o script agora importa daqui. Os valores das constantes sao os originais.
 """
 from __future__ import annotations
 
@@ -225,7 +225,49 @@ def detect_onsets(rms: np.ndarray, frame_dur: float) -> np.ndarray:
 Run: `python -m pytest tests/test_onset.py -v`
 Expected: PASS, 4 passed
 
-- [ ] **Step 5: Ver a cerca vermelha (controle negativo obrigatório)**
+- [ ] **Step 5: Colapsar a duplicação em `scripts/08_onset_dtw.py`**
+
+O script tem, nas linhas 14-21, seis constantes; nas 30-38, `compute_rms`; nas 40-55,
+`detect_onsets` (com um bloco de comentário acima de cada função). Faça **exatamente**
+isto, nada mais:
+
+1. Apague as cinco linhas `ONSET_THRESHOLD`, `MIN_GAP`, `ENERGY_MIN`, `WINDOW_MS`,
+   `HOP_MS` (linhas 16-20). **Mantenha** `SCORE_THRESHOLD` (linha 15) — é usada em
+   `split_anchors`, linha 65.
+2. Apague `compute_rms` e `detect_onsets` inteiras, incluindo os dois blocos de
+   comentário `# ── PASSO 2 …` e `# ── PASSO 3 …` que as antecedem (linhas 30-55).
+3. Logo abaixo de `import karaoke.paths as kpaths` (linha 8), acrescente:
+
+```python
+from karaoke.onset import compute_rms, detect_onsets
+```
+
+`load_audio` (linhas 22-28) fica. As chamadas em `main()` (linhas 129 e 132 antes da
+edição) passam a resolver para as funções importadas sem mudança.
+
+Confirme que o script ainda compila e que os nomes apagados não sobraram:
+
+```bash
+python -m py_compile scripts/08_onset_dtw.py && grep -nE "^(ONSET_THRESHOLD|MIN_GAP|ENERGY_MIN|WINDOW_MS|HOP_MS)\s*=|^def (compute_rms|detect_onsets)" scripts/08_onset_dtw.py
+```
+Expected: compila, e o `grep` **não imprime nada** (exit 1 do grep é o resultado certo).
+
+- [ ] **Step 6: Regressão contra o número medido antes do colapso**
+
+Antes desta tarefa, o detector original achou **163 onsets** em
+`work/jobs/mimic_gab_01/03_vocals_clean/vocals_raw.wav` (60s). O colapsado tem que
+achar os mesmos 163 — mesmo algoritmo, mesmas constantes, mesmo arquivo.
+
+```bash
+python -c "import sys; sys.path.insert(0,'.'); import soundfile as sf; from karaoke.onset import compute_rms, detect_onsets; a,sr=sf.read('work/jobs/mimic_gab_01/03_vocals_clean/vocals_raw.wav',dtype='float32'); rms,fd=compute_rms(a,sr); on=detect_onsets(rms,fd); print(f'onsets={len(on)} (esperado 163) frames_rms={len(rms)}'); sys.exit(0 if len(on)==163 else 1)"
+```
+Expected: `onsets=163 (esperado 163)`, exit 0. Se der outro número, o colapso alterou
+o algoritmo — pare e reporte, não ajuste o número esperado.
+
+Se o arquivo não existir, o job `mimic_gab_01` não está neste checkout (`work/` é
+gitignored); reporte NEEDS_CONTEXT em vez de pular o passo.
+
+- [ ] **Step 7: Ver a cerca vermelha (controle negativo obrigatório)**
 
 Sabote `ONSET_THRESHOLD = 0.008` para `0.8` em `karaoke/onset.py`, rode
 `python -m pytest tests/test_onset.py -v`, e confirme que
@@ -233,11 +275,11 @@ Sabote `ONSET_THRESHOLD = 0.008` para `0.8` em `karaoke/onset.py`, rode
 Depois restaure `0.008` e rode de novo para confirmar 4 passed.
 Se a sabotagem não deixar nenhum teste vermelho, a cerca não existe: pare e reporte.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add karaoke/onset.py karaoke/audio_fixtures.py tests/test_onset.py
-git commit -m "feat(scorer): deteccao de ataques por energia e fixture sintetica, com cerca"
+git add karaoke/onset.py karaoke/audio_fixtures.py tests/test_onset.py scripts/08_onset_dtw.py
+git commit -m "feat(scorer): karaoke/onset.py vira dono da deteccao de ataques; 08_onset_dtw importa"
 ```
 
 ---
