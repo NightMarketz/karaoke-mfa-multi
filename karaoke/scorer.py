@@ -25,7 +25,11 @@ F0_MAX_HZ = 1000.0         # ~B5
 class ReferenceTrack:
     onsets: np.ndarray      # instantes de ataque, em segundos
     semitones: np.ndarray   # contorno de f0 em semitons centrado na mediana (so voiced)
-    frame_dur: float
+    frame_dur: float        # hop do RMS/onsets (10 ms). NAO e a grade de `semitones`:
+                            # pyin usa hop proprio (512/sr = 32 ms a 16 kHz).
+                            # ponytail: passar hop_length=int(sr*HOP_MS/1000) ao pyin
+                            # alinha as duas grades quando algo precisar de contorno
+                            # indexado por tempo; hoje score() reamostra por indice.
     duration: float
     n_voiced: int           # denominador do contorno
     n_frames: int           # total de frames analisados pelo pyin
