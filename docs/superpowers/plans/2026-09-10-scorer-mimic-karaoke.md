@@ -959,6 +959,22 @@ def test_audio_indecodificavel_da_400_nao_500(client):
     assert r.status_code == 400, f"veio {r.status_code}: {r.data[:200]}"
 
 
+def test_wav_valido_sem_amostras_da_400_nao_500(client):
+    """Container valido com ZERO amostras: ffmpeg aceita e escreve so o header,
+    sf.read devolve shape (0,), e track_from_audio estouraria em np.abs(x).max().
+    Achado na revisao da Task 5 (2026-09-11): dava 500. Fronteira nunca da 500."""
+    import numpy as np
+    import soundfile as sf
+    vazio = io.BytesIO()
+    sf.write(vazio, np.zeros(0, dtype="float32"), 16000, format="WAV")
+    vazio.seek(0)
+    r = client.post("/api/score", data={
+        "mode": "mimic", "ref": "abc", "take": (vazio, "take.wav"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400, f"veio {r.status_code}: {r.data[:200]}"
+    assert "amostra" in r.get_json()["error"]
+
+
 def test_lista_de_modos_e_fechada():
     assert MODES == frozenset({"mimic", "karaoke"})
     assert len(MODES) == 2, f"MODES tem {len(MODES)} entradas"
@@ -1059,6 +1075,10 @@ def make_score_route(app) -> None:
             take_samples, sr = sf.read(wav, dtype="float32")
             if take_samples.ndim > 1:
                 take_samples = take_samples.mean(axis=1)
+            # Container valido com zero amostras passa pelo ffmpeg (header-only, tamanho > 0)
+            # e estouraria em track_from_audio (np.abs(x).max() em array vazio) -> 500.
+            if take_samples.size == 0:
+                return _erro("take sem amostras de audio", 400)
             take = track_from_audio(take_samples, sr)
 
             if mode == "karaoke":
@@ -1099,7 +1119,7 @@ def make_score_route(app) -> None:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_score_route.py -v`
-Expected: PASS, 16 passed (os dois `parametrize` contam 6 e 4)
+Expected: PASS, 17 passed (os dois `parametrize` contam 6 e 4)
 
 - [ ] **Step 5: Registrar no `server.py`**
 
@@ -1124,8 +1144,13 @@ Troque a checagem `if mode not in MODES` por `if False`. Rode
 `python -m pytest tests/test_score_route.py -v` e confirme vermelho em
 `test_modo_fora_da_lista_fechada_da_400`. Faça o mesmo com a regex de `ref`
 (troque por `if False`) e confirme vermelho em
-`test_ref_com_travessia_de_caminho_da_400`. Restaure as duas e confirme 16 passed.
+`test_ref_com_travessia_de_caminho_da_400`. Restaure as duas e confirme 17 passed.
 **Validação de fronteira sem cerca vermelha não conta como validação.**
+
+**Nota de execução (2026-09-11):** a revisão desta tarefa provocou um 500 com um WAV
+válido de zero amostras — o guard `take_samples.size == 0` e o teste
+`test_wav_valido_sem_amostras_da_400_nao_500` nasceram daí. Terceira sabotagem: apague o
+guard, confirme vermelho nesse teste com `veio 500`, restaure.
 
 - [ ] **Step 7: Commit**
 
@@ -1294,9 +1319,9 @@ headless — fora do escopo do marco A.
 - [ ] **Step 4: Rodar a suíte inteira**
 
 Run: `python -m pytest tests/ --ignore=tests/test_critical_pipeline.py -q`
-Expected: os 190 testes que já passavam **mais** os 38 novos (`test_onset.py` 4,
-`test_scorer.py` 18 = 6+8+4 das Tasks 2/3/4, `test_score_route.py` 16) =
-**228 passed**, 2 skipped, 1 xfailed, 7 errors.
+Expected: os 190 testes que já passavam **mais** os 39 novos (`test_onset.py` 4,
+`test_scorer.py` 18 = 6+8+4 das Tasks 2/3/4, `test_score_route.py` 17) =
+**229 passed**, 2 skipped, 1 xfailed, 7 errors.
 
 Os 7 errors são pré-existentes e não seus: `tests/integration/test_pipeline_orchestrator.py`
 faz mock de `run_pipeline.execute_external`, função que não existe no módulo. Se
