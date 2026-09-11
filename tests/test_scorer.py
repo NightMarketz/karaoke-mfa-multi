@@ -162,6 +162,22 @@ def test_relacoes_de_ordem_completas(ref):
     assert ident > p95, f"identidade {ident:.1f} nao supera acaso p95 {p95:.1f}"
 
 
+def test_ritmo_calibra_na_referencia_nao_no_take(ref):
+    """A tolerancia de ritmo e derivada do intervalo mediano da REFERENCIA. Calibrar no
+    take premiaria take esticado: medido em 2026-09-11, take a 1.3x da tempo tem
+    rhythm 3.6 calibrando na referencia e 25.8 calibrando em si mesmo. O embaralhado
+    nao distingue os dois (mad 0.45s satura em 0 de qualquer jeito) — por isso esta
+    fixture existe."""
+    esticado = _total(ref, [t * 1.3 for t in TIMES], FREQS)
+    assert esticado.n_onsets_take == len(TIMES), (
+        f"{esticado.n_onsets_take} ataques de {len(TIMES)} no take esticado"
+    )
+    assert esticado.rhythm < 15.0, (
+        f"take esticado 1.3x recebeu rhythm {esticado.rhythm:.1f} "
+        f"(tol {esticado.rhythm_tol_s:.3f}s) — calibracao esta no take, nao na referencia?"
+    )
+
+
 def test_take_sem_ataque_suficiente_nao_inventa_nota(ref):
     """Controle negativo: take mudo tem que dar nota baixa com denominador visivel."""
     r = score(ref, track_from_audio(np.zeros(int(2.0 * SR), dtype=np.float32), SR))
