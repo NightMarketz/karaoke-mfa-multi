@@ -72,3 +72,100 @@ def test_silencio_nao_produz_contorno():
         f"silencio gerou {track.n_voiced} frames voiced"
     )
     assert track.n_octave_suspect == 0
+
+
+from karaoke.scorer import score
+
+DIFERENTE_TIMES = [0.2, 1.7, 2.9]
+DIFERENTE_FREQS = [440.0, 330.0, 392.0]
+EMBARALHADO_TIMES = [0.3, 0.75, 1.9, 2.1, 3.1]
+EMBARALHADO_FREQS = [FREQS[i] for i in (2, 0, 4, 1, 3)]
+
+
+@pytest.fixture(scope="module")
+def ref():
+    return track_from_audio(bursts(TIMES, FREQS), SR)
+
+
+def _total(ref_track, times, freqs):
+    return score(ref_track, track_from_audio(bursts(times, freqs), SR))
+
+
+def _baseline_aleatorio(ref_track, n=30, seed=7):
+    """p95 do acaso. Sem esta regua, nenhuma nota alta significa nada."""
+    rng = np.random.default_rng(seed)
+    totais = []
+    for _ in range(n):
+        k = int(rng.integers(3, 7))
+        t = np.sort(rng.uniform(0.2, 3.2, k)).tolist()
+        f = rng.uniform(150.0, 500.0, k).tolist()
+        totais.append(_total(ref_track, t, f).total)
+    return np.asarray(totais)
+
+
+# ── controle 1: identidade ───────────────────────────────────────────────────
+def test_controle_1_identidade(ref):
+    r = _total(ref, TIMES, FREQS)
+    assert r.n_frames_compared > 0, "zero frames comparados e falha, nao sucesso"
+    assert r.n_onsets_ref == r.n_onsets_take == len(TIMES)
+    assert r.total >= 95.0, f"identidade deu {r.total:.1f} (esperado >= 95)"
+
+
+# ── controle 4: transposto ───────────────────────────────────────────────────
+def test_controle_4_transposto_mantem_melodia(ref):
+    r = _total(ref, TIMES, [f * 2 ** (5 / 12) for f in FREQS])
+    assert r.n_frames_compared > 0
+    assert r.melody >= 85.0, f"melodia caiu para {r.melody:.1f} com +5 semitons"
+
+
+# ── controle 3: embaralhado ──────────────────────────────────────────────────
+def test_controle_3_embaralhado_derruba_ritmo(ref):
+    r = _total(ref, EMBARALHADO_TIMES, EMBARALHADO_FREQS)
+    ident = _total(ref, TIMES, FREQS)
+    assert r.rhythm < 50.0, f"ritmo {r.rhythm:.1f} alto para take embaralhado"
+    assert r.total < ident.total, (
+        f"embaralhado ({r.total:.1f}) nao ficou abaixo da identidade ({ident.total:.1f})"
+    )
+
+
+# ── controle 2: clipe diferente ──────────────────────────────────────────────
+def test_controle_2_clipe_diferente(ref):
+    dif = _total(ref, DIFERENTE_TIMES, DIFERENTE_FREQS)
+    emb = _total(ref, EMBARALHADO_TIMES, EMBARALHADO_FREQS)
+    assert dif.total < emb.total, (
+        f"clipe diferente ({dif.total:.1f}) deveria ficar abaixo do embaralhado ({emb.total:.1f})"
+    )
+
+
+# ── controle 5: baseline aleatorio e as relacoes exigidas ────────────────────
+def test_controle_5_identidade_supera_o_acaso(ref):
+    totais = _baseline_aleatorio(ref)
+    assert len(totais) == 30, f"baseline examinou {len(totais)} amostras de 30"
+    p95 = float(np.percentile(totais, 95))
+    ident = _total(ref, TIMES, FREQS).total
+    assert ident > p95, (
+        f"identidade {ident:.1f} nao supera o p95 do acaso {p95:.1f} "
+        f"(media do acaso {totais.mean():.1f})"
+    )
+
+
+def test_relacoes_de_ordem_completas(ref):
+    """As tres relacoes inegociaveis do spec, num teste so, com os numeros a vista."""
+    ident = _total(ref, TIMES, FREQS).total
+    transp = _total(ref, TIMES, [f * 2 ** (5 / 12) for f in FREQS]).total
+    emb = _total(ref, EMBARALHADO_TIMES, EMBARALHADO_FREQS).total
+    dif = _total(ref, DIFERENTE_TIMES, DIFERENTE_FREQS).total
+    p95 = float(np.percentile(_baseline_aleatorio(ref), 95))
+
+    assert abs(ident - transp) <= 5.0, f"identidade {ident:.1f} vs transposto {transp:.1f}"
+    assert ident > emb > dif, f"ordem quebrou: {ident:.1f} > {emb:.1f} > {dif:.1f}"
+    assert ident > p95, f"identidade {ident:.1f} nao supera acaso p95 {p95:.1f}"
+
+
+def test_take_sem_ataque_suficiente_nao_inventa_nota(ref):
+    """Controle negativo: take mudo tem que dar nota baixa com denominador visivel."""
+    r = score(ref, track_from_audio(np.zeros(int(2.0 * SR), dtype=np.float32), SR))
+    assert r.n_onsets_take == 0, f"silencio gerou {r.n_onsets_take} ataques"
+    assert r.n_frames_compared == 0, "sem contorno nao ha frames comparados"
+    assert r.rhythm == 0.0 and r.melody == 0.0
+    assert r.total < 25.0, f"take mudo recebeu {r.total:.1f}"

@@ -73,3 +73,71 @@ def track_from_audio(samples: np.ndarray, sr: int) -> ReferenceTrack:
         n_frames=n_frames,
         n_octave_suspect=n_octave_suspect,
     )
+
+
+# ── Knobs de nota ────────────────────────────────────────────────────────────
+# Tolerancia de ritmo RELATIVA ao intervalo mediano da referencia, com piso
+# absoluto. Medido em 2026-09-10: no modo karaoke o intervalo mediano entre
+# palavras e 0,140s, entao uma tolerancia absoluta de 200ms seria maior que o
+# proprio intervalo medido e a nota de ritmo ficaria vazia.
+RHYTHM_TOL_RATIO = 0.35
+RHYTHM_TOL_FLOOR_S = 0.050
+WEIGHTS = {"melody": 0.45, "rhythm": 0.35, "attacks": 0.20}
+
+
+@dataclass
+class ScoreReport:
+    melody: float           # 0..100
+    rhythm: float           # 0..100
+    attacks: float          # 0..100
+    total: float            # 0..100
+    n_onsets_ref: int
+    n_onsets_take: int
+    n_frames_compared: int  # zero e FALHA, nao sucesso
+    rhythm_tol_s: float     # tolerancia efetivamente usada, para auditoria
+
+
+def _resample(contour: np.ndarray, n: int = MELODY_POINTS) -> np.ndarray:
+    return np.interp(np.linspace(0.0, 1.0, n),
+                     np.linspace(0.0, 1.0, len(contour)),
+                     contour)
+
+
+def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
+    """Compara forma relativa, nunca alinhamento absoluto: um atraso global
+    constante na captura nao altera nota nenhuma."""
+    n_ref, n_take = len(ref.onsets), len(take.onsets)
+
+    # ataques: quanto as contagens batem
+    attacks = 100.0 * max(0.0, 1.0 - abs(n_ref - n_take) / max(n_ref, n_take, 1))
+
+    # ritmo: intervalos ENTRE ataques, nao instantes
+    tol = RHYTHM_TOL_FLOOR_S
+    if n_ref >= 2 and n_take >= 2:
+        iv_ref = np.diff(ref.onsets)
+        iv_take = np.diff(take.onsets)
+        tol = max(RHYTHM_TOL_FLOOR_S, RHYTHM_TOL_RATIO * float(np.median(iv_ref)))
+        k = min(len(iv_ref), len(iv_take))
+        mad = float(np.mean(np.abs(iv_ref[:k] - iv_take[:k])))
+        rhythm = 100.0 * max(0.0, 1.0 - mad / tol)
+    else:
+        rhythm = 0.0
+
+    # melodia: correlacao dos contornos centrados, reamostrados a tamanho comum
+    if len(ref.semitones) >= MIN_VOICED_FRAMES and len(take.semitones) >= MIN_VOICED_FRAMES:
+        r = float(np.corrcoef(_resample(ref.semitones), _resample(take.semitones))[0, 1])
+        melody = 0.0 if np.isnan(r) else 100.0 * max(0.0, r)
+        n_frames_compared = MELODY_POINTS
+    else:
+        melody = 0.0
+        n_frames_compared = 0
+
+    total = (WEIGHTS["melody"] * melody
+             + WEIGHTS["rhythm"] * rhythm
+             + WEIGHTS["attacks"] * attacks)
+
+    return ScoreReport(
+        melody=melody, rhythm=rhythm, attacks=attacks, total=total,
+        n_onsets_ref=n_ref, n_onsets_take=n_take,
+        n_frames_compared=n_frames_compared, rhythm_tol_s=tol,
+    )
