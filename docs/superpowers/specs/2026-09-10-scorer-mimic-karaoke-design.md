@@ -247,6 +247,21 @@ Também fora: melhorar a precisão do gabarito além dos 200ms medidos, e reescr
 `scripts/03_forced_align.py` contra a API real do `ctc_forced_aligner 0.3.0` (divergente
 em 6 pontos).
 
+## Curadoria de referências mimic (medido em 2026-09-11)
+
+Dez clipes do MyInstants em `input/mimic_refs/` (gitignored; `scripts/fetch_mimic_refs.py`
+refaz). Pela rota real, identidade deu 100,0 nos dois pares testados e três dos quatro pares
+"diferentes" deram 22,3 / 14,5 / 10,2 — bem abaixo do p95 do acaso (52,8). O quarto,
+`bruh` × `screaming_goat`, deu **53,1**: `bruh` tem 0,8 s e 4 ataques, logo 3 intervalos de
+ritmo, e a tolerância a onset de borda tem folga demais para tão pouco (ritmo 86,7 entre um
+"bruh" e um berro de cabra).
+
+**Regra:** referência com menos de 6 ataques ou menos de 1,5 s faz ritmo e ataques virarem
+ruído. O script marca esses como FRÁGIL em vez de recusar — decisão de quem monta o pack.
+Dos 10: 7 ok, 3 frágeis (`bruh`, `wow`, `ara_ara`), 0 reprovados. Dois candidatos originais
+foram trocados por darem 0/26 e 4/26 frames voiced (fala de 0,8 s): **o limiar
+`MIN_VOICED_FRAMES` não é afrouxado para acomodar clipe — troca-se o clipe.**
+
 ## Riscos
 
 1. **O gabarito do karaoke tem erro de ~200ms e ninguém o ouviu.** A nota do modo karaoke
