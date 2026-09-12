@@ -306,8 +306,10 @@ relativos ao início da janela — `score()` compara intervalos e contagens, nun
 absolutos, então o deslocamento é indiferente.
 
 Por que a folga de 0,1 s antes de `t0`: o detector precisa ver o RMS *subir*; recorte que
-começa em cima do primeiro ataque perde esse ataque (medido em 2026-09-12: pad 0 pega 4 de
-5 no job real; pad 0,05–0,2 pega 5 de 5). Também absorve parte do erro de ~200 ms do MFA.
+começa em cima do primeiro ataque perde esse ataque (re-derivado em 2026-09-12 na fixture
+sintética de 5 bursts, `bursts(TIMES, FREQS)`: pad 0 pega 4 de 5 — perde o primeiro; pad
+0,05–0,2 pega 5 de 5. No job real o efeito não foi re-derivado.) Também absorve parte do
+erro de ~200 ms do MFA.
 
 ### Números re-derivados na implementação (2026-09-12, job `mimic_gab_01`: 71 palavras, 60 s)
 

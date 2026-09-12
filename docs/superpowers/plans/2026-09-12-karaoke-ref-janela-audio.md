@@ -285,3 +285,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   contradição entre a mensagem pré-escrita e a medição; decisão: commitar com a mensagem
   corrigida. Os testes sintéticos (self ≥ 95) passam porque a fixture tem 0,2 s de
   pré-vocal e 5 ataques — não reproduzem o teto posicional. Spec corrigido na mesma sessão.
+- **Revisão final (2026-09-12):** o texto dos Steps 3, 5 e 9 ('80 deixava passar a versão
+  antiga', 'self-score 100,0 no job real' no docstring e na mensagem de commit) está
+  **superado** pelos números acima — a versão antiga também dava 100 na fixture sintética, e
+  o 100 no job real é janela contra a própria janela. Não copie o docstring do Step 5; o
+  commitado (`1d003054`) é o correto. O 'pad 0 pega 4 de 5' foi re-derivado na fixture, não
+  no job real.

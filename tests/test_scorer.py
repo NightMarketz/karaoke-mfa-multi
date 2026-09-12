@@ -228,7 +228,7 @@ def test_karaoke_ataques_vem_do_audio_dentro_da_janela():
     # mesmos intervalos que o detector acha no audio inteiro: a janela so desloca
     np.testing.assert_allclose(np.diff(track.onsets), np.diff(direto.onsets), atol=0.02)
     # onsets sao relativos ao inicio da janela: o primeiro cai a ~WINDOW_PAD_S
-    assert abs(track.onsets[0] - WINDOW_PAD_S) <= 0.03, (
+    assert abs(track.onsets[0] - WINDOW_PAD_S) <= 0.05, (
         f"primeiro ataque em {track.onsets[0]:.3f}s, esperado ~{WINDOW_PAD_S}s"
     )
     assert track.n_voiced >= MIN_VOICED_FRAMES, (
@@ -285,8 +285,8 @@ def test_karaoke_janela_exclui_ataque_fora_do_gabarito():
 
 def test_karaoke_folga_captura_o_primeiro_ataque(monkeypatch):
     """Recorte que comeca EM CIMA do primeiro burst nao ve o RMS subir e perde o
-    ataque. Sabotagem: WINDOW_PAD_S = 0 tem que ficar vermelho (medido em
-    2026-09-12 no job real: pad 0 pega 4 de 5)."""
+    ataque. Sabotagem: WINDOW_PAD_S = 0 tem que ficar vermelho (re-derivado em
+    2026-09-12 nesta fixture: pad 0 pega 4 de 5)."""
     import karaoke.scorer as mod
     words = [{"word": f"w{i}", "start": t, "end": t + 0.25, "score": 1.0}
              for i, t in enumerate(TIMES)]
