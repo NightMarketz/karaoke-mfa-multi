@@ -27,7 +27,7 @@ Valem para toda tarefa. Os requisitos de cada tarefa incluem esta seção implic
 | grandeza | valor |
 |---|---|
 | `WINDOW_PAD_S` | 0,1 s |
-| self-score no job real `mimic_gab_01` depois da mudança | 100,0 |
+| self-score no job real `mimic_gab_01` depois da mudança | ~~100,0~~ — **corrigido na execução**: 53,1 com take = vocal inteiro; 100,0 só janela contra a própria janela (ver Notas de execução) |
 | take deslocado no job real depois da mudança | 62,1 — **teto do ritmo posicional, pré-existente; NÃO é critério de aceite** |
 | fixture sintética `bursts(TIMES, FREQS)` | 5 ataques em `TIMES = [0.3, 0.9, 1.5, 2.4, 3.0]` |
 
@@ -278,3 +278,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 - A página `web/mimic.html` mostra `n_onsets_ref` na auditoria; no modo karaoke esse número passa de 71 para ~160. Item 2 do checklist manual do plano anterior ("auditoria mostra 71 ataques na ref") fica obsoleto — é consequência, não bug, e não se toca na página.
 - `RHYTHM_TOL_FLOOR_S = 0.050` foi calibrado quando o intervalo mediano da referência karaoke era 0,140 s (entre palavras). Com ataques do detector o intervalo mediano muda; a tolerância é relativa (`RHYTHM_TOL_RATIO × mediana`) então se ajusta sozinha. Não recalibrar aqui.
+- **Nota de execução (2026-09-12):** o Step 8 esperava `total >= 95` no job real e mediu
+  **53,1** (`palavras=71 onsets_ref=164 onsets_take=163 melody=73.8 rhythm=0.0
+  attacks=99.4`). O "100,0" da tabela de referência era janela contra a própria janela —
+  tautologia, re-derivada como controle (100,0). O implementador parou antes do commit por
+  contradição entre a mensagem pré-escrita e a medição; decisão: commitar com a mensagem
+  corrigida. Os testes sintéticos (self ≥ 95) passam porque a fixture tem 0,2 s de
+  pré-vocal e 5 ataques — não reproduzem o teto posicional. Spec corrigido na mesma sessão.

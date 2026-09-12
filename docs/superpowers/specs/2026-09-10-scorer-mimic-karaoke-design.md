@@ -309,26 +309,42 @@ Por que a folga de 0,1 s antes de `t0`: o detector precisa ver o RMS *subir*; re
 começa em cima do primeiro ataque perde esse ataque (medido em 2026-09-12: pad 0 pega 4 de
 5 no job real; pad 0,05–0,2 pega 5 de 5). Também absorve parte do erro de ~200 ms do MFA.
 
-### Números (medidos em 2026-09-12 no job `mimic_gab_01`, sessão de medição anterior à implementação)
+### Números re-derivados na implementação (2026-09-12, job `mimic_gab_01`: 71 palavras, 60 s)
 
-| caso | antes (gabarito como onsets) | depois (opção a, pad 0,1) |
+Referência = `track_from_word_timing` (janela 11,59 s → 60,00 s, 164 ataques). Take =
+`track_from_audio` sobre o **vocal inteiro** (163 ataques, inclui 11,6 s de pré-vocal) —
+é o take que um jogador de verdade produz, porque ele grava a faixa toda.
+
+| dial | antes (inícios de palavra) | depois (opção a) |
 |---|---|---|
-| gabarito contra o próprio vocal (self) | 40,9 (53,7 na medição da revisão de 2026-09-11 — sessões e takes diferentes; os dois são "antes") | **100,0** |
-| take deslocado no tempo | 95,4 (pad 0) | **62,1** |
-| take gravado na sala | 93,0 | ≈ (não re-derivado com pad 0,1) |
-| take = áudio inteiro sem recorte | 87,5 | ≈ (não re-derivado com pad 0,1) |
-| take com 1 clique de botão antes | 48,8 (87 de 160 ataques) | 48,8 — inalterado |
+| attacks | ~44 (71 vs 163) | **99,4** (164 vs 163) |
+| rhythm | ~0 | **0,0** — mad 0,060 s contra tolerância 0,050 s; `max(0, 1 − mad/tol)` não tem gradiente: 20 % acima do piso dá o mesmo zero que 500 % |
+| melody | 100 (contorno do áudio inteiro nos dois lados) | 73,8 — o take inteiro carrega 11,6 s de pré-vocal que a janela não tem |
+| **total** | 53,7 | **53,1** |
+| controle: take = a própria janela | — | 100,0 — **tautologia**, arrays idênticos |
 
-Dois números dessa tabela ficam **documentados como teto do ritmo atual**, não como bug
-desta mudança:
+**O "self-score 100" que motivou a decisão era este controle.** Ele prova que os dois lados
+agora passam pela mesma extração (a população bate: 164 ≈ 163, attacks 99,4), e nada
+mais. Para um take real o total não mudou (53,7 → 53,1): o ritmo posicional continua
+morto e a melodia perde o que o pré-vocal do take contamina. **(a) é pré-requisito de um
+ritmo robusto — não é o ritmo robusto.**
 
-- **62,1 no take deslocado**: `_mad_intervalos` é posicional (compara `diff` índice a
-  índice até `min(len)`); com 160+ ataques um único ataque a mais ou a menos no começo
-  desalinha todos os pares seguintes. Pré-existente — (a) só o expõe porque agora há ritmo
-  para medir.
-- **48,8 com um clique**: `track_from_audio` normaliza por pico de amostra; um clique de
-  botão vira o pico e afoga o vocal abaixo de `ENERGY_MIN` (87 de 160 ataques). Varredura
-  de 6 percentis no lugar do pico não resolveu. Pré-existente e separado do ritmo.
+Números da sessão de medição anterior (2026-09-12, não re-derivados aqui — alegações):
+take deslocado no tempo 62,1 com pad 0,1 (95,4 com pad 0); take com 1 clique de botão
+antes 48,8, com 87 de 160 ataques sobrevivendo à normalização por pico; percentil no lugar
+do pico (6 valores varridos) não resolve o clique.
+
+Tetos **pré-existentes** que (a) expõe, não cria:
+
+- **Ritmo posicional**: `_mad_intervalos` compara `diff` índice a índice até `min(len)`;
+  com 160+ ataques, um ataque a mais ou a menos em qualquer ponto desalinha todos os
+  pares seguintes, e o clamp em zero apaga a diferença entre "quase" e "nada".
+- **Normalização por pico**: `track_from_audio` divide pelo pico de amostra; um clique de
+  botão vira o pico e afoga o vocal abaixo de `ENERGY_MIN`. Separado do ritmo.
+- **Pré-vocal no take**: a referência é janelada pelo gabarito, o take não tem gabarito.
+  Recortar o take exige saber onde o jogador começou — é a sincronia absoluta que a
+  arquitetura deste spec evita. Entra na decisão seguinte junto com o clique (VAD no
+  início do take cobre os dois).
 
 ### O que fica aberto (decisão de spec seguinte, fora desta emenda)
 
