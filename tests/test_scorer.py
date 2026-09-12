@@ -163,31 +163,32 @@ def test_relacoes_de_ordem_completas(ref):
     assert dif < p95, f"clipe diferente {dif:.1f} nao ficou abaixo do acaso p95 {p95:.1f}"
 
 
-def test_ritmo_calibra_na_referencia_nao_no_take(ref):
-    """A tolerancia de ritmo e derivada do intervalo mediano da REFERENCIA. Calibrar no
-    take premiaria take esticado: medido em 2026-09-11, take a 1.3x da tempo tem
-    rhythm 3.6 calibrando na referencia e 25.8 calibrando em si mesmo. O embaralhado
-    nao distingue os dois (mad 0.45s satura em 0 de qualquer jeito) — por isso esta
-    fixture existe."""
+def test_ritmo_esticado_fica_abaixo_do_acaso(ref):
+    """Take a 1.3x do andamento: a deriva estoura MATCH_TOL_S e o F1 cai ao nivel do
+    acaso — sem termo de andamento (spec, emenda 2026-09-12 (2): medido 40 contra p95
+    do acaso 64). Antes, com tolerancia relativa 0.21s, o conjunto casava quase tudo."""
     esticado = _total(ref, [t * 1.3 for t in TIMES], FREQS)
     assert esticado.n_onsets_take == len(TIMES), (
         f"{esticado.n_onsets_take} ataques de {len(TIMES)} no take esticado"
     )
-    assert esticado.rhythm < 15.0, (
+    assert esticado.rhythm < 50.0, (
         f"take esticado 1.3x recebeu rhythm {esticado.rhythm:.1f} "
-        f"(tol {esticado.rhythm_tol_s:.3f}s) — calibracao esta no take, nao na referencia?"
+        f"({esticado.n_matched} de {esticado.n_onsets_ref} casados)"
     )
 
 
 def test_onset_espurio_antes_nao_derruba_abaixo_do_acaso(ref):
     """O clique do botao ou uma respiracao antes da primeira nota e o take NORMAL.
     Medido em 2026-09-11: com truncamento posicional dava total 45.9 < p95 49.5;
-    com tolerancia a um onset de borda da 80.9 (rhythm 100, attacks 83.3)."""
+    com casamento por conjunto da rhythm 90.9 (precisao 5 de 6) e total > p95 do acaso."""
     espurio = _total(ref, [0.1] + TIMES, [300.0] + FREQS)
     assert espurio.n_onsets_take == len(TIMES) + 1, (
         f"{espurio.n_onsets_take} ataques de {len(TIMES) + 1} esperados"
     )
-    assert espurio.rhythm >= 95.0, f"rhythm {espurio.rhythm:.1f} com um onset espurio antes"
+    assert espurio.rhythm >= 85.0, (
+        f"rhythm {espurio.rhythm:.1f} com um onset espurio antes "
+        f"({espurio.n_matched} de {espurio.n_onsets_ref} casados, precisao 5/6 esperada)"
+    )
     p95 = float(np.percentile(_baseline_aleatorio(ref), 95))
     assert espurio.total > p95, (
         f"take perfeito com onset espurio antes ({espurio.total:.1f}) "
@@ -313,3 +314,46 @@ def test_karaoke_gabarito_sem_end_ou_janela_vazia_e_erro():
     fora = [{"word": "um", "start": 50.0, "end": 50.3, "score": 1.0}]
     with pytest.raises(ValueError, match="janela"):
         track_from_word_timing(fora, audio, SR)
+
+
+def test_ritmo_jitter_humano_nao_custa(ref):
+    """Cantar no tempo com +-40ms de jitter e o take BOM. Posicional dava 62;
+    casamento com MATCH_TOL_S = 0.08 tem que dar ~100."""
+    jitter = [0.04, -0.04, 0.04, -0.04, 0.04]
+    r = _total(ref, [t + j for t, j in zip(TIMES, jitter)], FREQS)
+    assert r.n_matched == len(TIMES), f"{r.n_matched} de {len(TIMES)} casados"
+    assert r.rhythm >= 95.0, f"jitter de 40ms custou rhythm {r.rhythm:.1f}"
+
+
+def test_ritmo_take_denso_paga_em_precisao(ref):
+    """So recall e enganavel: um take com os 5 ataques certos MAIS 10 espurios casa
+    100% da referencia. A precisao (5 de 15) e o que derruba. Controle: o recall
+    sozinho seria 1.0 — visivel em n_matched == n_onsets_ref."""
+    extras = [0.5, 0.7, 1.1, 1.3, 1.7, 2.0, 2.2, 2.6, 2.8, 3.2]
+    times = sorted(TIMES + extras)
+    freqs = FREQS + [300.0] * len(extras)
+    denso = _total(ref, times, freqs)
+    assert denso.n_onsets_take == 15, f"{denso.n_onsets_take} ataques de 15 no take denso"
+    assert denso.n_matched == len(TIMES), (
+        f"controle: recall deveria ser cheio, casou {denso.n_matched} de {len(TIMES)}"
+    )
+    assert denso.rhythm < 60.0, (
+        f"take denso recebeu rhythm {denso.rhythm:.1f} com precisao "
+        f"{denso.n_matched}/{denso.n_onsets_take}"
+    )
+
+
+def test_ritmo_deslocamento_global_e_estimado_nao_assumido(ref):
+    """Pre-roll de 0.45s no take (latencia, respiracao) custa zero: o offset vem da
+    correlacao cruzada. Controle negativo: sem alinhar (b=0) o casamento a 0.08s
+    nao acha nada — 0.45 e escolhido para que o par nao alinhado mais proximo fique
+    a 0.15s (0.9 vs 0.75), longe da tolerancia; 0.5 deixaria pares a 0.10s."""
+    from karaoke.scorer import _align_offset, _match_f1, MATCH_TOL_S
+    take = track_from_audio(bursts([t + 0.45 for t in TIMES], FREQS), SR)
+    b = _align_offset(ref.onsets, take.onsets)
+    assert abs(b - 0.45) <= MATCH_TOL_S, f"offset estimado {b:.3f}s, esperado 0.45s"
+    f1_sem, n_sem = _match_f1(ref.onsets, take.onsets)
+    assert n_sem == 0, f"controle: sem alinhar casou {n_sem} de {len(TIMES)}"
+    r = score(ref, take)
+    assert r.n_matched == len(TIMES), f"{r.n_matched} de {len(TIMES)} casados"
+    assert r.rhythm >= 95.0, f"pre-roll de 0.45s custou rhythm {r.rhythm:.1f}"
