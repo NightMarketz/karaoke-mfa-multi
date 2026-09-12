@@ -86,8 +86,9 @@ WEIGHTS = {"melody": 0.45, "rhythm": 0.35, "attacks": 0.20}
 
 # Folga em torno de [words[0].start, words[-1].end] no modo karaoke. O detector
 # precisa ver o RMS SUBIR: recorte que comeca em cima do primeiro ataque perde
-# esse ataque (medido em 2026-09-12 no job mimic_gab_01: pad 0 pega 4 de 5;
-# 0,05-0,2 pega 5 de 5). Tambem absorve parte do erro de ~200ms do MFA.
+# esse ataque (medido em 2026-09-12: na fixture sintetica de 5 bursts, pad 0
+# pega 4 de 5 (perde o primeiro); 0,05-0,2 pega 5 de 5). Tambem absorve parte
+# do erro de ~200ms do MFA.
 WINDOW_PAD_S = 0.1
 
 
@@ -180,7 +181,9 @@ def track_from_word_timing(words: list[dict], samples: np.ndarray,
     Decisao (a) do spec, emenda 2026-09-12: antes, ref.onsets eram INICIOS DE
     PALAVRA (71 no job de teste) contra ATAQUES do detector no take (163 no mesmo
     audio) — populacoes diferentes, self-score ~54 com ritmo morto. Agora os dois
-    lados passam pela mesma extracao: self-score 100,0 no job real.
+    lados passam pela mesma extracao: no job real attacks 44 -> 99,4, mas total
+    53,7 -> 53,1 (ritmo posicional e pre-vocal do take sao teto pre-existente;
+    100,0 so janela contra a propria janela).
 
     Os onsets devolvidos sao RELATIVOS ao inicio da janela; score() compara
     intervalos e contagens, nunca instantes absolutos.

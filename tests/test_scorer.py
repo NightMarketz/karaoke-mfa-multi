@@ -259,6 +259,8 @@ def test_karaoke_pontua_contra_si_mesmo():
     ref = track_from_word_timing(words, audio, SR)
     r = score(ref, track_from_audio(audio, SR))
     assert r.n_frames_compared > 0
+    # piso de sanidade, nao cerca de regressao: a versao antiga tambem dava 100 nesta
+    # fixture (a cerca da mudanca e onsets[0] ~ WINDOW_PAD_S no teste da janela)
     assert r.total >= 95.0, f"karaoke contra si mesmo deu {r.total:.1f}"
 
 
