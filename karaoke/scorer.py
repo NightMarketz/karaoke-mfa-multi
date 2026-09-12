@@ -12,7 +12,8 @@ from dataclasses import dataclass
 import librosa
 import numpy as np
 
-from karaoke.onset import compute_rms, detect_onsets
+from karaoke.onset import HOP_MS, compute_rms, detect_onsets
+from karaoke.vad import _mask_to_segments, _smooth_mask  # puras; detect_voice le arquivo e capa em p50
 
 # ── Knobs de calibracao ──────────────────────────────────────────────────────
 MELODY_POINTS = 200        # contornos sao reamostrados para este tamanho comum
@@ -34,11 +35,50 @@ class ReferenceTrack:
     n_voiced: int           # denominador do contorno
     n_frames: int           # total de frames analisados pelo pyin
     n_octave_suspect: int   # frames com |semitom| > 11: suspeita de erro de oitava do pyin
+    trim_start_s: float     # segundos removidos no inicio pelo recorte por voz (emenda 3)
+    trim_end_s: float       # idem no fim; (0, 0) quando nao ha trecho de voz
+
+
+# ── Recorte por atividade de voz (spec, emenda 2026-09-12 (3)) ──────────────
+# O take tem coisa que a referencia nao tem. Clique do botao: vira o pico da
+# normalizacao e afoga o vocal abaixo de ENERGY_MIN (job real: 40 de 164 ataques,
+# rhythm 38,2). Pre-vocal: 24 de 363 frames voiced em 11,6 s de "silencio" do stem
+# contaminam o contorno (melody 86,8 no take inteiro; 100,0 sem o pre-vocal). Os
+# dois somem recortando as pontas ao primeiro/ultimo trecho de voz ANTES de
+# normalizar. Limiar relativo ao ENVELOPE (p95 do RMS), nao ao pico de amostra:
+# um clique de 5 ms ocupa <= 3 frames em 6.000 e nao move o p95.
+VOICE_FRAC = 0.10          # ponytail: fracao fixa (-20 dB de p95); intro sussurrada abaixo
+                           # disso e perdida. Knob de calibracao — no job real 0,03-0,20 acham
+                           # o mesmo inicio (11,86-11,88 s); so um take de mic real recalibra.
+VOICE_MIN_SPEECH_MS = 150  # trecho mais curto nao e voz (clique, estalo)
+VOICE_MIN_SILENCE_MS = 200
+VOICE_PAD_MS = 100         # o detector precisa ver o RMS subir (mesma razao de WINDOW_PAD_S)
+
+
+def trim_to_voice(samples: np.ndarray, sr: int) -> tuple[np.ndarray, float, float]:
+    """Devolve (recorte, segundos removidos no inicio, segundos removidos no fim).
+    Sem trecho de voz devolve o audio inteiro e (0, 0): silencio continua sendo
+    populacao vazia visivel no resto do scorer, nao erro aqui."""
+    dur = len(samples) / sr
+    rms, _ = compute_rms(samples, sr)
+    if len(rms) == 0:
+        return samples, 0.0, 0.0
+    thr = VOICE_FRAC * float(np.percentile(rms, 95))
+    # _smooth_mask compara com `is True`: precisa de bool nativo, nao np.bool_
+    mask = _smooth_mask([bool(v) for v in rms > thr], HOP_MS,
+                        VOICE_MIN_SPEECH_MS, VOICE_MIN_SILENCE_MS)
+    segs = _mask_to_segments(mask, HOP_MS, VOICE_PAD_MS, dur)
+    if not segs:
+        return samples, 0.0, 0.0
+    t0, t1 = segs[0].start, segs[-1].end
+    return samples[int(t0 * sr):int(t1 * sr)], t0, dur - t1
 
 
 def track_from_audio(samples: np.ndarray, sr: int) -> ReferenceTrack:
-    """Extrai ataques e contorno de f0 de um audio mono."""
+    """Extrai ataques e contorno de f0 de um audio mono, depois de recortar as
+    pontas ao trecho com voz (trim_to_voice)."""
     samples = np.asarray(samples, dtype=np.float32)
+    samples, trim_start_s, trim_end_s = trim_to_voice(samples, sr)
     # Normaliza por pico ANTES de detectar: os limiares de karaoke/onset.py
     # (ENERGY_MIN, ONSET_THRESHOLD) sao absolutos em amplitude. Medido em
     # 2026-09-11 no vocals_raw.wav de 60s (pico a 0.316 do fundo de escala):
@@ -72,6 +112,8 @@ def track_from_audio(samples: np.ndarray, sr: int) -> ReferenceTrack:
         n_voiced=n_voiced,
         n_frames=n_frames,
         n_octave_suspect=n_octave_suspect,
+        trim_start_s=trim_start_s,
+        trim_end_s=trim_end_s,
     )
 
 
