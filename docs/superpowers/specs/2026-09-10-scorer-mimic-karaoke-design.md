@@ -358,3 +358,70 @@ porque 432 ataques de ruído sempre acham vizinho. Só *recall* é enganável po
 O candidato é **F1 (recall × precisão) + termo de andamento (razão das durações)**; o clique
 entra junto (normalizar pela envoltória RMS em vez do pico, ou recortar o início do take
 com `vad.py`). Prototipar numa sessão curta com as mesmas fixtures; não entra aqui.
+
+## Emenda 2026-09-12 (2) — ritmo por casamento de conjunto (F1 com alinhamento global)
+
+**Supera** a nota de ritmo do Componente 1 (`_mad_intervalos`, `RHYTHM_TOL_RATIO`,
+`RHYTHM_TOL_FLOOR_S`). Decisão humana em 2026-09-12 depois de duas passadas de protótipo
+(`proto_rhythm.py` / `proto_rhythm2.py`, scratchpad da sessão; ~2 min cada).
+
+### O problema, medido
+
+Ritmo posicional compara `diff` índice a índice: com 160+ ataques, **um** ataque a mais
+ou a menos desalinha todos os pares seguintes, e `max(0, 1 − mad/tol)` sem gradiente
+apaga a diferença entre "20 % acima" e "nada". No job real: take = vocal inteiro → ritmo
+0,0; take com reverb de sala → 0,0; blocos embaralhados → 0,0. O dial não distinguia
+take bom de take aleatório.
+
+### A decisão
+
+```
+b        = argmax da correlação cruzada entre trens de impulso triangulares (largura MATCH_TOL_S)
+           de ref.onsets e take.onsets, em grade de XCORR_BIN_S           → deslocamento global
+pares    = casamento 1:1 guloso por proximidade, |take − b − ref| ≤ MATCH_TOL_S
+recall   = pares / n_ref        precisão = pares / n_take
+rhythm   = 100 × F1(recall, precisão)
+
+MATCH_TOL_S = 0.080     # fixa; MIREX usa 50 ms, humano bom tem jitter ±40 ms
+XCORR_BIN_S = 0.010
+```
+
+Continua **estrutura relativa**: o deslocamento global é estimado, não assumido — latência
+de captura e pré-roll (o take inteiro tem 11,6 s antes da primeira palavra) custam zero.
+**Precisão** é o que mata o take denso: só *recall* é enganável por ruído (251 ataques
+sempre acham vizinho).
+
+### Variantes medidas e por que não
+
+| variante | por que não |
+|---|---|
+| tolerância relativa (0,35 × mediana) | no sintético vira 0,21 s e o acaso vai a p95 75 de ritmo; no real já era o piso 0,05. Casamento por conjunto pede tolerância **fixa**. |
+| crédito graduado `1 − d/tol` | desloca tudo para baixo em proporção (sala−blocos: 36 vs 30 pontos); quem canta no tempo com ±40 ms recebe 48. Ilegível para o jogador. |
+| tolerância fixa 0,05 | humano com jitter ±40 ms recebe 60, a 8 pontos do p95 do acaso (52). |
+| termo de andamento por regressão nos pares casados | inclinação ≡ 1,000 por construção — casar dentro de ±tol depois de alinhar não enxerga escala. |
+| grid de escala 0,80–1,25 + termo de andamento | mata o 1,3× (0) mas escolhe escala espúria onde F1 é plano (ruído a = 1,22; metade a = 0,84) e pediria mais um knob de margem, 46× de custo. **Com tolerância fixa o esticado já cai ao nível do acaso só pelo F1** — o termo não é necessário. |
+
+### Números (`.08/bin`, protótipo 2026-09-12; ritmo 0–100)
+
+Real `mimic_gab_01` (164 ataques na ref): self **100** · áudio inteiro **99,1** (antes 0) ·
+deslocado +0,5 s **100** · sala reverb + ruído −30 dB **84** (antes 0) · esticado 1,05×
+**69** · esticado 1,3× **50** · ruído branco **46** (251 ataques, precisão 0,35) · metade
+**45** · clique antes **38** (39 de 164 ataques sobrevivem à normalização por pico — teto
+separado) · blocos de 1 s embaralhados n=20 **p95 54**.
+
+Sintético (5 ataques — pequeno demais para conjunto discriminar bem): identidade **100** ·
+jitter ±40 ms **100** (posicional dava 62) · nota extra / perdida **91 / 89** (posicional 29 /
+5) · espúrio antes **90,9** (precisão 5/6) · embaralhado **40** · esticado 1,3× **40** ·
+clipe diferente **50** · acaso n=30 seed 7: ritmo **p95 64**, total **p95 ≈ 64** (antes 52,8).
+
+As três relações inegociáveis continuam: identidade 100 > p95 acaso; identidade > embaralhado
+(0,45·35 + 0,35·40 + 20 = 49,8) > diferente (0 + 17,5 + 12 = 29,5); diferente < p95.
+
+### O que sai, o que fica aberto
+
+Sai: `_mad_intervalos` e o P1 parked (tolerância a onset de borda — o casamento por
+conjunto absorve isso de graça), `RHYTHM_TOL_RATIO`, `RHYTHM_TOL_FLOOR_S`.
+
+Fica aberto, com número: **clique de botão (38)** e **melodia 73,8 no take inteiro** — os
+dois são "o take tem coisa que a referência não tem" (normalização por pico; pré-vocal no
+pyin). VAD no início do take, decisão separada.
