@@ -115,7 +115,11 @@ def _align_offset(on_ref: np.ndarray, on_take: np.ndarray) -> float:
     """Deslocamento global b tal que take ~ ref + b: pico da correlacao cruzada
     entre trens de impulso triangulares (largura MATCH_TOL_S) em grade XCORR_BIN_S.
     E o que torna o ritmo imune a latencia de captura e pre-roll SEM assumir
-    sincronia: o offset e medido, nao suposto."""
+    sincronia: o offset e medido, nao suposto.
+
+    ponytail: np.correlate(mode="full") e O(n^2) na duracao — 5 ms para 60 s, 2,1 s
+    para 240 s (medido). scipy.signal.correlate(method="fft") quando o take passar
+    de ~2 min; scipy ja e dependencia do librosa, zero dependencia nova."""
     w = max(1, int(round(MATCH_TOL_S / XCORR_BIN_S)))
     n = int(max(float(on_ref.max()), float(on_take.max())) / XCORR_BIN_S) + w + 2
 
@@ -135,7 +139,12 @@ def _align_offset(on_ref: np.ndarray, on_take: np.ndarray) -> float:
 def _match_f1(on_ref: np.ndarray, on_take_alinhado: np.ndarray) -> tuple[float, int]:
     """Casamento 1:1 guloso por proximidade dentro de MATCH_TOL_S. Devolve
     (F1, n_pares). Recall = pares/n_ref; precisao = pares/n_take — a precisao e
-    o que derruba o take denso (ruido: 251 ataques, precisao 0,35, medido)."""
+    o que derruba o take denso (ruido: 251 ataques, precisao 0,35, medido).
+
+    ponytail: guloso por proximidade, nao otimo em cardinalidade — ref=[1.00, 1.05]
+    vs take=[0.93, 1.04] casa 1 par (1.00 rouba 1.04 e 1.05 fica so) onde o casamento
+    monotono acharia 2. No job real: 162 de 164 — ruido de fundo. Upgrade: casamento
+    monotono com dois ponteiros (listas ja ordenadas), quando isso importar."""
     n_ref, n_take = len(on_ref), len(on_take_alinhado)
     if n_ref == 0 or n_take == 0:
         return 0.0, 0
