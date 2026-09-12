@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Imite o som</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    button { font: inherit; padding: .6rem 1.2rem; }
+    button[aria-pressed="true"] { outline: 3px solid currentColor; }
+    /* :not([hidden]) porque um display: da classe venceria o [hidden]{display:none} do
+       navegador e as cartas apareciam com "—" antes de qualquer take (visto no browser). */
+    .notas:not([hidden]) { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem 1rem; margin-top: 1.5rem; }
+    .nota { border: 1px solid; padding: .5rem .75rem; }
+    .nota b { display: block; font-size: 1.6rem; }
+    .total { grid-column: 1 / -1; }
+    .aud { font-size: .85rem; opacity: .8; margin-top: 1rem; }
+    /* estado nunca depende so de cor: usa texto e simbolo */
+    .estado { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Imite o som</h1>
+
+  <p>
+    <label for="ref">Referência</label>
+    <input id="ref" value="mimic_gab_01" size="24">
+    <label for="mode">Modo</label>
+    <select id="mode">
+      <option value="karaoke">karaoke</option>
+      <option value="mimic">mimic</option>
+    </select>
+  </p>
+
+  <p><audio id="player" controls></audio></p>
+
+  <p>
+    <button id="rec" aria-pressed="false">● Gravar</button>
+    <span id="estado" class="estado" role="status" aria-live="polite">Pronto.</span>
+  </p>
+
+  <div class="notas" id="notas" hidden>
+    <div class="nota total">Total <b id="n-total">—</b></div>
+    <div class="nota">Melodia <b id="n-melody">—</b></div>
+    <div class="nota">Ritmo <b id="n-rhythm">—</b></div>
+    <div class="nota">Ataques <b id="n-attacks">—</b></div>
+  </div>
+
+  <p class="aud" id="auditoria"></p>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const estado = $("estado");
+const player = $("player");
+let rec = null, chunks = [], gravando = false;
+
+function diz(texto) { estado.textContent = texto; }
+
+// A referência que o jogador ouve antes de gravar. Reflete os campos ref/mode.
+function carregaReferencia() {
+  const mode = $("mode").value, ref = $("ref").value.trim();
+  player.src = "/api/score/ref?mode=" + encodeURIComponent(mode) +
+               "&ref=" + encodeURIComponent(ref);
+}
+player.addEventListener("error", () => {
+  diz("Referência não encontrada para " + $("mode").value + "/" + $("ref").value.trim() + ".");
+});
+$("ref").addEventListener("change", carregaReferencia);
+$("mode").addEventListener("change", carregaReferencia);
+carregaReferencia();
+
+function soltaMic(stream) { stream.getTracks().forEach((t) => t.stop()); }
+
+$("rec").addEventListener("click", async () => {
+  if (gravando) {
+    rec.stop();
+    return;
+  }
+  // Desabilita ANTES do await: um segundo clique durante o prompt de permissão
+  // abriria um segundo stream que nunca seria solto.
+  $("rec").disabled = true;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    diz("Sem acesso ao microfone: " + e.name);
+    $("rec").disabled = false;
+    return;
+  }
+  // Tudo que pode estourar depois de já ter o mic fica dentro do try: se
+  // MediaRecorder não existir ou o MIME padrão não for suportado, o mic é solto
+  // e o jogador é avisado — nunca fica capturado em silêncio.
+  try {
+    chunks = [];
+    rec = new MediaRecorder(stream);
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    rec.onstop = async () => {
+      soltaMic(stream);
+      gravando = false;
+      $("rec").textContent = "● Gravar";
+      $("rec").setAttribute("aria-pressed", "false");
+      $("rec").disabled = true;          // sem segundo take enquanto pontua
+      diz("Pontuando…");
+
+      const fd = new FormData();
+      fd.append("mode", $("mode").value);
+      fd.append("ref", $("ref").value.trim());
+      fd.append("take", new Blob(chunks, { type: rec.mimeType || "audio/webm" }), "take.webm");
+
+      let r, data = null;
+      try {
+        r = await fetch("/api/score", { method: "POST", body: fd });
+      } catch (e) {
+        diz("Falha de rede ao pontuar.");
+        $("rec").disabled = false;
+        return;
+      }
+      try { data = await r.json(); } catch (e) { data = null; }
+      if (!r.ok || !data) {
+        diz("Erro " + r.status + ": " + (data && data.error ? data.error : "resposta sem detalhe"));
+        $("rec").disabled = false;
+        return;
+      }
+      $("n-total").textContent = data.total;
+      $("n-melody").textContent = data.melody;
+      $("n-rhythm").textContent = data.rhythm;
+      $("n-attacks").textContent = data.attacks;
+      $("notas").hidden = false;
+      // denominador a vista: nota sem populacao examinada e opiniao com numero
+      $("auditoria").textContent =
+        `ataques: ${data.n_onsets_take} no take contra ${data.n_onsets_ref} na referência · ` +
+        `${data.n_frames_compared} frames de contorno comparados (${data.n_voiced_take} voiced no take) · ` +
+        `tolerância de ritmo ${data.rhythm_tol_s}s · ` +
+        `oitava suspeita na referência: ${data.n_octave_suspect_ref} de ${data.n_voiced_ref} frames`;
+      diz(data.n_frames_compared === 0
+        ? "Atenção: nenhum frame de melodia foi comparado — a nota de melodia não vale."
+        : "Pronto.");
+      $("rec").disabled = false;
+    };
+    rec.start();
+    $("rec").disabled = false;
+  } catch (e) {
+    soltaMic(stream);
+    gravando = false;
+    diz("Gravação não suportada neste navegador: " + e.name);
+    $("rec").disabled = false;
+    return;
+  }
+  gravando = true;
+  $("rec").textContent = "■ Parar";
+  $("rec").setAttribute("aria-pressed", "true");
+  diz("Gravando…");
+});
+</script>
+</body>
+</html>

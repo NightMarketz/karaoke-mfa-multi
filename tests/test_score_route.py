@@ -1,0 +1,172 @@
+import io
+
+import pytest
+from flask import Flask
+
+from server_score_addendum import MODES, REF_ID_RE, make_score_route
+
+
+@pytest.fixture
+def client():
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+    make_score_route(app)
+    return app.test_client()
+
+
+def test_modo_fora_da_lista_fechada_da_400(client):
+    r = client.post("/api/score", data={
+        "mode": "sabotagem",
+        "ref": "mimic_gab_01",
+        "take": (io.BytesIO(b"\x00" * 100), "take.webm"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400, f"veio {r.status_code}"
+    assert "mode" in r.get_json()["error"]
+
+
+def test_ref_com_travessia_de_caminho_da_400(client):
+    """Nunca interpolar ref em caminho: ../ tem que morrer na fronteira."""
+    r = client.post("/api/score", data={
+        "mode": "karaoke",
+        "ref": "../../etc/passwd",
+        "take": (io.BytesIO(b"\x00" * 100), "take.webm"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400
+    assert "ref" in r.get_json()["error"]
+
+
+def test_upload_ausente_da_400(client):
+    r = client.post("/api/score", data={"mode": "mimic", "ref": "abc"},
+                    content_type="multipart/form-data")
+    assert r.status_code == 400
+    assert "take" in r.get_json()["error"]
+
+
+def test_upload_grande_demais_da_413(client):
+    from server_score_addendum import MAX_UPLOAD_BYTES
+    grande = io.BytesIO(b"\x00" * (MAX_UPLOAD_BYTES + 1))
+    r = client.post("/api/score", data={
+        "mode": "mimic", "ref": "abc", "take": (grande, "take.webm"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 413, f"veio {r.status_code}"
+
+
+def test_audio_indecodificavel_da_400_nao_500(client, monkeypatch, tmp_path):
+    """ffmpeg falhando e erro do cliente, nao estouro do servidor."""
+    import numpy as np
+    import soundfile as sf
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    sf.write(tmp_path / "abc.wav", np.zeros(1600, dtype="float32"), 16000)
+    lixo = io.BytesIO(b"isto nao e audio" * 10)
+    r = client.post("/api/score", data={
+        "mode": "mimic", "ref": "abc", "take": (lixo, "take.webm"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400, f"veio {r.status_code}: {r.data[:200]}"
+
+
+def test_wav_valido_sem_amostras_da_400_nao_500(client, monkeypatch, tmp_path):
+    """Container valido com ZERO amostras: ffmpeg aceita e escreve so o header,
+    sf.read devolve shape (0,), e track_from_audio estouraria em np.abs(x).max().
+    Achado na revisao da Task 5 (2026-09-11): dava 500. Fronteira nunca da 500."""
+    import numpy as np
+    import soundfile as sf
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    sf.write(tmp_path / "abc.wav", np.zeros(1600, dtype="float32"), 16000)
+    vazio = io.BytesIO()
+    sf.write(vazio, np.zeros(0, dtype="float32"), 16000, format="WAV")
+    vazio.seek(0)
+    r = client.post("/api/score", data={
+        "mode": "mimic", "ref": "abc", "take": (vazio, "take.wav"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400, f"veio {r.status_code}: {r.data[:200]}"
+    assert "amostra" in r.get_json()["error"]
+
+
+# ── GET /api/score/ref ───────────────────────────────────────────────────────
+def test_ref_audio_modo_invalido_da_400(client):
+    r = client.get("/api/score/ref?mode=sabotagem&ref=abc")
+    assert r.status_code == 400
+    assert "mode" in r.get_json()["error"]
+
+
+def test_ref_audio_travessia_da_400(client):
+    r = client.get("/api/score/ref?mode=karaoke&ref=../../etc/passwd")
+    assert r.status_code == 400
+    assert "ref" in r.get_json()["error"]
+
+
+def test_ref_audio_inexistente_da_404(client):
+    r = client.get("/api/score/ref?mode=mimic&ref=nao_existe_xyz")
+    assert r.status_code == 404
+    assert "nao_existe_xyz" in r.get_json()["error"]
+
+
+def test_ref_audio_mimic_serve_wav(client, tmp_path, monkeypatch):
+    """Caminho feliz sem depender de work/ (gitignored): aponta MIMIC_REF_DIR para um
+    tmp com um WAV real de 0,1s e confere que volta 200 audio/wav com bytes."""
+    import numpy as np
+    import soundfile as sf
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    sf.write(tmp_path / "abc.wav", np.zeros(1600, dtype="float32"), 16000)
+    r = client.get("/api/score/ref?mode=mimic&ref=abc")
+    assert r.status_code == 200, f"veio {r.status_code}: {r.data[:120]}"
+    assert r.mimetype == "audio/wav"
+    assert len(r.data) > 44, f"corpo com {len(r.data)} bytes — menor que um header WAV"
+
+
+def test_ffmpeg_ausente_da_503_nao_500(client, monkeypatch, tmp_path):
+    """Ambiente sem ffmpeg e falha do servidor, nao do cliente: 503 com motivo."""
+    import numpy as np
+    import soundfile as sf
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    sf.write(tmp_path / "abc.wav", np.zeros(1600, dtype="float32"), 16000)
+
+    def _sem_ffmpeg(*a, **k):
+        raise FileNotFoundError("ffmpeg")
+    monkeypatch.setattr(mod.subprocess, "run", _sem_ffmpeg)
+    r = client.post("/api/score", data={
+        "mode": "mimic", "ref": "abc", "take": (io.BytesIO(b"x" * 100), "take.webm"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 503, f"veio {r.status_code}: {r.data[:120]}"
+    assert "ffmpeg" in r.get_json()["error"]
+
+
+def test_ffmpeg_recebe_corte_de_duracao(client, monkeypatch, tmp_path):
+    """-t MAX_TAKE_S tem que estar no argv: 8 MB de Opus sao ~3 h sem isso."""
+    import numpy as np
+    import soundfile as sf
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    sf.write(tmp_path / "abc.wav", np.zeros(1600, dtype="float32"), 16000)
+    visto = {}
+
+    def _captura(cmd, **k):
+        visto["cmd"] = cmd
+        raise FileNotFoundError("parar aqui")
+    monkeypatch.setattr(mod.subprocess, "run", _captura)
+    client.post("/api/score", data={
+        "mode": "mimic", "ref": "abc", "take": (io.BytesIO(b"x" * 100), "take.webm"),
+    }, content_type="multipart/form-data")
+    cmd = visto.get("cmd")
+    assert cmd is not None, "ffmpeg nao foi invocado"
+    assert "-t" in cmd and str(mod.MAX_TAKE_S) in cmd, f"argv sem corte: {cmd}"
+    assert cmd.index("-t") + 1 == cmd.index(str(mod.MAX_TAKE_S)), f"-t sem valor colado: {cmd}"
+
+
+def test_lista_de_modos_e_fechada():
+    assert MODES == frozenset({"mimic", "karaoke"})
+    assert len(MODES) == 2, f"MODES tem {len(MODES)} entradas"
+
+
+@pytest.mark.parametrize("mau", ["../x", "a/b", "x" * 65, "", "a;b", "a b"])
+def test_regex_de_ref_rejeita_entradas_ruins(mau):
+    assert REF_ID_RE.match(mau) is None, f"{mau!r} passou pela regex"
+
+
+@pytest.mark.parametrize("bom", ["mimic_gab_01", "abc-123", "A", "x" * 64])
+def test_regex_de_ref_aceita_entradas_boas(bom):
+    assert REF_ID_RE.match(bom) is not None, f"{bom!r} foi rejeitado"

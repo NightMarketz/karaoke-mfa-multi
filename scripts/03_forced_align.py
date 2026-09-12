@@ -50,7 +50,7 @@ def _progress(pct: int, msg: str = ""):
     else:
         print(f"PROGRESS: {pct}", flush=True)
 
-DEVICE = "cuda" if torch.cuda.available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE  = torch.float16 if DEVICE == "cuda" else torch.float32
 
 def main():
