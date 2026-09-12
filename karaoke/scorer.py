@@ -214,12 +214,12 @@ def track_from_word_timing(words: list[dict], samples: np.ndarray,
     Decisao (a) do spec, emenda 2026-09-12: antes, ref.onsets eram INICIOS DE
     PALAVRA (71 no job de teste) contra ATAQUES do detector no take (163 no mesmo
     audio) — populacoes diferentes, self-score ~54 com ritmo morto. Agora os dois
-    lados passam pela mesma extracao: no job real attacks 44 -> 99,4, mas total
-    53,7 -> 53,1 (ritmo posicional e pre-vocal do take sao teto pre-existente;
-    100,0 so janela contra a propria janela).
+    lados passam pela mesma extracao: no job real attacks 44 -> 99,4; total 53,7
+    -> 53,1 com o ritmo posicional e -> 87,8 depois da emenda 2 (ritmo por F1).
+    100,0 so janela contra a propria janela.
 
-    Os onsets devolvidos sao RELATIVOS ao inicio da janela; score() compara
-    intervalos e contagens, nunca instantes absolutos.
+    Os onsets devolvidos sao RELATIVOS ao inicio da janela; score() estima o
+    deslocamento global e casa ataques, nunca assume sincronia absoluta.
 
     ponytail: teto documentado, NAO desta funcao — take com 1 clique de botao da
     rhythm 38 porque track_from_audio normaliza por pico de amostra (39 de 164

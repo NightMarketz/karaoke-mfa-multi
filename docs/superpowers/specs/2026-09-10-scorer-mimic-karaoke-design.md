@@ -348,7 +348,7 @@ Tetos **pré-existentes** que (a) expõe, não cria:
   arquitetura deste spec evita. Entra na decisão seguinte junto com o clique (VAD no
   início do take cobre os dois).
 
-### O que fica aberto (decisão de spec seguinte, fora desta emenda)
+### O que fica aberto (decisão de spec seguinte, fora desta emenda) — SUPERADO pela emenda 2: o ritmo foi resolvido por F1 sem termo de andamento; ficam clique e pré-vocal
 
 Casamento por conjunto (cada ataque da referência procura o vizinho mais próximo no take)
 foi prototipado: conserta o real (deslocado 96,6 · sala 93,0 · inteiro 87,5) mas é
@@ -405,9 +405,14 @@ sempre acham vizinho).
 
 Real `mimic_gab_01` (164 ataques na ref): self **100** · áudio inteiro **99,1** (antes 0) ·
 deslocado +0,5 s **100** · sala reverb + ruído −30 dB **84** (antes 0) · esticado 1,05×
-**69** · esticado 1,3× **50** · ruído branco **46** (251 ataques, precisão 0,35) · metade
+**69** · esticado 1,3× **50** (ritmo; o *total* do esticado fica em ≈79 porque melodia e
+ataques não mudam — o andamento é punido só pelos 35 % do ritmo, decisão deste spec) · ruído
+branco **46** (251 ataques, precisão 0,35) · metade
 **45** · clique antes **38** (39 de 164 ataques sobrevivem à normalização por pico — teto
-separado) · blocos de 1 s embaralhados n=20 **p95 54**.
+separado) · blocos de 1 s embaralhados n=20 **p95 54**. Re-derivado na implementação (commit
+`5c2d9dd4`): self 100 · áudio inteiro ritmo 99,1 / total 87,8 · blocos p95 **50,9** — o
+protótipo tinha consumido o gerador aleatório em outra ordem, permutações diferentes com a
+mesma seed.
 
 Sintético (5 ataques — pequeno demais para conjunto discriminar bem): identidade **100** ·
 jitter ±40 ms **100** (posicional dava 62) · nota extra / perdida **91 / 89** (posicional 29 /
