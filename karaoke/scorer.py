@@ -84,6 +84,12 @@ RHYTHM_TOL_RATIO = 0.35
 RHYTHM_TOL_FLOOR_S = 0.050
 WEIGHTS = {"melody": 0.45, "rhythm": 0.35, "attacks": 0.20}
 
+# Folga em torno de [words[0].start, words[-1].end] no modo karaoke. O detector
+# precisa ver o RMS SUBIR: recorte que comeca em cima do primeiro ataque perde
+# esse ataque (medido em 2026-09-12 no job mimic_gab_01: pad 0 pega 4 de 5;
+# 0,05-0,2 pega 5 de 5). Tambem absorve parte do erro de ~200ms do MFA.
+WINDOW_PAD_S = 0.1
+
 
 @dataclass
 class ScoreReport:
@@ -167,20 +173,23 @@ def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
 
 def track_from_word_timing(words: list[dict], samples: np.ndarray,
                            sr: int) -> ReferenceTrack:
-    """Referencia do modo karaoke: ataques vem do gabarito alinhado
-    (work/jobs/<id>/05_alignment/word_timing.json), contorno vem do audio vocal.
+    """Referencia do modo karaoke: `track_from_audio` sobre o RECORTE do vocal
+    isolado em [words[0].start - WINDOW_PAD_S, words[-1].end + WINDOW_PAD_S].
+    O gabarito (work/jobs/<id>/05_alignment/word_timing.json) so valida e janela.
 
-    Precisao medida do gabarito em 2026-09-10: 66% das palavras a <=100ms de um
-    ataque detectado, contra 47% do acaso. A nota herda esse erro — o modo karaoke
-    e "melhor que acaso", nao "correto".
+    Decisao (a) do spec, emenda 2026-09-12: antes, ref.onsets eram INICIOS DE
+    PALAVRA (71 no job de teste) contra ATAQUES do detector no take (163 no mesmo
+    audio) — populacoes diferentes, self-score ~54 com ritmo morto. Agora os dois
+    lados passam pela mesma extracao: self-score 100,0 no job real.
 
-    ponytail: ref.onsets sao INICIOS DE PALAVRA (71 no job de teste) enquanto
-    take.onsets sao ATAQUES do detector (163 no mesmo audio) — attacks e rhythm
-    comparam populacoes diferentes e o self-score do gabarito fica em ~54 (melody
-    100, attacks ~44, rhythm ~0). Decisao de spec pendente (2026-09-11): (a) ref
-    tambem via track_from_audio no trecho [words[0].start, words[-1].end] e o
-    gabarito so para validar/janelar (self-score 100 em prototipo), ou (b) reduzir
-    os ataques do take aos mais proximos de cada palavra. Nao mude aqui sem o spec.
+    Os onsets devolvidos sao RELATIVOS ao inicio da janela; score() compara
+    intervalos e contagens, nunca instantes absolutos.
+
+    ponytail: teto documentado, NAO desta funcao — take deslocado no tempo da 62,1
+    porque _mad_intervalos e posicional (160+ ataques, um a mais no comeco desalinha
+    o resto); take com 1 clique de botao da 48,8 porque track_from_audio normaliza
+    por pico de amostra. Os dois sao decisao de spec seguinte (F1 + andamento;
+    envoltoria RMS ou vad.py no take).
     """
     if not words:
         raise ValueError("word_timing vazio: gabarito sem palavras nao produz referencia")
@@ -191,14 +200,14 @@ def track_from_word_timing(words: list[dict], samples: np.ndarray,
         raise ValueError(
             f"word_timing nao e monotonico: {fora} de {len(starts) - 1} pares fora de ordem"
         )
+    if "end" not in words[-1]:
+        raise ValueError("word_timing sem 'end' na ultima palavra: nao da para janelar")
 
-    base = track_from_audio(samples, sr)
-    return ReferenceTrack(
-        onsets=starts,
-        semitones=base.semitones,
-        frame_dur=base.frame_dur,
-        duration=base.duration,
-        n_voiced=base.n_voiced,
-        n_frames=base.n_frames,
-        n_octave_suspect=base.n_octave_suspect,
-    )
+    dur = len(samples) / sr
+    t0 = max(0.0, float(starts[0]) - WINDOW_PAD_S)
+    t1 = min(dur, float(words[-1]["end"]) + WINDOW_PAD_S)
+    if t1 <= t0:
+        raise ValueError(
+            f"janela do gabarito [{t0:.2f}s, {t1:.2f}s] vazia dentro de {dur:.2f}s de audio"
+        )
+    return track_from_audio(samples[int(t0 * sr):int(t1 * sr)], sr)

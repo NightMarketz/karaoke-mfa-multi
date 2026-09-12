@@ -204,11 +204,13 @@ def test_take_sem_ataque_suficiente_nao_inventa_nota(ref):
     assert r.total < 25.0, f"take mudo recebeu {r.total:.1f}"
 
 
-from karaoke.scorer import track_from_word_timing
+from karaoke.scorer import WINDOW_PAD_S, track_from_word_timing
 
 
-def test_karaoke_usa_inicios_de_palavra_como_ataques():
-    """Os ataques vem do gabarito, o contorno vem do audio."""
+def test_karaoke_ataques_vem_do_audio_dentro_da_janela():
+    """Os ataques vem do DETECTOR sobre o recorte do gabarito, nao dos inicios de
+    palavra. Mesma populacao que o take: e o que faz attacks e rhythm compararem
+    igual com igual (spec, emenda 2026-09-12)."""
     words = [
         {"word": "um", "start": 0.30, "end": 0.55, "score": 1.0},
         {"word": "dois", "start": 0.90, "end": 1.15, "score": 1.0},
@@ -218,11 +220,17 @@ def test_karaoke_usa_inicios_de_palavra_como_ataques():
     ]
     audio = bursts(TIMES, FREQS)
     track = track_from_word_timing(words, audio, SR)
+    direto = track_from_audio(audio, SR)
 
-    assert len(track.onsets) == len(words), (
-        f"{len(track.onsets)} ataques de {len(words)} palavras"
+    assert len(track.onsets) == len(TIMES), (
+        f"{len(track.onsets)} ataques de {len(TIMES)} bursts na janela"
     )
-    np.testing.assert_allclose(track.onsets, [w["start"] for w in words])
+    # mesmos intervalos que o detector acha no audio inteiro: a janela so desloca
+    np.testing.assert_allclose(np.diff(track.onsets), np.diff(direto.onsets), atol=0.02)
+    # onsets sao relativos ao inicio da janela: o primeiro cai a ~WINDOW_PAD_S
+    assert abs(track.onsets[0] - WINDOW_PAD_S) <= 0.03, (
+        f"primeiro ataque em {track.onsets[0]:.3f}s, esperado ~{WINDOW_PAD_S}s"
+    )
     assert track.n_voiced >= MIN_VOICED_FRAMES, (
         f"{track.n_voiced} frames voiced de {track.n_frames}"
     )
@@ -251,4 +259,55 @@ def test_karaoke_pontua_contra_si_mesmo():
     ref = track_from_word_timing(words, audio, SR)
     r = score(ref, track_from_audio(audio, SR))
     assert r.n_frames_compared > 0
-    assert r.total >= 80.0, f"karaoke contra si mesmo deu {r.total:.1f}"
+    assert r.total >= 95.0, f"karaoke contra si mesmo deu {r.total:.1f}"
+
+
+def test_karaoke_janela_exclui_ataque_fora_do_gabarito():
+    """Um burst 3s depois da ultima palavra existe no audio mas NAO na referencia.
+    Controle: o detector sobre o audio inteiro acha 6 — a janela e quem tira 1."""
+    times = TIMES + [6.0]
+    freqs = FREQS + [262.0]
+    audio = bursts(times, freqs)
+    words = [{"word": f"w{i}", "start": t, "end": t + 0.25, "score": 1.0}
+             for i, t in enumerate(TIMES)]        # so as 5 primeiras: 6.0 fica de fora
+
+    inteiro = track_from_audio(audio, SR)
+    assert len(inteiro.onsets) == 6, (
+        f"controle: detector achou {len(inteiro.onsets)} de 6 bursts no audio inteiro"
+    )
+    ref = track_from_word_timing(words, audio, SR)
+    assert len(ref.onsets) == 5, (
+        f"janela deixou passar {len(ref.onsets)} ataques de 5 palavras"
+    )
+
+
+def test_karaoke_folga_captura_o_primeiro_ataque(monkeypatch):
+    """Recorte que comeca EM CIMA do primeiro burst nao ve o RMS subir e perde o
+    ataque. Sabotagem: WINDOW_PAD_S = 0 tem que ficar vermelho (medido em
+    2026-09-12 no job real: pad 0 pega 4 de 5)."""
+    import karaoke.scorer as mod
+    words = [{"word": f"w{i}", "start": t, "end": t + 0.25, "score": 1.0}
+             for i, t in enumerate(TIMES)]
+    audio = bursts(TIMES, FREQS)
+
+    com_folga = track_from_word_timing(words, audio, SR)
+    assert len(com_folga.onsets) == len(TIMES), (
+        f"com folga: {len(com_folga.onsets)} de {len(TIMES)}"
+    )
+
+    monkeypatch.setattr(mod, "WINDOW_PAD_S", 0.0)
+    sem_folga = track_from_word_timing(words, audio, SR)
+    assert len(sem_folga.onsets) < len(TIMES), (
+        f"controle negativo nao ficou vermelho: pad 0 ainda pegou "
+        f"{len(sem_folga.onsets)} de {len(TIMES)} — a folga nao esta sendo testada"
+    )
+
+
+def test_karaoke_gabarito_sem_end_ou_janela_vazia_e_erro():
+    audio = bursts(TIMES, FREQS)
+    with pytest.raises(ValueError, match="end"):
+        track_from_word_timing([{"word": "um", "start": 0.3, "score": 1.0}], audio, SR)
+    # gabarito inteiro depois do fim do audio: janela recortada ao audio fica vazia
+    fora = [{"word": "um", "start": 50.0, "end": 50.3, "score": 1.0}]
+    with pytest.raises(ValueError, match="janela"):
+        track_from_word_timing(fora, audio, SR)
