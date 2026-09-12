@@ -276,3 +276,67 @@ foram trocados por darem 0/26 e 4/26 frames voiced (fala de 0,8 s): **o limiar
 4. **Porte para Discord depende de hospedar este Flask.** Confirmado que Activities falam
    com backend próprio via URL Mappings, então Python não é beco sem saída — mas o custo
    de hospedagem existe e não foi avaliado.
+
+## Emenda 2026-09-12 — modo karaoke: ataques vêm do áudio, gabarito só janela (decisão (a))
+
+**Supera** a frase do Componente 1 "ataques vêm do gabarito alinhado" e a Task 4 do plano
+original. Decisão humana registrada em 2026-09-12, depois de medição.
+
+### O problema, medido
+
+`track_from_word_timing` devolvia `ref.onsets = inícios de palavra` (71 no job
+`mimic_gab_01`) enquanto `take.onsets` são ataques do detector (163 no mesmo áudio).
+`attacks` e `rhythm` comparavam populações diferentes: o gabarito pontuado contra o próprio
+áudio dava **53,7** (melody 100, attacks ~44, rhythm ~0). O dial de ritmo estava morto no
+modo karaoke.
+
+### A decisão
+
+A referência do modo karaoke passa pela **mesma** função de extração que o take —
+`track_from_audio` — sobre o **recorte** do vocal isolado:
+
+```
+janela = [ words[0].start − WINDOW_PAD_S ,  words[-1].end + WINDOW_PAD_S ]   (WINDOW_PAD_S = 0,1 s)
+ref    = track_from_audio(vocals_raw[janela], sr)
+```
+
+O gabarito continua obrigatório, mas só para **validar** (vazio → erro; não monotônico →
+erro; sem `end` ou janela vazia → erro) e **janelar**. Os `onsets` da referência ficam
+relativos ao início da janela — `score()` compara intervalos e contagens, nunca instantes
+absolutos, então o deslocamento é indiferente.
+
+Por que a folga de 0,1 s antes de `t0`: o detector precisa ver o RMS *subir*; recorte que
+começa em cima do primeiro ataque perde esse ataque (medido em 2026-09-12: pad 0 pega 4 de
+5 no job real; pad 0,05–0,2 pega 5 de 5). Também absorve parte do erro de ~200 ms do MFA.
+
+### Números (medidos em 2026-09-12 no job `mimic_gab_01`, sessão de medição anterior à implementação)
+
+| caso | antes (gabarito como onsets) | depois (opção a, pad 0,1) |
+|---|---|---|
+| gabarito contra o próprio vocal (self) | 40,9 (53,7 na medição da revisão de 2026-09-11 — sessões e takes diferentes; os dois são "antes") | **100,0** |
+| take deslocado no tempo | 95,4 (pad 0) | **62,1** |
+| take gravado na sala | 93,0 | ≈ (não re-derivado com pad 0,1) |
+| take = áudio inteiro sem recorte | 87,5 | ≈ (não re-derivado com pad 0,1) |
+| take com 1 clique de botão antes | 48,8 (87 de 160 ataques) | 48,8 — inalterado |
+
+Dois números dessa tabela ficam **documentados como teto do ritmo atual**, não como bug
+desta mudança:
+
+- **62,1 no take deslocado**: `_mad_intervalos` é posicional (compara `diff` índice a
+  índice até `min(len)`); com 160+ ataques um único ataque a mais ou a menos no começo
+  desalinha todos os pares seguintes. Pré-existente — (a) só o expõe porque agora há ritmo
+  para medir.
+- **48,8 com um clique**: `track_from_audio` normaliza por pico de amostra; um clique de
+  botão vira o pico e afoga o vocal abaixo de `ENERGY_MIN` (87 de 160 ataques). Varredura
+  de 6 percentis no lugar do pico não resolveu. Pré-existente e separado do ritmo.
+
+### O que fica aberto (decisão de spec seguinte, fora desta emenda)
+
+Casamento por conjunto (cada ataque da referência procura o vizinho mais próximo no take)
+foi prototipado: conserta o real (deslocado 96,6 · sala 93,0 · inteiro 87,5) mas é
+**leniente demais** com os negativos — p95 do acaso sobe de 52,8 para **70,5**, esticado
+1,3× vai a **92,6** (andamento errado deixa de ser punido), ruído tira **68** de ritmo
+porque 432 ataques de ruído sempre acham vizinho. Só *recall* é enganável por take denso.
+O candidato é **F1 (recall × precisão) + termo de andamento (razão das durações)**; o clique
+entra junto (normalizar pela envoltória RMS em vez do pico, ou recortar o início do take
+com `vad.py`). Prototipar numa sessão curta com as mesmas fixtures; não entra aqui.
