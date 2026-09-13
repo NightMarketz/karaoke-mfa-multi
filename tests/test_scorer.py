@@ -400,10 +400,9 @@ def test_clique_no_inicio_nao_afoga_o_vocal():
 
 
 def test_clique_colado_na_primeira_nota_tambem_sai():
-    """Clique 150 ms antes da primeira nota — mais perto que VOICE_MIN_SILENCE_MS
-    (200 ms) e mais longe que o alcance do pad (VOICE_PAD_MS + janela de RMS,
-    ~125 ms). Com gap-fill antes de spike-removal o clique era fundido a voz
-    (medido: 1 de 5 ataques a 150 ms de gap)."""
+    """Clique 150 ms antes da primeira nota — mais longe que o alcance do pad
+    (VOICE_PAD_MS + janela de RMS, ~125 ms). Com gap-fill (min_silence > 0) antes de
+    spike-removal o clique era fundido a voz (medido: 1 de 5 ataques a 150 ms de gap)."""
     vocal = bursts(TIMES, FREQS) * (0.02 / 0.6)          # primeira nota em TIMES[0] = 0,3 s
     take = vocal.copy()
     i = int((TIMES[0] - 0.150) * SR)

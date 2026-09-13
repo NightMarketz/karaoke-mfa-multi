@@ -459,11 +459,11 @@ o clique vira o pico e o vocal (0,316 de fundo de escala) cai abaixo de `ENERGY_
 ```
 rms      = compute_rms(take)                       # envelope de 10 ms que o detector já usa
 thr      = VOICE_FRAC × p95(rms)                   # relativo ao ENVELOPE, não ao pico de amostra
-mask     = _smooth_mask(rms > thr, 10 ms, VOICE_MIN_SPEECH_MS, VOICE_MIN_SILENCE_MS)   # karaoke/vad.py
+mask     = _smooth_mask(rms > thr, 10 ms, VOICE_MIN_SPEECH_MS, min_silence=0)   # so tira spikes; gap-fill nao move a primeira/ultima borda
 segs     = _mask_to_segments(mask, 10 ms, VOICE_PAD_MS, dur)                            # karaoke/vad.py
 recorte  = take[segs[0].start : segs[-1].end]      # sem segmento → take inteiro, (0, 0)
 
-VOICE_FRAC = 0.10   VOICE_MIN_SPEECH_MS = 150   VOICE_MIN_SILENCE_MS = 200   VOICE_PAD_MS = 100
+VOICE_FRAC = 0.10   VOICE_MIN_SPEECH_MS = 150   VOICE_PAD_MS = 100
 ```
 
 Onde: dentro de `track_from_audio`, **antes** da normalização por pico — vale para os dois
@@ -496,15 +496,21 @@ Re-derivado na implementação (commits `889e7403`+`33e10686`): vocal inteiro me
 38,2 → **100,0** / attacks 24,4 → **100,0**; blocos de 1 s embaralhados p95 **50,5**; sintético
 clique **0 de 5** sem recorte → **5 de 5** com. Duas ressalvas: (1) a referência também é
 recortada (0,18 s; 163 ataques, era 164), logo "take = vocal inteiro" virou **o mesmo áudio
-da referência por construção** — o 100,0 do inteiro é identidade, não mérito; o mérito está
-no clique (100,0) e nas cercas sintéticas. (2) O ataque perdido: o limiar do recorte
-(0,10 × p95 = 0,026 normalizado) fica um pouco acima de `ENERGY_MIN` (0,02) — um ataque
-fraco na borda da voz sai com o recorte mas seria detectado; 1 de 164 no real, teto aceito.
-Achado da revisão, corrigido em `33e10686`: `_smooth_mask` preenche gaps ANTES de tirar
-spikes, e um clique a < 200 ms da primeira nota era fundido à voz (1 de 5 ataques a 150 ms);
-o recorte passa a rodar spikes-primeiro em duas passadas. Teto que fica: o pad de
-`VOICE_PAD_MS` recua por cima do spike removido — clique a < ~125 ms da primeira nota fica
-dentro (gap 100 ms → 0 de 5), abaixo do tempo de reação entre clicar e cantar.
+da referência por construção** — o 100,0 do inteiro é identidade, não mérito; o clique do
+job real (t = 0,05 s) sai junto com o pré-vocal, então não é evidência independente; a prova
+do clique é sintética: 0,5 s de pré-roll + clique 0 de 5 → 5 de 5, clique a 150 ms 1 de 5 →
+5 de 5. (2) O ataque perdido: o limiar do recorte (0,10 × p95 = 0,026 normalizado) fica um
+pouco acima de `ENERGY_MIN` (0,02) — um ataque fraco na borda da voz sai com o recorte mas
+seria detectado; 1 de 164 no real, teto aceito. `ReferenceTrack.duration` passa a ser a do
+recorte (é o que `scripts/fetch_mimic_refs.py` compara com `MIN_DUR_S` — duração de voz, que
+é o que a regra dos 1,5 s quer). Achado da revisão final: `_smooth_mask` com gap-fill só
+escreve `False→True` ENTRE dois `True` existentes, e `trim_to_voice` só lê a primeira e a
+última borda de voz — gap-fill nunca move nenhuma das duas (0 de 13 casos mudam sem essa
+passada); o recorte passa a rodar só a remoção de spikes (`min_silence=0`); a revisão final
+mostrou que a passada de gap-fill é no-op aqui — só a primeira e a última borda importam —
+e ela saiu. Teto que fica: o pad de `VOICE_PAD_MS` recua por cima do spike removido — clique
+a < ~125 ms da primeira nota fica dentro (gap 100 ms → 0 de 5), abaixo do tempo de reação
+entre clicar e cantar.
 
 ### O que muda em teste existente
 

@@ -31,7 +31,8 @@ class ReferenceTrack:
                             # ponytail: passar hop_length=int(sr*HOP_MS/1000) ao pyin
                             # alinha as duas grades quando algo precisar de contorno
                             # indexado por tempo; hoje score() reamostra por indice.
-    duration: float
+    duration: float         # do RECORTE por voz, nao da entrada (emenda 3);
+                            # scripts/fetch_mimic_refs.py compara com MIN_DUR_S
     n_voiced: int           # denominador do contorno
     n_frames: int           # total de frames analisados pelo pyin
     n_octave_suspect: int   # frames com |semitom| > 11: suspeita de erro de oitava do pyin
@@ -53,8 +54,11 @@ VOICE_FRAC = 0.10          # ponytail: fracao fixa (-20 dB de p95); intro sussur
                            # disso e perdida. Knob de calibracao — no job real 0,03-0,20 acham
                            # o inicio da mascara, antes do pad de VOICE_PAD_MS (11,86-11,88 s);
                            # so um take de mic real recalibra.
+                           # ponytail: 0,10 x p95 = 0,026 normalizado no job real, um pouco
+                           # ACIMA de ENERGY_MIN (0,02): ataque fraco na borda da voz sai com
+                           # o recorte (ref 163 de 164). Upgrade: thr = min(VOICE_FRAC x p95,
+                           # ENERGY_MIN x pico) se isso importar.
 VOICE_MIN_SPEECH_MS = 150  # trecho mais curto nao e voz (clique, estalo)
-VOICE_MIN_SILENCE_MS = 200  # gap entre trechos de voz curto o bastante para nao contar como corte
 VOICE_PAD_MS = 100         # o detector precisa ver o RMS subir (mesma razao de WINDOW_PAD_S).
                            # ponytail: o pad recua por cima de spike ja removido — clique a
                            # < ~125 ms (pad + janela de 25 ms) da primeira nota fica dentro
@@ -72,11 +76,12 @@ def trim_to_voice(samples: np.ndarray, sr: int) -> tuple[np.ndarray, float, floa
         return samples, 0.0, 0.0
     thr = VOICE_FRAC * float(np.percentile(rms, 95))
     # _smooth_mask compara com `is True`: precisa de bool nativo, nao np.bool_
-    # _smooth_mask preenche gaps ANTES de tirar spikes: clique a < VOICE_MIN_SILENCE_MS
-    # da primeira nota seria fundido a voz. Duas passadas: spikes fora, depois gaps.
-    bruto = [bool(v) for v in rms > thr]
-    mask = _smooth_mask(bruto, HOP_MS, VOICE_MIN_SPEECH_MS, 0)        # min_silence 0: so tira spikes
-    mask = _smooth_mask(mask, HOP_MS, 0, VOICE_MIN_SILENCE_MS)        # min_speech 0: so preenche gaps
+    # _smooth_mask preenche gaps ANTES de tirar spikes: com min_silence > 0 um clique a
+    # menos de um gap da primeira nota era fundido a voz (1 de 5 ataques a 150 ms).
+    # min_silence 0 -> max(1, 0) = 1 frame: gaps de 1 frame (10 ms) ainda sao preenchidos,
+    # inofensivo. Nao ha passada de gap-fill: so o primeiro e o ultimo frame de voz
+    # importam aqui, e gap-fill nunca move nenhum dos dois.
+    mask = _smooth_mask([bool(v) for v in rms > thr], HOP_MS, VOICE_MIN_SPEECH_MS, 0)
     segs = _mask_to_segments(mask, HOP_MS, VOICE_PAD_MS, dur)
     if not segs:
         return samples, 0.0, 0.0
