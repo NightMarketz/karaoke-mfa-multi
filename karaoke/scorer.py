@@ -46,13 +46,20 @@ class ReferenceTrack:
 # contaminam o contorno (melody 86,8 no take inteiro; 100,0 sem o pre-vocal). Os
 # dois somem recortando as pontas ao primeiro/ultimo trecho de voz ANTES de
 # normalizar. Limiar relativo ao ENVELOPE (p95 do RMS), nao ao pico de amostra:
-# um clique de 5 ms ocupa <= 3 frames em 6.000 e nao move o p95.
+# um clique de 5 ms ocupa <= 3 frames em 6.000 e nao move o p95 (o limiar fica
+# so). Quem tira o clique da mascara e VOICE_MIN_SPEECH_MS: o frame do clique
+# fica acima de thr mas dura menos que isso.
 VOICE_FRAC = 0.10          # ponytail: fracao fixa (-20 dB de p95); intro sussurrada abaixo
                            # disso e perdida. Knob de calibracao — no job real 0,03-0,20 acham
-                           # o mesmo inicio (11,86-11,88 s); so um take de mic real recalibra.
+                           # o inicio da mascara, antes do pad de VOICE_PAD_MS (11,86-11,88 s);
+                           # so um take de mic real recalibra.
 VOICE_MIN_SPEECH_MS = 150  # trecho mais curto nao e voz (clique, estalo)
-VOICE_MIN_SILENCE_MS = 200
-VOICE_PAD_MS = 100         # o detector precisa ver o RMS subir (mesma razao de WINDOW_PAD_S)
+VOICE_MIN_SILENCE_MS = 200  # gap entre trechos de voz curto o bastante para nao contar como corte
+VOICE_PAD_MS = 100         # o detector precisa ver o RMS subir (mesma razao de WINDOW_PAD_S).
+                           # ponytail: o pad recua por cima de spike ja removido — clique a
+                           # < ~125 ms (pad + janela de 25 ms) da primeira nota fica dentro
+                           # (medido: gap 100 ms → 0 de 5 ataques; 150 ms → 5 de 5). Upgrade:
+                           # t0 nao recua sobre frame que a passada de spikes tirou.
 
 
 def trim_to_voice(samples: np.ndarray, sr: int) -> tuple[np.ndarray, float, float]:
@@ -65,8 +72,11 @@ def trim_to_voice(samples: np.ndarray, sr: int) -> tuple[np.ndarray, float, floa
         return samples, 0.0, 0.0
     thr = VOICE_FRAC * float(np.percentile(rms, 95))
     # _smooth_mask compara com `is True`: precisa de bool nativo, nao np.bool_
-    mask = _smooth_mask([bool(v) for v in rms > thr], HOP_MS,
-                        VOICE_MIN_SPEECH_MS, VOICE_MIN_SILENCE_MS)
+    # _smooth_mask preenche gaps ANTES de tirar spikes: clique a < VOICE_MIN_SILENCE_MS
+    # da primeira nota seria fundido a voz. Duas passadas: spikes fora, depois gaps.
+    bruto = [bool(v) for v in rms > thr]
+    mask = _smooth_mask(bruto, HOP_MS, VOICE_MIN_SPEECH_MS, 0)        # min_silence 0: so tira spikes
+    mask = _smooth_mask(mask, HOP_MS, 0, VOICE_MIN_SILENCE_MS)        # min_speech 0: so preenche gaps
     segs = _mask_to_segments(mask, HOP_MS, VOICE_PAD_MS, dur)
     if not segs:
         return samples, 0.0, 0.0
