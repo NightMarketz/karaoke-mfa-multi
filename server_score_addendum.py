@@ -130,6 +130,7 @@ def make_score_route(app) -> None:
             "total": round(report.total, 1),
             "n_onsets_ref": report.n_onsets_ref,
             "n_onsets_take": report.n_onsets_take,
+            "n_matched": report.n_matched,
             "n_frames_compared": report.n_frames_compared,
             "rhythm_tol_s": round(report.rhythm_tol_s, 4),
             "n_octave_suspect_ref": ref.n_octave_suspect,

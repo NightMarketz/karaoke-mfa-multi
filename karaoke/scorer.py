@@ -76,13 +76,20 @@ def track_from_audio(samples: np.ndarray, sr: int) -> ReferenceTrack:
 
 
 # ── Knobs de nota ────────────────────────────────────────────────────────────
-# Tolerancia de ritmo RELATIVA ao intervalo mediano da referencia, com piso
-# absoluto. Medido em 2026-09-10: no modo karaoke o intervalo mediano entre
-# palavras e 0,140s, entao uma tolerancia absoluta de 200ms seria maior que o
-# proprio intervalo medido e a nota de ritmo ficaria vazia.
-RHYTHM_TOL_RATIO = 0.35
-RHYTHM_TOL_FLOOR_S = 0.050
+# Ritmo = F1 do casamento 1:1 entre ataques da referencia e do take, depois de
+# estimar o deslocamento global. Tolerancia FIXA: relativa ao intervalo mediano
+# virava 0,21s no sintetico e o acaso subia a p95 75 (medido 2026-09-12); 0,05s
+# dava 60 a um humano com jitter +-40ms, a 8 pontos do acaso. MIREX usa 50ms.
+MATCH_TOL_S = 0.080
+XCORR_BIN_S = 0.010        # grade do trem de impulsos para o alinhamento global
 WEIGHTS = {"melody": 0.45, "rhythm": 0.35, "attacks": 0.20}
+
+# Folga em torno de [words[0].start, words[-1].end] no modo karaoke. O detector
+# precisa ver o RMS SUBIR: recorte que comeca em cima do primeiro ataque perde
+# esse ataque (medido em 2026-09-12: na fixture sintetica de 5 bursts, pad 0
+# pega 4 de 5 (perde o primeiro); 0,05-0,2 pega 5 de 5). Tambem absorve parte
+# do erro de ~200ms do MFA.
+WINDOW_PAD_S = 0.1
 
 
 @dataclass
@@ -93,8 +100,9 @@ class ScoreReport:
     total: float            # 0..100
     n_onsets_ref: int
     n_onsets_take: int
+    n_matched: int          # numerador do F1: pares casados dentro de rhythm_tol_s
     n_frames_compared: int  # zero e FALHA, nao sucesso
-    rhythm_tol_s: float     # tolerancia efetivamente usada, para auditoria
+    rhythm_tol_s: float     # = MATCH_TOL_S, para auditoria
 
 
 def _resample(contour: np.ndarray, n: int = MELODY_POINTS) -> np.ndarray:
@@ -103,43 +111,75 @@ def _resample(contour: np.ndarray, n: int = MELODY_POINTS) -> np.ndarray:
                      contour)
 
 
-def _mad_intervalos(on_ref: np.ndarray, on_take: np.ndarray) -> float:
-    """Diferenca media absoluta entre as sequencias de intervalos, tolerando UM onset
-    espurio na borda inicial de cada lado (o clique do botao, uma respiracao antes da
-    primeira nota). Medido em 2026-09-11: sem isto, identidade + 1 onset antes dava
-    rhythm 0.0 e total 45.9 — abaixo do p95 do acaso (49.5). Com isto, 80.9.
-    ponytail: comparacao posicional ate min(len); DTW sobre intervalos e o upgrade
-    quando um onset espurio no MEIO do take importar."""
-    best = None
-    for drop_ref in (0, 1):
-        for drop_take in (0, 1):
-            a, b = on_ref[drop_ref:], on_take[drop_take:]
-            if len(a) < 2 or len(b) < 2:
-                continue
-            ia, ib = np.diff(a), np.diff(b)
-            k = min(len(ia), len(ib))
-            mad = float(np.mean(np.abs(ia[:k] - ib[:k])))
-            best = mad if best is None else min(best, mad)
-    return best if best is not None else float("inf")
+def _align_offset(on_ref: np.ndarray, on_take: np.ndarray) -> float:
+    """Deslocamento global b tal que take ~ ref + b: pico da correlacao cruzada
+    entre trens de impulso triangulares (largura MATCH_TOL_S) em grade XCORR_BIN_S.
+    E o que torna o ritmo imune a latencia de captura e pre-roll SEM assumir
+    sincronia: o offset e medido, nao suposto.
+
+    ponytail: np.correlate(mode="full") e O(n^2) na duracao — 5 ms para 60 s, 2,1 s
+    para 240 s (medido). scipy.signal.correlate(method="fft") quando o take passar
+    de ~2 min; scipy ja e dependencia do librosa, zero dependencia nova."""
+    w = max(1, int(round(MATCH_TOL_S / XCORR_BIN_S)))
+    n = int(max(float(on_ref.max()), float(on_take.max())) / XCORR_BIN_S) + w + 2
+
+    def trem(on: np.ndarray) -> np.ndarray:
+        tr = np.zeros(n, dtype=np.float64)
+        for t in on:
+            c = int(round(float(t) / XCORR_BIN_S))
+            lo, hi = max(0, c - w), min(n - 1, c + w)
+            k = np.arange(lo, hi + 1)
+            tr[k] = np.maximum(tr[k], 1.0 - np.abs(k - c) / (w + 1))
+        return tr
+
+    xc = np.correlate(trem(on_take), trem(on_ref), mode="full")
+    return (int(np.argmax(xc)) - (n - 1)) * XCORR_BIN_S
+
+
+def _match_f1(on_ref: np.ndarray, on_take_alinhado: np.ndarray) -> tuple[float, int]:
+    """Casamento 1:1 guloso por proximidade dentro de MATCH_TOL_S. Devolve
+    (F1, n_pares). Recall = pares/n_ref; precisao = pares/n_take — a precisao e
+    o que derruba o take denso (ruido: 251 ataques, precisao 0,35, medido).
+
+    ponytail: guloso por proximidade, nao otimo em cardinalidade — ref=[1.00, 1.05]
+    vs take=[0.93, 1.04] casa 1 par (1.00 rouba 1.04 e 1.05 fica so) onde o casamento
+    monotono acharia 2. No job real: 162 de 164 — ruido de fundo. Upgrade: casamento
+    monotono com dois ponteiros (listas ja ordenadas), quando isso importar."""
+    n_ref, n_take = len(on_ref), len(on_take_alinhado)
+    if n_ref == 0 or n_take == 0:
+        return 0.0, 0
+    usado = np.zeros(n_take, dtype=bool)
+    pares = 0
+    for t in on_ref:
+        d = np.abs(on_take_alinhado - t)
+        d[usado] = np.inf
+        j = int(np.argmin(d))
+        if d[j] <= MATCH_TOL_S:
+            usado[j] = True
+            pares += 1
+    recall, precisao = pares / n_ref, pares / n_take
+    f1 = 2 * recall * precisao / (recall + precisao) if pares else 0.0
+    return f1, pares
 
 
 def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
-    """Compara forma relativa, nunca alinhamento absoluto: um atraso global
-    constante na captura nao altera nota nenhuma."""
+    """Compara forma relativa, nunca sincronia absoluta: um atraso global na
+    captura e ESTIMADO (correlacao cruzada) e descontado, nao assumido."""
     n_ref, n_take = len(ref.onsets), len(take.onsets)
 
     # ataques: quanto as contagens batem
     attacks = 100.0 * max(0.0, 1.0 - abs(n_ref - n_take) / max(n_ref, n_take, 1))
 
-    # ritmo: intervalos ENTRE ataques, nao instantes. A tolerancia e calibrada
-    # na REFERENCIA (calibrar no take premia take esticado: medido 3.6 vs 25.8).
-    tol = RHYTHM_TOL_FLOOR_S
-    if n_ref >= 2 and n_take >= 2:
-        tol = max(RHYTHM_TOL_FLOOR_S,
-                  RHYTHM_TOL_RATIO * float(np.median(np.diff(ref.onsets))))
-        rhythm = 100.0 * max(0.0, 1.0 - _mad_intervalos(ref.onsets, take.onsets) / tol)
+    # ritmo: F1 do casamento de ataques apos alinhamento global (spec, emenda
+    # 2026-09-12 (2)). Posicional dava 0.0 ao vocal inteiro, a sala e aos blocos
+    # embaralhados — nao distinguia take bom de aleatorio.
+    tol = MATCH_TOL_S
+    if n_ref >= 2 and n_take >= 1:
+        b = _align_offset(ref.onsets, take.onsets)
+        f1, n_matched = _match_f1(ref.onsets, take.onsets - b)
+        rhythm = 100.0 * f1
     else:
-        rhythm = 0.0
+        rhythm, n_matched = 0.0, 0
 
     # melodia: correlacao dos contornos centrados, reamostrados a tamanho comum
     if len(ref.semitones) >= MIN_VOICED_FRAMES and len(take.semitones) >= MIN_VOICED_FRAMES:
@@ -160,27 +200,32 @@ def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
 
     return ScoreReport(
         melody=melody, rhythm=rhythm, attacks=attacks, total=total,
-        n_onsets_ref=n_ref, n_onsets_take=n_take,
+        n_onsets_ref=n_ref, n_onsets_take=n_take, n_matched=n_matched,
         n_frames_compared=n_frames_compared, rhythm_tol_s=tol,
     )
 
 
 def track_from_word_timing(words: list[dict], samples: np.ndarray,
                            sr: int) -> ReferenceTrack:
-    """Referencia do modo karaoke: ataques vem do gabarito alinhado
-    (work/jobs/<id>/05_alignment/word_timing.json), contorno vem do audio vocal.
+    """Referencia do modo karaoke: `track_from_audio` sobre o RECORTE do vocal
+    isolado em [words[0].start - WINDOW_PAD_S, words[-1].end + WINDOW_PAD_S].
+    O gabarito (work/jobs/<id>/05_alignment/word_timing.json) so valida e janela.
 
-    Precisao medida do gabarito em 2026-09-10: 66% das palavras a <=100ms de um
-    ataque detectado, contra 47% do acaso. A nota herda esse erro — o modo karaoke
-    e "melhor que acaso", nao "correto".
+    Decisao (a) do spec, emenda 2026-09-12: antes, ref.onsets eram INICIOS DE
+    PALAVRA (71 no job de teste) contra ATAQUES do detector no take (163 no mesmo
+    audio) — populacoes diferentes, self-score ~54 com ritmo morto. Agora os dois
+    lados passam pela mesma extracao: no job real attacks 44 -> 99,4; total 53,7
+    -> 53,1 com o ritmo posicional e -> 87,8 depois da emenda 2 (ritmo por F1).
+    100,0 so janela contra a propria janela.
 
-    ponytail: ref.onsets sao INICIOS DE PALAVRA (71 no job de teste) enquanto
-    take.onsets sao ATAQUES do detector (163 no mesmo audio) — attacks e rhythm
-    comparam populacoes diferentes e o self-score do gabarito fica em ~54 (melody
-    100, attacks ~44, rhythm ~0). Decisao de spec pendente (2026-09-11): (a) ref
-    tambem via track_from_audio no trecho [words[0].start, words[-1].end] e o
-    gabarito so para validar/janelar (self-score 100 em prototipo), ou (b) reduzir
-    os ataques do take aos mais proximos de cada palavra. Nao mude aqui sem o spec.
+    Os onsets devolvidos sao RELATIVOS ao inicio da janela; score() estima o
+    deslocamento global e casa ataques, nunca assume sincronia absoluta.
+
+    ponytail: teto documentado, NAO desta funcao — take com 1 clique de botao da
+    rhythm 38 porque track_from_audio normaliza por pico de amostra (39 de 164
+    ataques sobrevivem), e o take inteiro perde melodia (73,8) porque o pre-vocal
+    contamina o pyin. Os dois sao "o take tem coisa que a referencia nao tem":
+    VAD no inicio do take, decisao de spec seguinte.
     """
     if not words:
         raise ValueError("word_timing vazio: gabarito sem palavras nao produz referencia")
@@ -191,14 +236,14 @@ def track_from_word_timing(words: list[dict], samples: np.ndarray,
         raise ValueError(
             f"word_timing nao e monotonico: {fora} de {len(starts) - 1} pares fora de ordem"
         )
+    if "end" not in words[-1]:
+        raise ValueError("word_timing sem 'end' na ultima palavra: nao da para janelar")
 
-    base = track_from_audio(samples, sr)
-    return ReferenceTrack(
-        onsets=starts,
-        semitones=base.semitones,
-        frame_dur=base.frame_dur,
-        duration=base.duration,
-        n_voiced=base.n_voiced,
-        n_frames=base.n_frames,
-        n_octave_suspect=base.n_octave_suspect,
-    )
+    dur = len(samples) / sr
+    t0 = max(0.0, float(starts[0]) - WINDOW_PAD_S)
+    t1 = min(dur, float(words[-1]["end"]) + WINDOW_PAD_S)
+    if t1 <= t0:
+        raise ValueError(
+            f"janela do gabarito [{t0:.2f}s, {t1:.2f}s] vazia dentro de {dur:.2f}s de audio"
+        )
+    return track_from_audio(samples[int(t0 * sr):int(t1 * sr)], sr)
