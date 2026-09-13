@@ -6,7 +6,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 from karaoke import paths
-from karaoke.textgrid_parser import parse_textgrid
+from karaoke.textgrid_parser import parse_textgrid, select_word_tier, list_tier_names
 
 def main():
     parser = argparse.ArgumentParser(description="Convert MFA TextGrid to Word Timing JSON")
@@ -22,17 +22,23 @@ def main():
         sys.exit(1)
         
     print(f"  Lendo {tg_path.name}...")
-    intervals = parse_textgrid(tg_path)
-    
+    # parse_textgrid recebe o TEXTO do TextGrid e devolve List[Tier] — nao um Path,
+    # e nao uma lista plana de intervalos. Um TextGrid do MFA traz dois tiers
+    # ("words" e "phones"); iterar tudo junto misturaria fonema com palavra.
+    tiers = parse_textgrid(tg_path.read_text(encoding="utf-8"))
+    print(f"  Tiers encontrados: {list_tier_names(tiers)}")
+    word_tier = select_word_tier(tiers)
+    print(f"  Tier de palavras: {word_tier.name}")
+
     word_results = []
-    for interval in intervals:
-        # MFA textgrid usually has words in a specific tier or just flat intervals
-        # We assume they are word intervals for now
+    for interval in word_tier.speech_intervals:
         word_results.append({
             "word": interval.text,
             "start": round(interval.start, 4),
             "end": round(interval.end, 4),
-            "score": 1.0 # MFA doesn't provide per-word score easily?
+            # O MFA nao expoe score por palavra; 1.0 marca "ancora do alinhador",
+            # que e o que 08_onset_dtw.py usa para decidir em quem confiar.
+            "score": 1.0
         })
         
     out_json = paths.word_timing_json(job_id)

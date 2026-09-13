@@ -35,6 +35,9 @@ def main():
 
     out_raw = kpaths.vocals_raw(job_id)
     out_listen = kpaths.vocals_listen(job_id)
+    # ffmpeg nao cria diretorio de saida: sem isso ele falha com "No such file or directory"
+    out_raw.parent.mkdir(parents=True, exist_ok=True)
+    out_listen.parent.mkdir(parents=True, exist_ok=True)
     
     # ── vocals_raw.wav (Alinhamento) ──────────────────────────────────────────
     _progress(20, "Gerando vocals_raw.wav (16k, mono)...")

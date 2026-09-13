@@ -15,6 +15,8 @@ if sys.platform == "win32":
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
+# Allow imports from project root
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import karaoke.paths as kpaths
 
 def _progress(pct: int, msg: str = ""):

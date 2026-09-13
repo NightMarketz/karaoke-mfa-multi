@@ -42,8 +42,10 @@ def separation_dir(job_id: str) -> Path:
     return job_root(job_id) / "02_separation"
 
 def vocals_raw(job_id: str) -> Path:
-    """Voz isolada vinda do Demucs (copiada para cá para simplificar)."""
-    return separation_dir(job_id) / "vocals.wav"
+    """Voz isolada 16k mono gerada por 03_vocal_cleaning a partir do stem do Demucs.
+    NAO e o output cru do Demucs (esse e separation_dir()/vocals.wav) — apontar os
+    dois para o mesmo arquivo fazia o ffmpeg do step 03 escrever in-place e falhar."""
+    return vocals_clean_dir(job_id) / "vocals_raw.wav"
 
 # --- MFA ---
 def mfa_corpus_dir(job_id: str) -> Path:

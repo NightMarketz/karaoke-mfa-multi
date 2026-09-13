@@ -77,7 +77,8 @@ def build_steps(job_id, lang, romanization, aligner="mfa"):
             },
             {
                 "id": 5, "name": "MFA Alignment",
-                "cmd": [python, _p("scripts", "04_mfa_alignment.py"), "--job-id", job_id]
+                "cmd": [python, _p("scripts", "04_mfa_alignment.py"), "--job-id", job_id,
+                        "--lang", lang]
             },
             {
                 "id": 6, "name": "Convert MFA to JSON",

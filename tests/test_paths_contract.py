@@ -145,3 +145,26 @@ def test_input_job_dir_e_demucs_out_dir_nao_colidem():
         "input_job_dir e demucs_out_dir colidiram no mesmo caminho — "
         "um nome carregando dois significados e exatamente o defeito do fix round 1"
     )
+
+
+def test_vocals_raw_nao_colide_com_stem_do_demucs():
+    """Fence do defeito real: vocals_raw() apontava para separation_dir/vocals.wav,
+    o MESMO arquivo que o Demucs escreve. 03_vocal_cleaning.py le o stem do Demucs
+    e escreve em vocals_raw() com ffmpeg — com os dois iguais o ffmpeg tentava
+    escrever in-place e morria (exit -22).
+
+    vocals_raw e o derivado 16k mono, mora em 03_vocals_clean/ — e o que as
+    docstrings de 03_forced_align.py, 03b_whisperx_rescue.py, 06_alignment_rescue.py,
+    07_gemini_alignment.py, 05b_correct_alignment.py e 03c_gemini_transcribe.py
+    declaram, e o que server.py:366 e diagnostic_viewer.py:64 hardcodam.
+    """
+    job_id = "job_teste"
+    stem_demucs = kpaths.separation_dir(job_id) / "vocals.wav"
+    vocals_raw = kpaths.vocals_raw(job_id)
+
+    assert vocals_raw != stem_demucs, (
+        f"vocals_raw nao pode ser o proprio stem do Demucs, veio {vocals_raw}"
+    )
+    assert vocals_raw == kpaths.vocals_clean_dir(job_id) / "vocals_raw.wav", (
+        f"vocals_raw tem que morar em 03_vocals_clean/vocals_raw.wav, veio {vocals_raw}"
+    )
