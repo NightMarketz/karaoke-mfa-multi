@@ -273,11 +273,9 @@ def track_from_word_timing(words: list[dict], samples: np.ndarray,
     Os onsets devolvidos sao RELATIVOS ao inicio da janela; score() estima o
     deslocamento global e casa ataques, nunca assume sincronia absoluta.
 
-    ponytail: teto documentado, NAO desta funcao — take com 1 clique de botao da
-    rhythm 38 porque track_from_audio normaliza por pico de amostra (39 de 164
-    ataques sobrevivem), e o take inteiro perde melodia (73,8) porque o pre-vocal
-    contamina o pyin. Os dois sao "o take tem coisa que a referencia nao tem":
-    VAD no inicio do take, decisao de spec seguinte.
+    Clique de botao e pre-vocal do take (rhythm 38,2 e melody 86,8 no job real)
+    foram fechados pela emenda 3: track_from_audio recorta as pontas ao trecho com
+    voz antes de normalizar (trim_to_voice).
     """
     if not words:
         raise ValueError("word_timing vazio: gabarito sem palavras nao produz referencia")

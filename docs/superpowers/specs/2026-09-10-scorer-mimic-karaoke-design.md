@@ -491,6 +491,21 @@ de pico perde ataques **sem** recorte (controle negativo dentro do teste: `detec
 sobre o áudio normalizado pelo clique acha < 5) e pega **5 de 5** com. Silêncio absoluto:
 recorte (0, 0), não erro. As três relações inegociáveis e o p95 do acaso continuam.
 
+Re-derivado na implementação (commits `889e7403`+`33e10686`): vocal inteiro melody 86,8 →
+**100,0** / total 93,6 → **100,0**, trim do take (11,77 s, 0,00 s); inteiro + clique rhythm
+38,2 → **100,0** / attacks 24,4 → **100,0**; blocos de 1 s embaralhados p95 **50,5**; sintético
+clique **0 de 5** sem recorte → **5 de 5** com. Duas ressalvas: (1) a referência também é
+recortada (0,18 s; 163 ataques, era 164), logo "take = vocal inteiro" virou **o mesmo áudio
+da referência por construção** — o 100,0 do inteiro é identidade, não mérito; o mérito está
+no clique (100,0) e nas cercas sintéticas. (2) O ataque perdido: o limiar do recorte
+(0,10 × p95 = 0,026 normalizado) fica um pouco acima de `ENERGY_MIN` (0,02) — um ataque
+fraco na borda da voz sai com o recorte mas seria detectado; 1 de 164 no real, teto aceito.
+Achado da revisão, corrigido em `33e10686`: `_smooth_mask` preenche gaps ANTES de tirar
+spikes, e um clique a < 200 ms da primeira nota era fundido à voz (1 de 5 ataques a 150 ms);
+o recorte passa a rodar spikes-primeiro em duas passadas. Teto que fica: o pad de
+`VOICE_PAD_MS` recua por cima do spike removido — clique a < ~125 ms da primeira nota fica
+dentro (gap 100 ms → 0 de 5), abaixo do tempo de reação entre clicar e cantar.
+
 ### O que muda em teste existente
 
 `test_ritmo_deslocamento_global_e_estimado_nao_assumido` usava pré-roll de **silêncio** de
