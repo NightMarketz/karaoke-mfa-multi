@@ -20,7 +20,11 @@ def test_track_extrai_ataques_e_contorno():
     )
     assert track.n_voiced <= track.n_frames, "voiced nao pode exceder o total de frames"
     assert len(track.semitones) == track.n_voiced
-    assert track.duration == pytest.approx(len(bursts(TIMES, FREQS)) / SR, abs=0.01)
+    # duration e do recorte por voz (emenda 3); recorte + pontas removidas = entrada
+    assert track.duration + track.trim_start_s + track.trim_end_s == pytest.approx(
+        len(bursts(TIMES, FREQS)) / SR, abs=0.01
+    )
+    assert track.trim_start_s > 0.0, "fixture tem 0,3 s de silencio antes: algo tinha que sair"
 
 
 def test_contorno_centrado_na_mediana():
@@ -72,6 +76,9 @@ def test_silencio_nao_produz_contorno():
         f"silencio gerou {track.n_voiced} frames voiced"
     )
     assert track.n_octave_suspect == 0
+    assert (track.trim_start_s, track.trim_end_s) == (0.0, 0.0), (
+        f"silencio absoluto foi recortado: ({track.trim_start_s}, {track.trim_end_s})"
+    )
 
 
 from karaoke.scorer import score
@@ -344,16 +351,85 @@ def test_ritmo_take_denso_paga_em_precisao(ref):
 
 
 def test_ritmo_deslocamento_global_e_estimado_nao_assumido(ref):
-    """Pre-roll de 0.45s no take (latencia, respiracao) custa zero: o offset vem da
-    correlacao cruzada. Controle negativo: sem alinhar (b=0) o casamento a 0.08s
-    nao acha nada — 0.45 e escolhido para que o par nao alinhado mais proximo fique
-    a 0.15s (0.9 vs 0.75), longe da tolerancia; 0.5 deixaria pares a 0.10s."""
+    """Um deslocamento global de 0.45s entre os trens de ataque custa zero: o
+    offset vem da correlacao cruzada. Controle negativo: sem alinhar (b=0) o
+    casamento a 0.08s nao acha nada — 0.45 e escolhido para que o par nao
+    alinhado mais proximo fique a 0.15s (0.9 vs 0.75), longe da tolerancia.
+    Testado no nivel dos ataques: pre-roll de SILENCIO no audio e removido pelo
+    recorte por voz (emenda 3) antes de chegar aqui; o fim-a-fim com coisa antes
+    que o recorte nao tira (uma nota) e test_onset_espurio_antes_nao_derruba_abaixo_do_acaso."""
     from karaoke.scorer import _align_offset, _match_f1, MATCH_TOL_S
-    take = track_from_audio(bursts([t + 0.45 for t in TIMES], FREQS), SR)
-    b = _align_offset(ref.onsets, take.onsets)
+    deslocado = ref.onsets + 0.45
+    b = _align_offset(ref.onsets, deslocado)
     assert abs(b - 0.45) <= MATCH_TOL_S, f"offset estimado {b:.3f}s, esperado 0.45s"
-    f1_sem, n_sem = _match_f1(ref.onsets, take.onsets)
+    f1_sem, n_sem = _match_f1(ref.onsets, deslocado)
     assert n_sem == 0, f"controle: sem alinhar casou {n_sem} de {len(TIMES)}"
-    r = score(ref, take)
-    assert r.n_matched == len(TIMES), f"{r.n_matched} de {len(TIMES)} casados"
-    assert r.rhythm >= 95.0, f"pre-roll de 0.45s custou rhythm {r.rhythm:.1f}"
+    f1_com, n_com = _match_f1(ref.onsets, deslocado - b)
+    assert n_com == len(TIMES), f"{n_com} de {len(TIMES)} casados depois de alinhar"
+    assert f1_com >= 0.95, f"deslocamento de 0.45s custou F1 {f1_com:.2f}"
+
+
+# ── emenda 3: recorte por atividade de voz ──────────────────────────────────
+from karaoke.onset import compute_rms, detect_onsets
+
+
+def test_clique_no_inicio_nao_afoga_o_vocal():
+    """Clique de botao (5 ms a 1,0) antes de um vocal a 0,02 de pico. Normalizado
+    pelo pico do CLIQUE, o vocal cai abaixo de ENERGY_MIN e o detector perde os
+    ataques — no job real 40 de 164 sobrevivem, rhythm 38,2 (medido 2026-09-12).
+    O recorte por voz tira o clique ANTES da normalizacao."""
+    vocal = bursts(TIMES, FREQS) * (0.02 / 0.6)
+    take = np.concatenate([np.zeros(int(0.5 * SR), dtype=np.float32), vocal])
+    take[int(0.05 * SR):int(0.055 * SR)] = 1.0
+
+    # controle negativo: sem o recorte, normalizar pelo clique afoga o vocal
+    rms, fd = compute_rms(take / float(np.abs(take).max()), SR)
+    sem_recorte = len(detect_onsets(rms, fd))
+    assert sem_recorte < len(TIMES), (
+        f"controle: sem recorte o detector ainda acha {sem_recorte} de {len(TIMES)} — "
+        "a sabotagem nao sabotou, o teste nao prova nada"
+    )
+
+    track = track_from_audio(take, SR)
+    assert track.trim_start_s > 0.055, (
+        f"recorte comecou em {track.trim_start_s:.3f}s: o clique (0,050-0,055 s) ficou dentro"
+    )
+    assert len(track.onsets) == len(TIMES), (
+        f"{len(track.onsets)} ataques de {len(TIMES)} com clique antes (sem recorte: {sem_recorte})"
+    )
+
+
+def test_clique_colado_na_primeira_nota_tambem_sai():
+    """Clique 150 ms antes da primeira nota — mais longe que o alcance do pad
+    (VOICE_PAD_MS + janela de RMS, ~125 ms). Com gap-fill (min_silence > 0) antes de
+    spike-removal o clique era fundido a voz (medido: 1 de 5 ataques a 150 ms de gap)."""
+    vocal = bursts(TIMES, FREQS) * (0.02 / 0.6)          # primeira nota em TIMES[0] = 0,3 s
+    take = vocal.copy()
+    i = int((TIMES[0] - 0.150) * SR)
+    take[i:i + int(0.005 * SR)] = 1.0
+    track = track_from_audio(take, SR)
+    assert track.trim_start_s > (TIMES[0] - 0.150) + 0.005, (
+        f"recorte comecou em {track.trim_start_s:.3f}s: clique a 150 ms da nota ficou dentro"
+    )
+    assert len(track.onsets) == len(TIMES), f"{len(track.onsets)} ataques de {len(TIMES)}"
+
+
+def test_recorte_tira_silencio_das_duas_pontas_e_desloca_os_ataques():
+    """1 s de silencio antes e 1 s depois: os dois somem, os ataques ficam relativos
+    ao recorte (o primeiro cai a ~VOICE_PAD_MS do inicio) e os intervalos nao mudam."""
+    from karaoke.scorer import VOICE_PAD_MS
+    base = bursts(TIMES, FREQS)
+    take = np.concatenate([np.zeros(SR, dtype=np.float32), base, np.zeros(SR, dtype=np.float32)])
+    track = track_from_audio(take, SR)
+    direto = track_from_audio(base, SR)
+
+    esperado_inicio = 1.0 + TIMES[0] - VOICE_PAD_MS / 1000
+    assert abs(track.trim_start_s - esperado_inicio) <= 0.05, (
+        f"trim_start_s {track.trim_start_s:.3f}s, esperado ~{esperado_inicio:.2f}s"
+    )
+    assert track.trim_end_s >= 0.9, f"trim_end_s {track.trim_end_s:.3f}s: o silencio do fim ficou"
+    assert len(track.onsets) == len(TIMES), f"{len(track.onsets)} ataques de {len(TIMES)}"
+    assert abs(track.onsets[0] - VOICE_PAD_MS / 1000) <= 0.05, (
+        f"primeiro ataque em {track.onsets[0]:.3f}s, esperado ~{VOICE_PAD_MS / 1000}s"
+    )
+    np.testing.assert_allclose(np.diff(track.onsets), np.diff(direto.onsets), atol=0.02)

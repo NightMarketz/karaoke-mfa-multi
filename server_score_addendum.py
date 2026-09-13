@@ -136,6 +136,8 @@ def make_score_route(app) -> None:
             "n_octave_suspect_ref": ref.n_octave_suspect,
             "n_voiced_ref": ref.n_voiced,
             "n_voiced_take": take.n_voiced,
+            "take_trim_start_s": round(take.trim_start_s, 2),
+            "take_trim_end_s": round(take.trim_end_s, 2),
         })
 
     @app.route("/api/score/ref", methods=["GET"])

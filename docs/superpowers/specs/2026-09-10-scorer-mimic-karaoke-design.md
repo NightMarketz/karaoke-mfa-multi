@@ -430,3 +430,97 @@ conjunto absorve isso de graça), `RHYTHM_TOL_RATIO`, `RHYTHM_TOL_FLOOR_S`.
 Fica aberto, com número: **clique de botão (38)** e **melodia 73,8 no take inteiro** — os
 dois são "o take tem coisa que a referência não tem" (normalização por pico; pré-vocal no
 pyin). VAD no início do take, decisão separada.
+
+## Emenda 2026-09-12 (3) — recorte por atividade de voz nas duas pontas do take
+
+**Fecha** os dois itens que a emenda 2 deixou abertos com número: clique de botão e
+pré-vocal. Decisão humana em 2026-09-12 sobre desenho apresentado nesta sessão.
+
+### O problema, medido (job `mimic_gab_01`, re-derivado nesta sessão, interpretador `python` do PATH, librosa 0.9.2)
+
+| take | ataques | melody | rhythm | attacks | total |
+|---|---|---|---|---|---|
+| self (janela do gabarito) | 164 de 164 | 100,0 | 100,0 | 100,0 | 100,0 |
+| vocal inteiro (60 s, 11,6 s de pré-vocal) | 163 | **86,8** | 99,1 | 99,4 | 93,6 |
+| `x[t0:]` — inteiro SEM o pré-vocal, sem VAD | 164 | **100,0** | 100,0 | 100,0 | 100,0 |
+| inteiro + clique de 5 ms a 1,0 em t = 0,05 s | **40** | 58,9 | **38,2** | 24,4 | 44,8 |
+
+Pré-vocal sozinho `[0, 11,59 s]`: 24 de 363 frames marcados voiced pelo pyin, 53 "ataques",
+RMS máximo 0,0002 (normalizado) — resíduo do Demucs que o contorno reamostrado carrega. A
+linha `x[t0:]` é a prova da hipótese: tirar o pré-vocal devolve 100,0. (A sessão anterior
+alegou 73,8 para o inteiro; aqui deu 86,8 — outro interpretador/librosa. Os dois dizem o
+mesmo: < 100, e a diferença é o pré-vocal.)
+
+O clique é o outro lado da mesma moeda: `track_from_audio` normaliza pelo pico de amostra,
+o clique vira o pico e o vocal (0,316 de fundo de escala) cai abaixo de `ENERGY_MIN`.
+
+### A decisão
+
+```
+rms      = compute_rms(take)                       # envelope de 10 ms que o detector já usa
+thr      = VOICE_FRAC × p95(rms)                   # relativo ao ENVELOPE, não ao pico de amostra
+mask     = _smooth_mask(rms > thr, 10 ms, VOICE_MIN_SPEECH_MS, min_silence=0)   # so tira spikes; gap-fill nao move a primeira/ultima borda
+segs     = _mask_to_segments(mask, 10 ms, VOICE_PAD_MS, dur)                            # karaoke/vad.py
+recorte  = take[segs[0].start : segs[-1].end]      # sem segmento → take inteiro, (0, 0)
+
+VOICE_FRAC = 0.10   VOICE_MIN_SPEECH_MS = 150   VOICE_PAD_MS = 100
+```
+
+Onde: dentro de `track_from_audio`, **antes** da normalização por pico — vale para os dois
+lados (princípio da emenda (a): mesma extração). Na referência karaoke o efeito é ~0,2 s
+(a janela já começa 0,1 s antes da primeira palavra). `ReferenceTrack` ganha
+`trim_start_s` / `trim_end_s` (segundos removidos); a rota expõe os do take.
+
+Por que p95 do envelope: um clique de 5 ms ocupa ≤ 3 frames em 6.000 — não move o p95. Por
+que **duas** pontas: o clique do botão de parar fica no fim, e a normalização por pico é
+global. Por que fração fixa e não o `detect_voice` inteiro de `vad.py`: ele lê arquivo e capa
+o limiar em p50 — o defeito registrado neste spec ("49 s de voz em 60 s"); um take 70 %
+silêncio viraria 50 % "voz". Reusa-se só `_smooth_mask` e `_mask_to_segments`, que são puras.
+
+Calibração de `VOICE_FRAC` no job real (RMS: p50 0,0017 · p95 0,081): 0,03 / 0,05 / 0,10 /
+0,15 / 0,20 acham o primeiro frame de voz em 11,86 / 11,87 / 11,87 / 11,88 / 11,88 s
+(`words[0].start` = 11,69). Platô; 0,10 fica no meio. **Teto declarado:** intro sussurrada
+20 dB abaixo do p95 é perdida — `VOICE_FRAC` é o knob.
+
+### Aceite (medido, não estimado)
+
+Job real: vocal inteiro melody 86,8 → **≥ 95**; inteiro + clique rhythm 38,2 → **≥ 95** e
+attacks 24,4 → **≥ 95**; `trim_start_s` do take inteiro em **[11,5 s, 12,0 s]**; blocos de 1 s
+embaralhados p95 **≤ 60** (continua). Sintético: clique de 5 ms a 1,0 antes de bursts a 0,02
+de pico perde ataques **sem** recorte (controle negativo dentro do teste: `detect_onsets`
+sobre o áudio normalizado pelo clique acha < 5) e pega **5 de 5** com. Silêncio absoluto:
+recorte (0, 0), não erro. As três relações inegociáveis e o p95 do acaso continuam.
+
+Re-derivado na implementação (commits `889e7403`+`33e10686`): vocal inteiro melody 86,8 →
+**100,0** / total 93,6 → **100,0**, trim do take (11,77 s, 0,00 s); inteiro + clique rhythm
+38,2 → **100,0** / attacks 24,4 → **100,0**; blocos de 1 s embaralhados p95 **50,5**; sintético
+clique **0 de 5** sem recorte → **5 de 5** com. Duas ressalvas: (1) a referência também é
+recortada (0,18 s; 163 ataques, era 164), logo "take = vocal inteiro" virou **o mesmo áudio
+da referência por construção** — o 100,0 do inteiro é identidade, não mérito; o clique do
+job real (t = 0,05 s) sai junto com o pré-vocal, então não é evidência independente; a prova
+do clique é sintética: 0,5 s de pré-roll + clique 0 de 5 → 5 de 5, clique a 150 ms 1 de 5 →
+5 de 5. (2) O ataque perdido: o limiar do recorte (0,10 × p95 = 0,026 normalizado) fica um
+pouco acima de `ENERGY_MIN` (0,02) — um ataque fraco na borda da voz sai com o recorte mas
+seria detectado; 1 de 164 no real, teto aceito. `ReferenceTrack.duration` passa a ser a do
+recorte (é o que `scripts/fetch_mimic_refs.py` compara com `MIN_DUR_S` — duração de voz, que
+é o que a regra dos 1,5 s quer). Achado da revisão final: `_smooth_mask` com gap-fill só
+escreve `False→True` ENTRE dois `True` existentes, e `trim_to_voice` só lê a primeira e a
+última borda de voz — gap-fill nunca move nenhuma das duas (0 de 13 casos mudam sem essa
+passada); o recorte passa a rodar só a remoção de spikes (`min_silence=0`); a revisão final
+mostrou que a passada de gap-fill é no-op aqui — só a primeira e a última borda importam —
+e ela saiu. Teto que fica: o pad de `VOICE_PAD_MS` recua por cima do spike removido — clique
+a < ~125 ms da primeira nota fica dentro (gap 100 ms → 0 de 5), abaixo do tempo de reação
+entre clicar e cantar.
+
+### O que muda em teste existente
+
+`test_ritmo_deslocamento_global_e_estimado_nao_assumido` usava pré-roll de **silêncio** de
+0,45 s — é exatamente o que o recorte remove, e o `b` estimado vira ~0. O teste desce ao
+nível dos ataques (`_align_offset(ref.onsets, ref.onsets + 0.45)`); o fim-a-fim com "coisa
+antes" que o recorte NÃO tira (uma nota) já é `test_onset_espurio_antes_nao_derruba_abaixo_do_acaso`.
+
+### Fica aberto
+
+O único dado que não existe: um take humano gravado num microfone de verdade. Todo número
+acima vem do stem do Demucs fazendo papel de take. `VOICE_FRAC` só será calibrado de
+verdade contra ruído de sala real.
