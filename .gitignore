@@ -60,3 +60,6 @@ web/sfx/
 # OS
 .DS_Store
 Thumbs.db
+
+# superpowers brainstorming visual companion
+.superpowers/
