@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Biblioteca de sons</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    button { font: inherit; padding: .5rem 1rem; }
+    input[type="text"] { font: inherit; padding: .4rem; }
+    ul { list-style: none; padding: 0; }
+    li { display: flex; align-items: center; gap: .75rem; border: 1px solid; padding: .5rem .75rem; margin-bottom: .5rem; }
+    li .nome { flex: 1; min-width: 0; }
+    li .nome b { display: block; }
+    li .dur { font-size: .85rem; opacity: .8; }
+    .estado { font-weight: 600; }
+    form.upload { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: 1.5rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Biblioteca de sons</h1>
+  <p><a href="/static/party.html">Ir para o jogo de festa →</a></p>
+
+  <form class="upload" id="form-upload">
+    <input type="file" id="arquivo" accept="audio/*" required>
+    <input type="text" id="rotulo" placeholder="rótulo (opcional)">
+    <button type="submit">Adicionar clipe</button>
+  </form>
+  <p><span id="estado" class="estado" role="status" aria-live="polite"></span></p>
+
+  <ul id="lista"></ul>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const estado = $("estado");
+function diz(texto) { estado.textContent = texto; }
+
+async function carregaLista() {
+  const r = await fetch("/api/mimic_refs");
+  const clipes = await r.json();
+  const ul = $("lista");
+  ul.innerHTML = "";
+  if (clipes.length === 0) {
+    ul.innerHTML = "<li>Nenhum clipe ainda.</li>";
+    return;
+  }
+  for (const c of clipes) {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <div class="nome"><b>${c.label}</b><span class="dur">${c.duration_s}s</span></div>
+      <audio controls src="/api/score/ref?mode=mimic&ref=${encodeURIComponent(c.id)}"></audio>
+      <button data-id="${c.id}" class="apagar">Apagar</button>
+    `;
+    ul.appendChild(li);
+  }
+  ul.querySelectorAll(".apagar").forEach((btn) => {
+    btn.addEventListener("click", () => apagaClipe(btn.dataset.id));
+  });
+}
+
+async function apagaClipe(id) {
+  diz("Apagando " + id + "…");
+  const r = await fetch("/api/mimic_refs/" + encodeURIComponent(id), { method: "DELETE" });
+  const data = await r.json().catch(() => null);
+  if (!r.ok) {
+    diz("Erro " + r.status + ": " + (data && data.error ? data.error : "falha ao apagar"));
+    return;
+  }
+  diz("Apagado.");
+  carregaLista();
+}
+
+$("form-upload").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const arquivo = $("arquivo").files[0];
+  if (!arquivo) return;
+  const fd = new FormData();
+  fd.append("file", arquivo);
+  const rotulo = $("rotulo").value.trim();
+  if (rotulo) fd.append("label", rotulo);
+
+  diz("Enviando…");
+  let r, data;
+  try {
+    r = await fetch("/api/mimic_refs", { method: "POST", body: fd });
+    data = await r.json();
+  } catch (err) {
+    diz("Falha de rede ao enviar.");
+    return;
+  }
+  if (!r.ok) {
+    diz("Erro " + r.status + ": " + (data && data.error ? data.error : "upload rejeitado"));
+    return;
+  }
+  diz("Adicionado: " + data.id);
+  $("form-upload").reset();
+  carregaLista();
+});
+
+carregaLista();
+</script>
+</body>
+</html>

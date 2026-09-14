@@ -37,15 +37,17 @@ class FfmpegAusente(RuntimeError):
     """ffmpeg nao esta no PATH: falha de ambiente, nao do cliente."""
 
 
-def _webm_para_wav(src: Path, dst: Path) -> bool:
+def _webm_para_wav(src: Path, dst: Path, max_s: int = MAX_TAKE_S) -> bool:
     """16k mono, mesmo padrao de scripts/03_vocal_cleaning.py — incluindo o mkdir
     do diretorio de saida, cuja ausencia foi bug real naquele script.
     -t limita a duracao decodificada (um take de rodada cabe em MAX_TAKE_S) e
-    timeout impede que um container malformado pendure o worker."""
+    timeout impede que um container malformado pendure o worker. max_s e
+    parametrizavel porque server_mimic_refs_addendum.py reusa esta funcao com
+    um teto menor (clipe de biblioteca e curto por natureza, take de rodada nao)."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
         proc = subprocess.run(
-            ["ffmpeg", "-y", "-i", str(src), "-t", str(MAX_TAKE_S),
+            ["ffmpeg", "-y", "-i", str(src), "-t", str(max_s),
              "-ar", "16000", "-ac", "1", str(dst)],
             capture_output=True, timeout=FFMPEG_TIMEOUT_S,
         )

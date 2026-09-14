@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jogo de festa: imite o som</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    button { font: inherit; padding: .5rem 1rem; }
+    input[type="text"], input[type="number"] { font: inherit; padding: .4rem; }
+    ul { list-style: none; padding: 0; }
+    li { display: flex; align-items: center; gap: .75rem; border: 1px solid; padding: .4rem .75rem; margin-bottom: .4rem; }
+    li span.nome { flex: 1; }
+    .linha { display: flex; gap: .5rem; align-items: center; margin: .75rem 0; flex-wrap: wrap; }
+    .estado { font-weight: 600; }
+    .aviso { opacity: .85; }
+    button[aria-pressed="true"] { outline: 3px solid currentColor; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    td, th { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid; }
+    .vencedor { font-weight: 700; }
+    .vencedor::before { content: "🏆 "; }
+  </style>
+</head>
+<body>
+  <h1>Jogo de festa: imite o som</h1>
+  <p><a href="/static/refs.html">← Biblioteca de sons</a></p>
+
+  <!-- ── Setup ─────────────────────────────────────────────────────────── -->
+  <section id="setup">
+    <div class="linha">
+      <input type="text" id="nome-jogador" placeholder="nome do jogador">
+      <button id="add-jogador">Adicionar jogador</button>
+    </div>
+    <ul id="lista-jogadores"></ul>
+
+    <div class="linha">
+      <label for="rodadas">Rodadas</label>
+      <input type="number" id="rodadas" value="5" min="1" style="width: 4rem">
+    </div>
+
+    <p><span id="estado-setup" class="estado" role="status" aria-live="polite"></span></p>
+    <button id="comecar">Começar</button>
+  </section>
+
+  <!-- ── Rodada ────────────────────────────────────────────────────────── -->
+  <section id="round" hidden>
+    <p class="estado" id="round-titulo"></p>
+    <p><audio id="player" controls></audio></p>
+    <p>
+      <button id="rec" aria-pressed="false">● Gravar</button>
+      <span id="estado-round" role="status" aria-live="polite">Pronto.</span>
+    </p>
+  </section>
+
+  <!-- ── Resumo da rodada ──────────────────────────────────────────────── -->
+  <section id="round-summary" hidden>
+    <h2 id="resumo-titulo"></h2>
+    <table id="tabela-resumo"><tbody></tbody></table>
+    <button id="proxima-rodada">Próxima rodada</button>
+  </section>
+
+  <!-- ── Fim de jogo ───────────────────────────────────────────────────── -->
+  <section id="final" hidden>
+    <h2>Fim de jogo!</h2>
+    <table id="tabela-final"><tbody></tbody></table>
+    <div class="linha">
+      <button id="jogar-de-novo">Jogar de novo</button>
+      <button id="nova-partida">Nova partida</button>
+    </div>
+  </section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// ── Estado, so em memoria da aba: recarregar a pagina perde a partida ──────
+let jogadores = [];      // [{nome, pontos}]
+let numRodadas = 5;
+let baseClipes = [];     // [{id, label}] vindo de /api/mimic_refs
+let pool = [];
+let poolIdx = 0;
+let rodadaAtual = 0;     // 1-based durante o jogo
+let jogadorAtual = 0;    // indice em jogadores, dentro da rodada
+let clipeAtual = null;
+let pontosDaRodada = []; // [{nome, pontos}] acumulado pra tela de resumo
+
+function embaralha(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function proximoClipe() {
+  if (poolIdx >= pool.length) {
+    pool = embaralha(baseClipes);
+    poolIdx = 0;
+  }
+  return pool[poolIdx++];
+}
+
+// ── Setup ───────────────────────────────────────────────────────────────
+function renderJogadores() {
+  const ul = $("lista-jogadores");
+  ul.innerHTML = "";
+  jogadores.forEach((j, i) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="nome">${j.nome}</span><button data-i="${i}">Remover</button>`;
+    ul.appendChild(li);
+  });
+  ul.querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      jogadores.splice(Number(btn.dataset.i), 1);
+      renderJogadores();
+    });
+  });
+}
+
+$("add-jogador").addEventListener("click", () => {
+  const nome = $("nome-jogador").value.trim();
+  if (!nome) return;
+  jogadores.push({ nome, pontos: 0 });
+  $("nome-jogador").value = "";
+  renderJogadores();
+});
+$("nome-jogador").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("add-jogador").click(); }
+});
+
+$("comecar").addEventListener("click", async () => {
+  if (jogadores.length === 0) {
+    $("estado-setup").textContent = "Adicione ao menos 1 jogador.";
+    return;
+  }
+  numRodadas = Math.max(1, parseInt($("rodadas").value, 10) || 5);
+
+  $("estado-setup").textContent = "Carregando clipes…";
+  const r = await fetch("/api/mimic_refs");
+  baseClipes = await r.json();
+  if (baseClipes.length === 0) {
+    $("estado-setup").textContent = "Nenhum clipe na biblioteca — adicione em /static/refs.html antes de começar.";
+    return;
+  }
+  // alert() porque a tela de setup some assim que a rodada 1 comeca — um texto
+  // aqui piscaria por um frame e ninguem leria (achado no teste manual no browser).
+  if (baseClipes.length < numRodadas) {
+    alert(`Só há ${baseClipes.length} clipe(s) para ${numRodadas} rodadas — alguns vão repetir.`);
+  }
+  $("estado-setup").textContent = "";
+
+  pool = embaralha(baseClipes);
+  poolIdx = 0;
+  iniciaPartida();
+});
+
+function iniciaPartida() {
+  rodadaAtual = 0;
+  jogadores.forEach((j) => (j.pontos = 0));
+  proximaRodada();
+}
+
+// ── Rodada ──────────────────────────────────────────────────────────────
+function proximaRodada() {
+  rodadaAtual++;
+  if (rodadaAtual > numRodadas) return mostraFinal();
+  jogadorAtual = 0;
+  pontosDaRodada = [];
+  clipeAtual = proximoClipe();
+  $("setup").hidden = true;
+  $("round-summary").hidden = true;
+  $("round").hidden = false;
+  proximoJogadorDaRodada();
+}
+
+function proximoJogadorDaRodada() {
+  const j = jogadores[jogadorAtual];
+  $("round-titulo").textContent =
+    `Rodada ${rodadaAtual}/${numRodadas} — clipe "${clipeAtual.label}" — vez de ${j.nome}`;
+  $("player").src = "/api/score/ref?mode=mimic&ref=" + encodeURIComponent(clipeAtual.id);
+  $("estado-round").textContent = "Pronto.";
+  $("rec").disabled = false;
+}
+
+function soltaMic(stream) { stream.getTracks().forEach((t) => t.stop()); }
+
+let rec = null, chunks = [], gravando = false;
+
+$("rec").addEventListener("click", async () => {
+  if (gravando) { rec.stop(); return; }
+  $("rec").disabled = true;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    $("estado-round").textContent = "Sem acesso ao microfone: " + e.name;
+    $("rec").disabled = false;
+    return;
+  }
+  try {
+    chunks = [];
+    rec = new MediaRecorder(stream);
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    rec.onstop = async () => {
+      soltaMic(stream);
+      gravando = false;
+      $("rec").textContent = "● Gravar";
+      $("rec").setAttribute("aria-pressed", "false");
+      $("rec").disabled = true;
+      $("estado-round").textContent = "Pontuando…";
+
+      const fd = new FormData();
+      fd.append("mode", "mimic");
+      fd.append("ref", clipeAtual.id);
+      fd.append("take", new Blob(chunks, { type: rec.mimeType || "audio/webm" }), "take.webm");
+
+      let r, data = null;
+      try {
+        r = await fetch("/api/score", { method: "POST", body: fd });
+        data = await r.json();
+      } catch (e) {
+        $("estado-round").textContent = "Falha de rede ao pontuar.";
+        $("rec").disabled = false;
+        return;
+      }
+      if (!r.ok) {
+        $("estado-round").textContent = "Erro " + r.status + ": " + (data && data.error ? data.error : "falha ao pontuar");
+        $("rec").disabled = false;
+        return;
+      }
+
+      const j = jogadores[jogadorAtual];
+      j.pontos += data.total;
+      pontosDaRodada.push({ nome: j.nome, pontos: data.total });
+
+      jogadorAtual++;
+      if (jogadorAtual < jogadores.length) {
+        proximoJogadorDaRodada();
+      } else {
+        mostraResumoDaRodada();
+      }
+    };
+    rec.start();
+  } catch (e) {
+    soltaMic(stream);
+    $("estado-round").textContent = "Gravação não suportada neste navegador: " + e.name;
+    $("rec").disabled = false;
+    return;
+  }
+  gravando = true;
+  $("rec").textContent = "■ Parar";
+  $("rec").setAttribute("aria-pressed", "true");
+  $("estado-round").textContent = "Gravando…";
+});
+
+// ── Resumo da rodada ──────────────────────────────────────────────────────
+function mostraResumoDaRodada() {
+  $("round").hidden = true;
+  $("round-summary").hidden = false;
+  $("resumo-titulo").textContent = `Fim da rodada ${rodadaAtual}/${numRodadas}`;
+  const tbody = $("tabela-resumo").querySelector("tbody");
+  tbody.innerHTML = pontosDaRodada
+    .map((p) => `<tr><td>${p.nome}</td><td>${p.pontos.toFixed(1)} nesta rodada</td></tr>`)
+    .join("");
+}
+$("proxima-rodada").addEventListener("click", proximaRodada);
+
+// ── Fim de jogo ─────────────────────────────────────────────────────────
+function mostraFinal() {
+  $("round").hidden = true;
+  $("round-summary").hidden = true;
+  $("final").hidden = false;
+  const ordenados = jogadores.slice().sort((a, b) => b.pontos - a.pontos);
+  const tbody = $("tabela-final").querySelector("tbody");
+  tbody.innerHTML = ordenados
+    .map((j, i) => `<tr><td class="${i === 0 ? "vencedor" : ""}">${j.nome}</td><td>${j.pontos.toFixed(1)}</td></tr>`)
+    .join("");
+}
+
+$("jogar-de-novo").addEventListener("click", () => {
+  $("final").hidden = true;
+  iniciaPartida();
+});
+$("nova-partida").addEventListener("click", () => {
+  jogadores = [];
+  renderJogadores();
+  $("final").hidden = true;
+  $("estado-setup").textContent = "";
+  $("setup").hidden = false;
+});
+</script>
+</body>
+</html>
