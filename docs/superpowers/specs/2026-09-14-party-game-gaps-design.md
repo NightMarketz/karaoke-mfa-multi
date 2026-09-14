@@ -20,8 +20,11 @@ acidente raro, não fluxo.
 Em `web/party.html`, logo após o bloco de `let` de estado:
 
 - Handler em `window` para `beforeunload`.
-- Condição de disparo: `rodadaAtual > 0` **e** a seção `#final` ainda está
-  `hidden`. Fora disso (setup, tela final) o reload passa sem diálogo.
+- Condição de disparo: `rodadaAtual > 0 && rodadaAtual <= numRodadas`.
+  `proximaRodada` incrementa além de `numRodadas` antes de chamar `mostraFinal`,
+  então esse intervalo é exatamente "partida em andamento" — sem depender do
+  `hidden` da seção, que o `crossfade` só vira 200 ms depois. Fora disso
+  (setup, tela final) o reload passa sem diálogo.
 - Ao disparar: `e.preventDefault()` (diálogo nativo; o texto não é
   customizável em browsers atuais — não tentar).
 - Comentário `ponytail:` no handler dizendo que é notebook-only e que celular
