@@ -1,0 +1,30 @@
+/* theme-karaoke.css — tema "bar de karaokê": fundo escuro e quente, dourado de palco.
+   Compartilhado por party.html e mimic.html via <link>. refs.html NAO importa isso —
+   e' tela de gerenciamento, fora do momento de "performance" (decisao humana, brainstorm
+   2026-09-14). Sem borda lateral grossa em cartao: destaque usa glow (box-shadow) ou
+   fundo levemente diferente, nunca uma borda de 3-4px numa lateral so (apontado pelo
+   hook do impeccable na opcao "C" do mockup — side-tab e' tell de UI gerada por IA). */
+:root {
+  color-scheme: dark; /* fixo: o tema e' sempre escuro, nao segue o SO como os --style dos outros arquivos */
+  --bg: #1c1410;        /* fundo, escuro e quente */
+  --bg-card: #2b2018;   /* linhas/cartões, um tom acima do fundo */
+  --fg: #f2e2c4;        /* texto principal, creme */
+  --accent: #e8b04b;    /* dourado de palco — títulos, destaques, vencedor */
+  --accent-soft: rgba(232, 176, 75, .35); /* glow, nunca borda lateral grossa */
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+h1, h2, .destaque { font-family: Georgia, 'Times New Roman', serif; color: var(--accent); }
+
+button { background: var(--bg-card); color: var(--fg); border: 1px solid var(--accent-soft); border-radius: .3rem; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+input, select { background: var(--bg-card); color: var(--fg); border: 1px solid var(--accent-soft); border-radius: .3rem; }
+
+li, .nota, tr { border-color: var(--accent-soft); }
+.nota, li { background: var(--bg-card); }
+
+/* estado ativo (ex.: gravando) e vencedor: glow suave, nunca borda lateral */
+button[aria-pressed="true"] { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.vencedor { background: var(--accent-soft); }
+
+/* crossfade de ~200ms entre telas/estados — classe aplicada um tick antes do hidden trocar */
+.fading { opacity: 0; transition: opacity .2s; }

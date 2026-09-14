@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jogo de festa: imite o som</title>
+  <link rel="stylesheet" href="/static/theme-karaoke.css">
   <style>
-    :root { color-scheme: light dark; }
-    body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
     button { font: inherit; padding: .5rem 1rem; }
     input[type="text"], input[type="number"] { font: inherit; padding: .4rem; }
     ul { list-style: none; padding: 0; }
@@ -15,7 +15,6 @@
     .linha { display: flex; gap: .5rem; align-items: center; margin: .75rem 0; flex-wrap: wrap; }
     .estado { font-weight: 600; }
     .aviso { opacity: .85; }
-    button[aria-pressed="true"] { outline: 3px solid currentColor; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
     td, th { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid; }
     .vencedor { font-weight: 700; }
@@ -70,8 +69,18 @@
     </div>
   </section>
 
+<script src="/static/score-animation.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
+
+// So uma secao (setup/round/round-summary/final) fica visivel por vez — acha a
+// atual e crossfada pra secao pedida, sem precisar que cada call site liste
+// manualmente quem escoder.
+const SECOES = () => [$("setup"), $("round"), $("round-summary"), $("final")];
+function mostraSecao(secao) {
+  const atual = SECOES().find((el) => !el.hidden && el !== secao);
+  crossfade(atual, secao);
+}
 
 // ── Estado, so em memoria da aba: recarregar a pagina perde a partida ──────
 let jogadores = [];      // [{nome, pontos}]
@@ -168,9 +177,7 @@ function proximaRodada() {
   jogadorAtual = 0;
   pontosDaRodada = [];
   clipeAtual = proximoClipe();
-  $("setup").hidden = true;
-  $("round-summary").hidden = true;
-  $("round").hidden = false;
+  mostraSecao($("round"));
   proximoJogadorDaRodada();
 }
 
@@ -256,38 +263,41 @@ $("rec").addEventListener("click", async () => {
 
 // ── Resumo da rodada ──────────────────────────────────────────────────────
 function mostraResumoDaRodada() {
-  $("round").hidden = true;
-  $("round-summary").hidden = false;
+  mostraSecao($("round-summary"));
   $("resumo-titulo").textContent = `Fim da rodada ${rodadaAtual}/${numRodadas}`;
   const tbody = $("tabela-resumo").querySelector("tbody");
   tbody.innerHTML = pontosDaRodada
-    .map((p) => `<tr><td>${p.nome}</td><td>${p.pontos.toFixed(1)} nesta rodada</td></tr>`)
+    .map((p) => `<tr><td>${p.nome}</td><td><b class="pontos"></b> nesta rodada</td></tr>`)
     .join("");
+  new Audio("/static/sfx/ding.mp3").play().catch(() => {});
+  tbody.querySelectorAll("b.pontos").forEach((el, i) => animaContador(el, pontosDaRodada[i].pontos));
 }
 $("proxima-rodada").addEventListener("click", proximaRodada);
 
 // ── Fim de jogo ─────────────────────────────────────────────────────────
 function mostraFinal() {
-  $("round").hidden = true;
-  $("round-summary").hidden = true;
-  $("final").hidden = false;
+  mostraSecao($("final"));
+  new Audio("/static/sfx/aplauso.mp3").play().catch(() => {});
   const ordenados = jogadores.slice().sort((a, b) => b.pontos - a.pontos);
+  // placar final soma rodadas e pode passar de 100 — escala a duracao da animacao
+  // pelo MAIOR total da tabela, senao todo placar alto bate no teto e parece igual.
+  const maiorTotal = Math.max(1, ...ordenados.map((j) => j.pontos));
   const tbody = $("tabela-final").querySelector("tbody");
   tbody.innerHTML = ordenados
-    .map((j, i) => `<tr><td class="${i === 0 ? "vencedor" : ""}">${j.nome}</td><td>${j.pontos.toFixed(1)}</td></tr>`)
+    .map((j, i) => `<tr><td class="${i === 0 ? "vencedor" : ""}">${j.nome}</td><td><b class="pontos"></b></td></tr>`)
     .join("");
+  new Audio("/static/sfx/ding.mp3").play().catch(() => {});
+  tbody.querySelectorAll("b.pontos").forEach((el, i) => animaContador(el, ordenados[i].pontos, 800, maiorTotal));
 }
 
 $("jogar-de-novo").addEventListener("click", () => {
-  $("final").hidden = true;
   iniciaPartida();
 });
 $("nova-partida").addEventListener("click", () => {
   jogadores = [];
   renderJogadores();
-  $("final").hidden = true;
   $("estado-setup").textContent = "";
-  $("setup").hidden = false;
+  mostraSecao($("setup"));
 });
 </script>
 </body>
