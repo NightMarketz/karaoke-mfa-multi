@@ -258,6 +258,7 @@ $("rec").addEventListener("click", async () => {
       }
     };
     rec.start();
+    $("rec").disabled = false;
   } catch (e) {
     soltaMic(stream);
     $("estado-round").textContent = "Gravação não suportada neste navegador: " + e.name;
