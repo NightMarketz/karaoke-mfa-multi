@@ -1,4 +1,5 @@
 import io
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -86,6 +87,27 @@ def test_clipe_fraco_rejeitado_pela_curadoria(client, refs_dir):
     }, content_type="multipart/form-data")
     assert r.status_code == 422, f"veio {r.status_code}: {r.data[:200]}"
     assert not (refs_dir / "mudo.wav").exists(), "clipe reprovado nao deveria sobrar em disco"
+
+
+def test_decode_falho_nao_deixa_wav_quebrado_na_biblioteca(client, refs_dir, monkeypatch):
+    """_webm_para_wav pode retornar False depois de ja ter escrito (ou escrito
+    parcialmente) o dst — timeout ou saida non-zero do ffmpeg. dst mora em
+    MIMIC_REF_DIR (persistente), nao no tempdir: sem o unlink, o wav quebrado
+    fica na biblioteca e a lista GET (que engole erro de sf.info como dur=0.0)
+    mostra ele disponivel pra uma rodada escolher."""
+    import server_mimic_refs_addendum as mod
+
+    def _falha_apos_escrever(src, dst, max_s=None):
+        Path(dst).write_bytes(b"lixo, nao e wav de verdade")
+        return False
+
+    monkeypatch.setattr(mod, "_webm_para_wav", _falha_apos_escrever)
+
+    r = client.post("/api/mimic_refs", data={
+        "file": (_clipe_bom(), "quebrado.wav"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400, f"veio {r.status_code}: {r.data[:200]}"
+    assert list(refs_dir.glob("*.wav")) == [], f"sobrou wav quebrado: {list(refs_dir.glob('*.wav'))}"
 
 
 def test_delete_remove_arquivo(client, refs_dir):

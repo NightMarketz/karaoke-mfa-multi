@@ -27,4 +27,5 @@ button[aria-pressed="true"] { outline: none; box-shadow: 0 0 0 3px var(--accent-
 .vencedor { background: var(--accent-soft); }
 
 /* crossfade de ~200ms entre telas/estados — classe aplicada um tick antes do hidden trocar */
-.fading { opacity: 0; transition: opacity .2s; }
+section, .notas { transition: opacity .2s; }
+.fading { opacity: 0; }

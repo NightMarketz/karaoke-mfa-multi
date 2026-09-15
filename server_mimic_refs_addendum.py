@@ -98,6 +98,7 @@ def make_mimic_refs_route(app) -> None:
             except FfmpegAusente:
                 return _erro("ffmpeg indisponivel no servidor", 503)
             if not ok:
+                dst.unlink(missing_ok=True)
                 return _erro("arquivo nao pudemos decodificar como audio", 400)
 
             samples, sr = sf.read(dst, dtype="float32")
