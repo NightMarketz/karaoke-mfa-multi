@@ -35,6 +35,9 @@ work/
 input/
 uploads/
 examples/
+# mp3 de terceiro (MyInstants) baixado por scripts/fetch_ui_sfx.py — mesmo tratamento
+# de input/: nao viaja no git, so o script que baixa viaja.
+web/sfx/
 # ancorado na raiz: pega scratch de teste solto (test_song.wav), nao a suite em tests/
 /test_*
 *.mp4
