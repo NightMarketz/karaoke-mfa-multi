@@ -34,7 +34,7 @@ Spec: `docs/superpowers/specs/2026-09-14-party-game-gaps-design.md`.
 - Consumes: `rodadaAtual` (0 no setup, 1..numRodadas durante o jogo, numRodadas+1 na tela final — `proximaRodada` incrementa antes de chamar `mostraFinal`), `numRodadas`, `jogadores[i].pontos` (acumulado entre rodadas, zerado em `iniciaPartida`).
 - Produces: nada consumido por outra tarefa.
 
-- [ ] **Step 1: Confirmar o estado das linhas alvo**
+- [x] **Step 1: Confirmar o estado das linhas alvo**
 
 Run: `grep -nE "Estado, so em memoria|^let pontosDaRodada|vez de \\$\\{j.nome\\}" web/party.html`
 Expected (3 linhas):
@@ -45,7 +45,7 @@ Expected (3 linhas):
 ```
 Se qualquer linha divergir, PARE e reporte — não adapte.
 
-- [ ] **Step 2: Trocar o comentário da linha 85**
+- [x] **Step 2: Trocar o comentário da linha 85**
 
 De:
 ```js
@@ -57,7 +57,7 @@ Para:
 // guarda beforeunload abaixo so evita o acidente, nao recupera nada ──────
 ```
 
-- [ ] **Step 3: Inserir a guarda logo após a linha `let pontosDaRodada = ...`**
+- [x] **Step 3: Inserir a guarda logo após a linha `let pontosDaRodada = ...`**
 
 Inserir, com uma linha em branco antes e depois:
 ```js
@@ -70,7 +70,7 @@ window.addEventListener("beforeunload", (e) => {
 });
 ```
 
-- [ ] **Step 4: Pontos no título**
+- [x] **Step 4: Pontos no título**
 
 Na linha do título (era a 187, agora deslocada), trocar:
 ```js
@@ -81,7 +81,7 @@ por:
     `Rodada ${rodadaAtual}/${numRodadas} — clipe "${clipeAtual.label}" — vez de ${j.nome} (${j.pontos} pts)`;
 ```
 
-- [ ] **Step 5: Checagem sintática do JS inline**
+- [x] **Step 5: Checagem sintática do JS inline**
 
 `party.html` não tem teste JS. Extrair o script e checar sintaxe (Bash):
 ```bash
@@ -95,12 +95,12 @@ open('party_inline_check.js','w',encoding='utf-8').write('\n'.join(js))
 ```
 Expected: `SYNTAX_OK`. Se `node` não existir no PATH, reporte e siga — a Tarefa 3 cobre no browser.
 
-- [ ] **Step 6: Conferir o diff**
+- [x] **Step 6: Conferir o diff**
 
 Run: `git status --short && git diff --stat web/party.html`
 Expected: status mostra **só** ` M web/party.html`; stat na casa de `+11 -2`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add web/party.html
@@ -125,7 +125,7 @@ Worktree: `C:/Users/Katz/OneDrive/Desktop/Meus projetos/karaoke-mfa-multi/.claud
 
 **Interfaces:** nenhuma — só commit de preservação. Não editar nenhum arquivo.
 
-- [ ] **Step 1: Confirmar o estado esperado**
+- [x] **Step 1: Confirmar o estado esperado**
 
 Run: `git -C "$W" status --short`
 Expected exatamente estas 7 linhas (ordem pode variar):
@@ -140,18 +140,18 @@ Expected exatamente estas 7 linhas (ordem pode variar):
 ```
 Se aparecer qualquer outra linha ou faltar alguma, PARE e reporte (outra sessão pode estar mexendo lá).
 
-- [ ] **Step 2: Stage por caminho exato**
+- [x] **Step 2: Stage por caminho exato**
 
 ```bash
 git -C "$W" add server_score_addendum.py tests/test_score_route.py web/mimic.html docs/human-takes-protocol.md scripts/analyze_human_takes.py tests/test_analyze_human_takes.py
 ```
 
-- [ ] **Step 3: Conferir que `.claude/` ficou de fora**
+- [x] **Step 3: Conferir que `.claude/` ficou de fora**
 
 Run: `git -C "$W" status --short`
 Expected: 6 linhas começando com `A ` ou `M ` e uma `?? .claude/`. Se `.claude/` aparecer staged: `git -C "$W" reset -- .claude` e reconfira.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git -C "$W" commit -m "wip(scorer): coleta de take humano — protocolo, analyze script, checkbox salvar
@@ -162,7 +162,7 @@ rodada aqui; vira rodada propria depois da PR do jogo de festa.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 5: Confirmar**
+- [x] **Step 5: Confirmar**
 
 Run: `git -C "$W" log --oneline -1 && git -C "$W" status --short`
 Expected: primeira linha começa com `wip(scorer)`; status mostra só `?? .claude/`. **Sem push.**
@@ -173,21 +173,21 @@ Expected: primeira linha começa com `wip(scorer)`; status mostra só `?? .claud
 
 **Files:** nenhum editado de forma permanente (a guarda é comentada e restaurada para o controle negativo).
 
-- [ ] **Step 1: Pré-requisitos gitignored**
+- [x] **Step 1: Pré-requisitos gitignored**
 
 Run: `python scripts/fetch_ui_sfx.py && python scripts/fetch_mimic_refs.py && ls web/sfx/*.mp3 | wc -l && ls input/mimic_refs/*.wav | wc -l`
 Expected: ambos os contadores > 0.
 
-- [ ] **Step 2: Testes de backend**
+- [x] **Step 2: Testes de backend**
 
 Run: `python -m pytest tests/test_score_route.py tests/test_mimic_refs_route.py -q`
 Expected: `N passed`; publicar `N/N` com o total reportado pelo pytest (contexto anterior: 34).
 
-- [ ] **Step 3: Subir o servidor e abrir `party.html`**
+- [x] **Step 3: Subir o servidor e abrir `party.html`**
 
 Subir `server.py` via `preview_start` e abrir `/static/party.html` no Browser pane.
 
-- [ ] **Step 4: Prova positiva/negativa da guarda, com cardinalidade**
+- [x] **Step 4: Prova positiva/negativa da guarda, com cardinalidade**
 
 | # | Estado | Ação | Esperado |
 |---|---|---|---|
@@ -199,11 +199,13 @@ Subir `server.py` via `preview_start` e abrir `/static/party.html` no Browser pa
 
 Publicar: 5/5 estados examinados e o resultado de cada um. Se o browser embarcado não renderizar o diálogo nativo, usar `navigate` sem `force`: erro "Leave site?" em (b)/(e) e sucesso em (a)/(c)/(d) é a mesma prova.
 
-- [ ] **Step 5: Pontos no título**
+- [x] **Step 5: Pontos no título**
 
 Em (b) o título termina com `(0 pts)`; com ≥2 rodadas, o título da rodada 2 mostra o total da rodada 1. Ler via `get_page_text`, não screenshot.
 
 - [ ] **Step 6: Abrir a PR**
+
+> Superado em 2026-09-16: a guarda e os pontos no titulo ja entraram em `main` por `b763f858` (PR #18) e PR #19 antes desta branch ser verificada. Prova registrada na PR desta branch: backend 34/34; browser 5/5 estados (incl. controle negativo), titulo com pontos.
 
 Push: `git push -u origin claude/party-game-gaps-brainstorm-f33062`.
 Depois `gh pr create --base main` com título
