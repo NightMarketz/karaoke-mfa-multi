@@ -82,7 +82,8 @@ function mostraSecao(secao) {
   crossfade(atual, secao);
 }
 
-// ── Estado, so em memoria da aba: recarregar a pagina perde a partida ──────
+// ── Estado, so em memoria da aba: recarregar a pagina perde a partida; a
+// guarda beforeunload abaixo so evita o acidente, nao recupera nada ──────
 let jogadores = [];      // [{nome, pontos}]
 let numRodadas = 5;
 let baseClipes = [];     // [{id, label}] vindo de /api/mimic_refs
@@ -92,6 +93,14 @@ let rodadaAtual = 0;     // 1-based durante o jogo
 let jogadorAtual = 0;    // indice em jogadores, dentro da rodada
 let clipeAtual = null;
 let pontosDaRodada = []; // [{nome, pontos}] acumulado pra tela de resumo
+
+// ponytail: guarda so pra notebook (decisao 2026-09-14). iOS nao dispara
+// beforeunload — se o jogo for pra celular, trocar por sessionStorage.
+window.addEventListener("beforeunload", (e) => {
+  // rodadaAtual passa de numRodadas antes de mostraFinal: esse intervalo e
+  // exatamente "partida em andamento".
+  if (rodadaAtual > 0 && rodadaAtual <= numRodadas) e.preventDefault();
+});
 
 function embaralha(arr) {
   const a = arr.slice();
@@ -184,7 +193,7 @@ function proximaRodada() {
 function proximoJogadorDaRodada() {
   const j = jogadores[jogadorAtual];
   $("round-titulo").textContent =
-    `Rodada ${rodadaAtual}/${numRodadas} — clipe "${clipeAtual.label}" — vez de ${j.nome}`;
+    `Rodada ${rodadaAtual}/${numRodadas} — clipe "${clipeAtual.label}" — vez de ${j.nome} (${j.pontos} pts)`;
   $("player").src = "/api/score/ref?mode=mimic&ref=" + encodeURIComponent(clipeAtual.id);
   $("estado-round").textContent = "Pronto.";
   $("rec").disabled = false;
