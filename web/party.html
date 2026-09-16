@@ -72,6 +72,8 @@
 <script src="/static/score-animation.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
+// ponytail: escape via DOM em vez de tabela — so precisa cobrir texto entre tags.
+const esc = (s) => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
 
 // So uma secao (setup/round/round-summary/final) fica visivel por vez — acha a
 // atual e crossfada pra secao pedida, sem precisar que cada call site liste
@@ -125,7 +127,7 @@ function renderJogadores() {
   ul.innerHTML = "";
   jogadores.forEach((j, i) => {
     const li = document.createElement("li");
-    li.innerHTML = `<span class="nome">${j.nome}</span><button data-i="${i}">Remover</button>`;
+    li.innerHTML = `<span class="nome">${esc(j.nome)}</span><button data-i="${i}">Remover</button>`;
     ul.appendChild(li);
   });
   ul.querySelectorAll("button").forEach((btn) => {
@@ -155,8 +157,14 @@ $("comecar").addEventListener("click", async () => {
   numRodadas = Math.max(1, parseInt($("rodadas").value, 10) || 5);
 
   $("estado-setup").textContent = "Carregando clipes…";
-  const r = await fetch("/api/mimic_refs");
-  baseClipes = await r.json();
+  try {
+    const r = await fetch("/api/mimic_refs");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    baseClipes = await r.json();
+  } catch (e) {
+    $("estado-setup").textContent = "Falha ao carregar clipes: " + e.message;
+    return;
+  }
   if (baseClipes.length === 0) {
     $("estado-setup").textContent = "Nenhum clipe na biblioteca — adicione em /static/refs.html antes de começar.";
     return;
@@ -277,7 +285,7 @@ function mostraResumoDaRodada() {
   $("resumo-titulo").textContent = `Fim da rodada ${rodadaAtual}/${numRodadas}`;
   const tbody = $("tabela-resumo").querySelector("tbody");
   tbody.innerHTML = pontosDaRodada
-    .map((p) => `<tr><td>${p.nome}</td><td><b class="pontos"></b> nesta rodada</td></tr>`)
+    .map((p) => `<tr><td>${esc(p.nome)}</td><td><b class="pontos"></b> nesta rodada</td></tr>`)
     .join("");
   new Audio("/static/sfx/ding.mp3").play().catch(() => {});
   tbody.querySelectorAll("b.pontos").forEach((el, i) => animaContador(el, pontosDaRodada[i].pontos));
@@ -294,7 +302,7 @@ function mostraFinal() {
   const maiorTotal = Math.max(1, ...ordenados.map((j) => j.pontos));
   const tbody = $("tabela-final").querySelector("tbody");
   tbody.innerHTML = ordenados
-    .map((j, i) => `<tr><td class="${i === 0 ? "vencedor" : ""}">${j.nome}</td><td><b class="pontos"></b></td></tr>`)
+    .map((j, i) => `<tr><td class="${i === 0 ? "vencedor" : ""}">${esc(j.nome)}</td><td><b class="pontos"></b></td></tr>`)
     .join("");
   new Audio("/static/sfx/ding.mp3").play().catch(() => {});
   tbody.querySelectorAll("b.pontos").forEach((el, i) => animaContador(el, ordenados[i].pontos, 800, maiorTotal));

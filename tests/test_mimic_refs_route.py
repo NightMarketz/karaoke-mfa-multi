@@ -162,3 +162,15 @@ def test_rotulo_opcional_vira_id_no_lugar_do_nome_do_arquivo(client, refs_dir):
     }, content_type="multipart/form-data")
     assert r.status_code == 201, f"veio {r.status_code}: {r.data[:200]}"
     assert r.get_json()["id"] == "grito_de_vitoria_", f"veio {r.get_json()}"
+
+
+def test_label_do_post_e_o_mesmo_que_o_get_lista(client, refs_dir):
+    r = client.post("/api/mimic_refs", data={
+        "file": (_clipe_bom(), "x.wav"),
+        "label": "grito de vitoria!",
+    }, content_type="multipart/form-data")
+    assert r.status_code == 201, f"veio {r.status_code}: {r.data[:200]}"
+    post = r.get_json()
+    listado = [c for c in client.get("/api/mimic_refs").get_json() if c["id"] == post["id"]]
+    assert len(listado) == 1, listado
+    assert post["label"] == listado[0]["label"], (post, listado[0])

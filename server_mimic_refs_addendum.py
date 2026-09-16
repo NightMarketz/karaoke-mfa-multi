@@ -119,7 +119,7 @@ def make_mimic_refs_route(app) -> None:
 
         return jsonify({
             "id": ref_id,
-            "label": label or ref_id,
+            "label": ref_id,  # igual ao GET: o rotulo livre nao e persistido
             "duration_s": round(track.duration, 2),
         }), 201
 
