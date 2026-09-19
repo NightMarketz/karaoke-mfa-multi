@@ -39,6 +39,17 @@
     <span id="estado" class="estado" role="status" aria-live="polite">Pronto.</span>
   </p>
 
+  <!-- Coleta pra pesquisa (calibrar contra microfone de verdade, nao contra o
+       stem do Demucs fazendo papel de take — spec 2026-09-10, "Fica aberto").
+       Opt-in: sem marcar, nada e salvo. -->
+  <p class="aud">
+    <label><input type="checkbox" id="salvar"> Salvar este take para pesquisa</label>
+    <span id="campos-pesquisa" hidden>
+      · <input id="participante" placeholder="participante" size="10">
+      <input id="condicao" placeholder="condição (ex: quarto silencioso)" size="24">
+    </span>
+  </p>
+
   <div class="notas" id="notas" hidden>
     <div class="nota total">Total <b id="n-total">—</b></div>
     <div class="nota">Melodia <b id="n-melody">—</b></div>
@@ -69,6 +80,10 @@ player.addEventListener("error", () => {
 $("ref").addEventListener("change", carregaReferencia);
 $("mode").addEventListener("change", carregaReferencia);
 carregaReferencia();
+
+$("salvar").addEventListener("change", () => {
+  $("campos-pesquisa").hidden = !$("salvar").checked;
+});
 
 function soltaMic(stream) { stream.getTracks().forEach((t) => t.stop()); }
 
@@ -107,6 +122,11 @@ $("rec").addEventListener("click", async () => {
       fd.append("mode", $("mode").value);
       fd.append("ref", $("ref").value.trim());
       fd.append("take", new Blob(chunks, { type: rec.mimeType || "audio/webm" }), "take.webm");
+      if ($("salvar").checked) {
+        fd.append("save", "1");
+        fd.append("participante", $("participante").value.trim());
+        fd.append("condicao", $("condicao").value.trim());
+      }
 
       let r, data = null;
       try {
