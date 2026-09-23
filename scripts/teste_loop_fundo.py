@@ -199,7 +199,9 @@ def main():
     lista.write_text("".join(f"file '{p.as_posix()}'\nduration {1/FPS:.5f}\n" for p in arqs))
     ffmpeg("-f", "concat", "-safe", "0", "-i", str(lista), "-r", str(FPS),
            "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", str(pasta / "loop.mp4"))
-    ffmpeg("-stream_loop", "2", "-i", str(pasta / "loop.mp4"), "-filter_complex",
+    # Uma volta so: o GIF loopa sozinho (-loop 0); repetir no arquivo triplicava
+    # o tamanho (7,4 MB no ensaio) sem mostrar nada novo.
+    ffmpeg("-i", str(pasta / "loop.mp4"), "-filter_complex",
            f"scale={a.gif_width}:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];"
            f"[b][p]paletteuse=dither=bayer:bayer_scale=4", "-loop", "0", str(pasta / "loop.gif"))
     # Tira de contato: 8 quadros espalhados + a emenda (ultimo | primeiro) no fim.
