@@ -50,7 +50,7 @@ HIGH_MODEL = "smoothMixWan2214BI2V_i2vV20High.safetensors"
 # SmoothMix ja vem destilado: no workflow SVI original a alta nao leva
 # lightx2v. O no de LoRA fica no grafo com peso 0 para dar para ligar sem
 # reeditar o JSON (--high-lora-w 1).
-HIGH_LORA = "lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors"
+HIGH_LORA = "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"
 
 # Movimento LOCAL: a tentativa anterior pediu "ambiente" e saiu rampa global
 # de brilho (pico 63/255), que faz a legenda respirar.

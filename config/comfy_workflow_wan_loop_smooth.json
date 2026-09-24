@@ -32,7 +32,7 @@
     "class_type": "LoraLoaderModelOnly",
     "inputs": {
       "model": ["56", 0],
-      "lora_name": "lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors",
+      "lora_name": "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
       "strength_model": 1
     }
   },
