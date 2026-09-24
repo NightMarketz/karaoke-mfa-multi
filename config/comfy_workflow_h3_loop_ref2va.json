@@ -1,0 +1,263 @@
+{
+ "6": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+   "weight_dtype": "default"
+  }
+ },
+ "121": {
+  "class_type": "LoraLoaderModelOnly",
+  "inputs": {
+   "model": [
+    "6",
+    0
+   ],
+   "lora_name": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+   "strength_model": 1.0
+  }
+ },
+ "13": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+   "type": "minimax",
+   "device": "default"
+  }
+ },
+ "11": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+  }
+ },
+ "24": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+  }
+ },
+ "114": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "%image%"
+  }
+ },
+ "104": {
+  "class_type": "MiniMaxH3ReferenceToVideo",
+  "inputs": {
+   "clip": [
+    "13",
+    0
+   ],
+   "vae": [
+    "11",
+    0
+   ],
+   "prompt": "%prompt%",
+   "width": 1024,
+   "height": 576,
+   "length": 124,
+   "ref_image_size": "match",
+   "ref_images.ref_image_1": [
+    "114",
+    0
+   ]
+  }
+ },
+ "200": {
+  "class_type": "MiniMaxH3AddGuide",
+  "inputs": {
+   "positive": [
+    "104",
+    0
+   ],
+   "vae": [
+    "11",
+    0
+   ],
+   "latent": [
+    "104",
+    1
+   ],
+   "image": [
+    "114",
+    0
+   ],
+   "frame_idx": 0
+  }
+ },
+ "201": {
+  "class_type": "MiniMaxH3AddGuide",
+  "inputs": {
+   "positive": [
+    "200",
+    0
+   ],
+   "vae": [
+    "11",
+    0
+   ],
+   "latent": [
+    "104",
+    1
+   ],
+   "image": [
+    "114",
+    0
+   ],
+   "frame_idx": -1
+  }
+ },
+ "17": {
+  "class_type": "KSamplerSelect",
+  "inputs": {
+   "sampler_name": "res_multistep"
+  }
+ },
+ "9": {
+  "class_type": "BasicScheduler",
+  "inputs": {
+   "model": [
+    "121",
+    0
+   ],
+   "scheduler": "simple",
+   "steps": 4,
+   "denoise": 1.0
+  }
+ },
+ "15": {
+  "class_type": "RandomNoise",
+  "inputs": {
+   "noise_seed": %seed%
+  }
+ },
+ "202": {
+  "class_type": "MiniMaxH3AddGuide",
+  "inputs": {
+   "positive": [
+    "201",
+    0
+   ],
+   "vae": [
+    "11",
+    0
+   ],
+   "latent": [
+    "104",
+    1
+   ],
+   "image": [
+    "114",
+    0
+   ],
+   "frame_idx": 31
+  }
+ },
+ "203": {
+  "class_type": "MiniMaxH3AddGuide",
+  "inputs": {
+   "positive": [
+    "202",
+    0
+   ],
+   "vae": [
+    "11",
+    0
+   ],
+   "latent": [
+    "104",
+    1
+   ],
+   "image": [
+    "114",
+    0
+   ],
+   "frame_idx": 62
+  }
+ },
+ "204": {
+  "class_type": "MiniMaxH3AddGuide",
+  "inputs": {
+   "positive": [
+    "203",
+    0
+   ],
+   "vae": [
+    "11",
+    0
+   ],
+   "latent": [
+    "104",
+    1
+   ],
+   "image": [
+    "114",
+    0
+   ],
+   "frame_idx": 93
+  }
+ },
+ "16": {
+  "class_type": "BasicGuider",
+  "inputs": {
+   "model": [
+    "121",
+    0
+   ],
+   "conditioning": [
+    "204",
+    0
+   ]
+  }
+ },
+ "14": {
+  "class_type": "SamplerCustomAdvanced",
+  "inputs": {
+   "noise": [
+    "15",
+    0
+   ],
+   "guider": [
+    "16",
+    0
+   ],
+   "sampler": [
+    "17",
+    0
+   ],
+   "sigmas": [
+    "9",
+    0
+   ],
+   "latent_image": [
+    "104",
+    1
+   ]
+  }
+ },
+ "10": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "14",
+    0
+   ],
+   "vae": [
+    "11",
+    0
+   ]
+  }
+ },
+ "300": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "10",
+    0
+   ],
+   "filename_prefix": "karaoke_h3_loop/f"
+  }
+ }
+}
