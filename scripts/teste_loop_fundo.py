@@ -8,6 +8,10 @@ o karaoke: o loop fecha? a faixa da legenda "respira"? quanto custa?
     python scripts/teste_loop_fundo.py --ckpt <checkpoint_sd15.safetensors> \
         --lora fengjing.safetensors --prompt "anime landscape, night city, rain"
 
+    # 1b) qualquer template de imagem so com %prompt%/%seed% (formato do 08b)
+    python scripts/teste_loop_fundo.py --workflow config/comfy_workflow_one_obsession.json \
+        --prompt "scenery, no humans, night, lake, starry sky, moon, reflection"
+
     # 2) so anima uma imagem que ja existe
     python scripts/teste_loop_fundo.py --image work/algum_fundo.png
 
@@ -136,6 +140,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--image", help="pula a geracao e anima esta imagem")
     ap.add_argument("--ckpt", help="checkpoint SD1.5 (nome em models/checkpoints)")
+    ap.add_argument("--workflow", help="template de imagem com so %%prompt%%/%%seed%% "
+                    "(ex.: config/comfy_workflow_one_obsession.json)")
     ap.add_argument("--lora", default="fengjing.safetensors")
     ap.add_argument("--lora-w", type=float, default=0.8)
     ap.add_argument("--prompt", default="anime landscape, scenery, wide shot, "
@@ -151,8 +157,8 @@ def main():
 
     if (a.frames - 1) % 4:
         sys.exit("--frames tem de ser 4k+1 (33, 49, 81): o VAE do Wan comprime 4 quadros")
-    if not a.image and not a.ckpt:
-        sys.exit("passe --image <png> ou --ckpt <checkpoint SD1.5>")
+    if not (a.image or a.ckpt or a.workflow):
+        sys.exit("passe --image <png>, --ckpt <checkpoint SD1.5> ou --workflow <template>")
 
     pasta = SAIDA / datetime.now().strftime("%Y%m%d_%H%M%S")
     (pasta / "frames").mkdir(parents=True)
@@ -164,9 +170,13 @@ def main():
     if a.image:
         shutil.copy2(a.image, base)
     else:
-        grafo = preencher(WF_IMAGEM.read_text(encoding="utf-8"), {
-            "seed": uuid.uuid4().int % 2 ** 32, "ckpt": a.ckpt, "lora": a.lora,
-            "lora_w": a.lora_w, "prompt": a.prompt})
+        if a.workflow:
+            grafo = preencher(Path(a.workflow).read_text(encoding="utf-8"), {
+                "seed": uuid.uuid4().int % 2 ** 32, "prompt": a.prompt})
+        else:
+            grafo = preencher(WF_IMAGEM.read_text(encoding="utf-8"), {
+                "seed": uuid.uuid4().int % 2 ** 32, "ckpt": a.ckpt, "lora": a.lora,
+                "lora_w": a.lora_w, "prompt": a.prompt})
         imgs, dt = rodar(host, grafo, limite_s=600)
         shutil.copy2(_src(imgs[0]), base)
         rel["imagem_s"] = round(dt, 1)

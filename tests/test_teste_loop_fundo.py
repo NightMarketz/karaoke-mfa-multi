@@ -59,3 +59,10 @@ def test_medir_ve_respiracao_da_faixa():
     calmo = tlf.medir(_quadros(48, True))["faixa_legenda_respiracao"]
     ofega = tlf.medir(_quadros(48, True, respira=40))["faixa_legenda_respiracao"]
     assert ofega > calmo * 3
+
+
+def test_template_one_obsession_preenche_so_com_prompt_e_seed():
+    g = tlf.preencher((RAIZ / "config" / "comfy_workflow_one_obsession.json")
+                      .read_text(encoding="utf-8"), {"seed": 3, "prompt": "scenery"})
+    assert g["1"]["inputs"]["unet_name"] == "oneObsession_anima29BV1.safetensors"
+    assert g["2"]["inputs"]["clip_name"] == "oneObsession_anima29BV1_txt.safetensors"
