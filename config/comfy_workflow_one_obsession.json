@@ -9,7 +9,7 @@
   "2": {
     "class_type": "CLIPLoader",
     "inputs": {
-      "clip_name": "oneObsession_anima29BV1_txt.safetensors",
+      "clip_name": "qwen_3_06b_base.safetensors",
       "type": "stable_diffusion",
       "device": "default"
     }

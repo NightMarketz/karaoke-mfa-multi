@@ -65,4 +65,4 @@ def test_template_one_obsession_preenche_so_com_prompt_e_seed():
     g = tlf.preencher((RAIZ / "config" / "comfy_workflow_one_obsession.json")
                       .read_text(encoding="utf-8"), {"seed": 3, "prompt": "scenery"})
     assert g["1"]["inputs"]["unet_name"] == "oneObsession_anima29BV1.safetensors"
-    assert g["2"]["inputs"]["clip_name"] == "oneObsession_anima29BV1_txt.safetensors"
+    assert g["2"]["inputs"]["clip_name"] == "qwen_3_06b_base.safetensors"  # identico byte a byte ao _txt do Civitai (SHA256 CD2A5120...)
