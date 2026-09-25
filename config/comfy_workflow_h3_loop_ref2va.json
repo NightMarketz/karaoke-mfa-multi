@@ -55,9 +55,9 @@
     0
    ],
    "prompt": "%prompt%",
-   "width": 1024,
-   "height": 576,
-   "length": 124,
+   "width": %width%,
+   "height": %height%,
+   "length": %length%,
    "ref_image_size": "match",
    "ref_images.ref_image_1": [
     "114",

@@ -1,5 +1,5 @@
 """
-teste_loop_fundo.py — bancada: imagem de fundo -> loop Wan -> GIF, com medicao.
+teste_loop_fundo.py — bancada: imagem de fundo -> loop MiniMax-H3 -> GIF, com medicao.
 
 Responde, com numero e tira de contato, se um fundo animado em loop serve para
 o karaoke: o loop fecha? a faixa da legenda "respira"? quanto custa?
@@ -18,11 +18,19 @@ o karaoke: o loop fecha? a faixa da legenda "respira"? quanto custa?
 Saida em work/teste_loop/<carimbo>/: base.png, frames/, loop.mp4, loop.gif,
 contato.png e relatorio.json.
 
-O loop fecha por CONSTRUCAO (mesma imagem em start_image e end_image do
-WanFirstLastFrameToVideo — README, "medido e descartado"). O modelo alto e o
-SmoothMix dos workflows SVI do Civitai; o laco "循环" daqueles workflows
-encadeia cenas num video longo e NAO fecha loop, por isso o grafo deles nao
-e usado aqui — so os pesos.
+Roda no ComfyUI de C:/rk (ROCm): o Desktop nao tem os nos locais do H3 e
+fixa 28 blocos no Anima, o que quebra o One Obsession (36 blocos). Suba com
+os modelos de C:/ComfyUI/models:
+
+    C:
+kenv-rocm\Scripts\python.exe C:
+k\ComfyUI\main.py <flags do C:
+k
+un_comfy.ps1>         --extra-model-paths-config config/comfy_extra_model_paths_rk.yaml
+
+O loop fecha por CONSTRUCAO: a imagem base e ancorada (MiniMaxH3AddGuide) no
+primeiro e no ultimo quadro, e tambem em 31/62/93 — so as pontas deixavam a
+camera fazer panoramica e a faixa da legenda respirar 26/255 (medido).
 
 Os numeros sao triagem. Quem decide e a tira de contato, a olho (guia §2.7).
 """
@@ -38,27 +46,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from karaoke.background import (COMFY_OUTPUT_ROOT, _bust_cache, _diagnostico,
-                                _post_json, resolve_comfy_host)
+import os
+
+from karaoke.background import (_bust_cache, _diagnostico, _post_json,
+                                resolve_comfy_host)
 
 RAIZ = Path(__file__).resolve().parent.parent
 WF_IMAGEM = RAIZ / "config" / "comfy_workflow_sd15_lora.json"
-WF_LOOP = RAIZ / "config" / "comfy_workflow_wan_loop_smooth.json"
+WF_LOOP = RAIZ / "config" / "comfy_workflow_h3_loop_ref2va.json"
+# Pasta do ComfyUI que roda o H3 (input/ e output/ saem dela).
+COMFY_DIR = Path(os.environ.get("COMFYUI_DIR", "C:/rk/ComfyUI"))
 SAIDA = RAIZ / "work" / "teste_loop"
-
-HIGH_MODEL = "smoothMixWan2214BI2V_i2vV20High.safetensors"
-# SmoothMix ja vem destilado: no workflow SVI original a alta nao leva
-# lightx2v. O no de LoRA fica no grafo com peso 0 para dar para ligar sem
-# reeditar o JSON (--high-lora-w 1).
-HIGH_LORA = "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"
 
 # Movimento LOCAL: a tentativa anterior pediu "ambiente" e saiu rampa global
 # de brilho (pico 63/255), que faz a legenda respirar.
-PROMPT_MOVIMENTO = ("static camera, locked shot, gentle drifting clouds, "
-                    "softly rippling water, falling rain, flickering distant "
-                    "lights, constant lighting, calm seamless loop")
+PROMPT_MOVIMENTO = ("<Picture 1> static camera, locked-off shot. Gentle ripples, "
+                    "drifting clouds, softly flickering distant lights, constant "
+                    "lighting. Calm night, no people, no text.")
 
-FPS = 16            # fps nativo do Wan
+FPS = 24            # fps nativo do H3
 FAIXA_LEGENDA = (0.62, 0.92)   # fracao da altura onde a legenda do ASS mora
 RAZAO_EMENDA_MAX = 1.5         # mesmo limite do make_loop_gif --forward
 
@@ -104,8 +110,13 @@ def rodar(host: str, grafo: dict, limite_s: int) -> tuple:
     raise TimeoutError(f"nao terminou em {limite_s}s")
 
 
+def grade_h3(n: int) -> bool:
+    """17k+5 (grade do H3) e > 93, a ultima ancora fixa do grafo: 107, 124, 141..."""
+    return n > 93 and n % 17 == 5
+
+
 def _src(img: dict) -> Path:
-    return COMFY_OUTPUT_ROOT / img.get("type", "output") / img.get("subfolder", "") / img["filename"]
+    return COMFY_DIR / img.get("type", "output") / img.get("subfolder", "") / img["filename"]
 
 
 def medir(frames) -> dict:
@@ -147,16 +158,14 @@ def main():
     ap.add_argument("--prompt", default="anime landscape, scenery, wide shot, "
                     "night sky, lake reflection, soft light, no humans, masterpiece")
     ap.add_argument("--movimento", default=PROMPT_MOVIMENTO)
-    ap.add_argument("--frames", type=int, default=49, help="4k+1: 33, 49, 81")
-    ap.add_argument("--width", type=int, default=832)
-    ap.add_argument("--height", type=int, default=480)
-    ap.add_argument("--high-model", default=HIGH_MODEL)
-    ap.add_argument("--high-lora-w", type=float, default=0.0)
+    ap.add_argument("--frames", type=int, default=124, help="17k+5: 107, 124, 141")
+    ap.add_argument("--width", type=int, default=1024)
+    ap.add_argument("--height", type=int, default=576)
     ap.add_argument("--gif-width", type=int, default=640)
     a = ap.parse_args()
 
-    if (a.frames - 1) % 4:
-        sys.exit("--frames tem de ser 4k+1 (33, 49, 81): o VAE do Wan comprime 4 quadros")
+    if not grade_h3(a.frames):
+        sys.exit("--frames tem de ser 17k+5 (107, 124, 141): grade do H3")
     if not (a.image or a.ckpt or a.workflow):
         sys.exit("passe --image <png>, --ckpt <checkpoint SD1.5> ou --workflow <template>")
 
@@ -183,13 +192,12 @@ def main():
         print(f"  imagem: {dt:.0f}s")
 
     nome_input = f"teste_loop_{uuid.uuid4().hex[:8]}.png"
-    shutil.copy2(base, COMFY_OUTPUT_ROOT / "input" / nome_input)
+    shutil.copy2(base, COMFY_DIR / "input" / nome_input)
     grafo = preencher(WF_LOOP.read_text(encoding="utf-8"), {
-        "seed": uuid.uuid4().int % 2 ** 32, "high_model": a.high_model,
-        "high_lora": HIGH_LORA, "high_lora_w": a.high_lora_w,
+        "seed": uuid.uuid4().int % 2 ** 32,
         "prompt": a.movimento, "image": nome_input,
         "width": a.width, "height": a.height, "length": a.frames})
-    print(f"  loop: {a.width}x{a.height}, {a.frames} quadros, alta={a.high_model}")
+    print(f"  loop H3: {a.width}x{a.height}, {a.frames} quadros")
     imgs, dt = rodar(host, grafo, limite_s=3600)
     for i, img in enumerate(imgs):
         shutil.copy2(_src(img), pasta / "frames" / f"f_{i:04d}.png")
@@ -197,7 +205,7 @@ def main():
                s_por_quadro=round(dt / max(len(imgs), 1), 2))
     print(f"  MEDIDO: {len(imgs)} quadros em {dt:.0f}s ({rel['s_por_quadro']}s/quadro)")
 
-    # WanFirstLastFrame devolve o ultimo quadro == primeiro. No loop ele
+    # A ancora em -1 faz o ultimo quadro == primeiro. No loop ele
     # apareceria duas vezes seguidas (um "soluco"): corta o ultimo.
     import numpy as np
     from PIL import Image

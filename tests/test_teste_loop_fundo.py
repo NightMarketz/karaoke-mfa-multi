@@ -10,16 +10,17 @@ _spec = importlib.util.spec_from_file_location("tlf", RAIZ / "scripts" / "teste_
 tlf = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(tlf)
 
-VALORES_LOOP = {"seed": 1, "high_model": "a.safetensors", "high_lora": "b.safetensors",
-                "high_lora_w": 0.0, "prompt": 'chuva "forte"', "image": "x.png",
-                "width": 832, "height": 480, "length": 49}
+VALORES_LOOP = {"seed": 1, "prompt": 'chuva "forte"', "image": "x.png",
+                "width": 1024, "height": 576, "length": 124}
 
 
 def test_template_do_loop_preenche_e_amarra_inicio_ao_fim():
     g = tlf.preencher(tlf.WF_LOOP.read_text(encoding="utf-8"), VALORES_LOOP)
-    flf = g["67"]["inputs"]
-    assert flf["start_image"] == flf["end_image"] == ["62", 0]
-    assert flf["length"] == 49 and g["6"]["inputs"]["text"] == 'chuva "forte"'
+    guias = [n["inputs"] for n in g.values() if n["class_type"] == "MiniMaxH3AddGuide"]
+    assert {gi["frame_idx"] for gi in guias} >= {0, -1}
+    assert all(gi["image"] == ["114", 0] for gi in guias) and g["114"]["inputs"]["image"] == "x.png"
+    ref = g["104"]["inputs"]
+    assert ref["length"] == 124 and ref["prompt"] == 'chuva "forte"'
 
 
 def test_template_da_imagem_preenche():
@@ -69,8 +70,13 @@ def test_template_one_obsession_preenche_so_com_prompt_e_seed():
 
 
 def test_template_h3_loop_ref2va_ancora_a_base_em_cinco_quadros():
-    g = tlf.preencher((RAIZ / "config" / "comfy_workflow_h3_loop_ref2va.json")
-                      .read_text(encoding="utf-8"), {"seed": 3, "prompt": "p", "image": "b.png"})
+    g = tlf.preencher(tlf.WF_LOOP.read_text(encoding="utf-8"), VALORES_LOOP)
     assert g["6"]["inputs"]["unet_name"] == "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
     guias = sorted(n["inputs"]["frame_idx"] for n in g.values() if n["class_type"] == "MiniMaxH3AddGuide")
     assert guias == [-1, 0, 31, 62, 93]
+
+
+def test_quadros_fora_da_grade_do_h3_levanta():
+    # 22 esta na grade, mas a ancora 31 nao cabe (erro real do ComfyUI)
+    assert tlf.grade_h3(107) and tlf.grade_h3(124)
+    assert not tlf.grade_h3(49) and not tlf.grade_h3(22)
