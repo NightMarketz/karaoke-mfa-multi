@@ -170,7 +170,7 @@ def background_png(job_id: str) -> Path:
     return step_output(job_id, "08_background") / "background.png"
 
 def background_scene_mp4(job_id: str) -> Path:
-    """Fundo da cena reativa (Step 08c). Sidecar .json ao lado diz a legenda."""
+    """Fundo da cena reativa (Step 08c). Sidecar .json ao lado guarda o nome da cena."""
     return step_output(job_id, "08_background") / "background_scene.mp4"
 
 def output_video(job_id: str) -> Path:

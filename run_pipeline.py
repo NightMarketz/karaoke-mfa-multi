@@ -140,6 +140,7 @@ def build_steps(job_id, lang, romanization, aligner="mfa", scene=None):
     if scene:
         # So quando pedida: sem --scene os indices de --start-at nao mudam.
         i = [s["name"] for s in steps].index("Video Rendering")
+        steps[i]["cmd"] += ["--scene", scene]
         steps.insert(i, {
             "id": "11b", "name": "Scene Background",
             "cmd": [python, _p("scripts", "08c_scene_background.py"),

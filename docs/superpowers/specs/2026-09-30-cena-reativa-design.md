@@ -20,7 +20,7 @@ quando cada ato acontece. Primeira cena, `guts_camp`:
 | Onde toca | MP4 renderizado, junto da ASS queimada |
 | O que move a história | Energia do stem instrumental (`no_vocals.wav`), automática |
 | Como fazer as camadas | 4 variantes de quadro inteiro (Qwen-Image-Edit), cada uma um loop Wan, misturadas por crossfade |
-| Onde fica a letra | **Já mora no topo** em produção: o 09 escreve `n2\pos(640,60+110·camada)` — camada 0 nas linhas 8–48, camada 1 em 118–158 de 720 (medido). Nada a mudar |
+| Onde fica a letra | **Já mora no topo** em produção: o 09 escreve `\an2\pos(640,60+110·camada)` — camada 0 nas linhas 8–48, camada 1 em 118–158 de 720 (medido). Nada a mudar |
 | Qual cena por música | Parâmetro explícito `--scene`; sem ele, fundo atual |
 
 ## Arquitetura
@@ -106,11 +106,16 @@ arquivo que falta.
 ### 4. Integração
 
 - `karaoke/paths.py`: `background_scene_mp4(job)`.
-- `scripts/09_video_rendering.py`: se `background_scene.mp4` existe, usa ele
-  como `bg` (o `build_render_cmd` já aceita vídeo).
-  Senão, comportamento atual. Bounce continua igual.
+- `scripts/09_video_rendering.py`: recebe `--scene <nome>` e escolhe o fundo por
+  `fundo_do_job`, que só usa `background_scene.mp4` se `--scene` veio, o sidecar
+  diz o mesmo nome e o MP4 não é mais velho que `no_vocals.wav`; senão cai no
+  PNG (ou chapado) e o rótulo impresso diz por que a cena foi ignorada. Bounce
+  continua igual.
+- `karaoke/render_cmd.py`: com fundo em vídeo, `fps=25` é o primeiro filtro — o
+  fps do loop não dita o do MP4 final.
 - `run_pipeline.py`: `--scene <nome>` opcional; quando presente, roda o 08c
-  depois do 08b.
+  depois do 08b e repassa `--scene` ao 09. O 08c apaga a saída antiga antes de
+  compor.
 
 ## Verificação
 

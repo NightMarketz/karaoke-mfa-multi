@@ -1,5 +1,6 @@
 """Compositor da cena. Loops sinteticos de cor chapada via ffmpeg lavfi."""
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -28,7 +29,7 @@ def _pacote(pasta: Path, **troca):
     subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
                     "-i", f"color=c=black:s={W}x{H}:d=1", "-frames:v", "1",
                     str(pasta / "fogo_mask.png")], check=True)
-    (pasta / "scene.json").write_text(json.dumps({"legenda": "topo"}), encoding="utf-8")
+    (pasta / "scene.json").write_text(json.dumps({}), encoding="utf-8")
     return pasta
 
 
@@ -53,7 +54,7 @@ def test_misturar_e_convexa_e_aplica_ganho_so_na_mascara():
 
 def test_pacote_carrega_na_ordem_certa(tmp_path):
     loops, masc, fps, meta = sc.carregar_pacote(_pacote(tmp_path / "c"))
-    assert len(loops) == 4 and fps == FPS and meta == {"legenda": "topo"}
+    assert len(loops) == 4 and fps == FPS and meta == {}
     assert masc.shape == (H, W)
     medias = [l[0].reshape(-1, 3).mean(0).round() for l in loops]
     assert medias[0][0] > 200 and medias[1][1] > 200 and medias[2][2] > 200
@@ -70,6 +71,14 @@ def test_arquivo_faltando_e_nomeado(tmp_path):
 def test_loop_divergente_e_nomeado(tmp_path):
     pasta = _pacote(tmp_path / "c", **{"tensao.mp4": {"w": 32}})
     with pytest.raises(ValueError, match="tensao.mp4"):
+        sc.carregar_pacote(pasta)
+
+
+def test_contagem_divergente_nomeia_o_arquivo_que_difere(tmp_path):
+    # escuro mais LONGO: o de menor contagem seria calmo, mas o que difere e escuro
+    pasta = _pacote(tmp_path / "c", **{"escuro.mp4": {"dur": 4}})
+    # ^: a mensagem cita todas as contagens; o nome culpado vem no inicio
+    with pytest.raises(ValueError, match=r"^escuro\.mp4"):
         sc.carregar_pacote(pasta)
 
 
@@ -99,13 +108,43 @@ def test_falha_no_meio_nao_deixa_mp4(tmp_path):
     assert not list(tmp_path.glob("*.tmp*"))
 
 
-def test_fundo_do_job_prefere_cena(tmp_path):
-    png = tmp_path / "background.png"
-    png.write_bytes(b"x")
-    cena = tmp_path / "background_scene.mp4"
-    assert sc.fundo_do_job(cena, png) == png
-    cena.write_bytes(b"x")
-    assert sc.fundo_do_job(cena, png) == cena
-    png.unlink()
-    cena.unlink()
-    assert sc.fundo_do_job(cena, png) is None
+def _job(tmp_path, sidecar="guts_camp", cena_mp4=True, png=True):
+    audio = tmp_path / "no_vocals.wav"
+    audio.write_bytes(b"x")
+    mp4 = tmp_path / "background_scene.mp4"
+    if cena_mp4:
+        mp4.write_bytes(b"x")
+        mp4.with_suffix(".json").write_text(json.dumps({"scene": sidecar}), encoding="utf-8")
+    bg = tmp_path / "background.png"
+    if png:
+        bg.write_bytes(b"x")
+    return mp4, bg, audio
+
+
+def test_fundo_do_job_usa_cena_quando_nome_e_mtime_batem(tmp_path):
+    mp4, bg, audio = _job(tmp_path)
+    assert sc.fundo_do_job(mp4, bg, "guts_camp", audio) == (mp4, "cena guts_camp")
+
+
+def test_fundo_do_job_sem_scene_usa_png(tmp_path):
+    mp4, bg, audio = _job(tmp_path)
+    assert sc.fundo_do_job(mp4, bg, None, audio) == (bg, "ilustracao")
+
+
+def test_fundo_do_job_sidecar_de_outra_cena_cai_no_png(tmp_path):
+    mp4, bg, audio = _job(tmp_path, sidecar="outra_cena")
+    p, rotulo = sc.fundo_do_job(mp4, bg, "guts_camp", audio)
+    assert p == bg and rotulo.startswith("ilustracao") and "ignorada" in rotulo, rotulo
+
+
+def test_fundo_do_job_cena_mais_velha_que_o_audio_cai_no_png(tmp_path):
+    mp4, bg, audio = _job(tmp_path)
+    t = audio.stat().st_mtime
+    os.utime(mp4, (t - 3600, t - 3600))
+    p, rotulo = sc.fundo_do_job(mp4, bg, "guts_camp", audio)
+    assert p == bg and "ignorada" in rotulo, rotulo
+
+
+def test_fundo_do_job_sem_nada_e_chapado(tmp_path):
+    mp4, bg, audio = _job(tmp_path, cena_mp4=False, png=False)
+    assert sc.fundo_do_job(mp4, bg, None, audio) == (None, "chapado #08090f")

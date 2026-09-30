@@ -42,11 +42,14 @@ def main():
     try:
         if not wav.exists():
             raise FileNotFoundError(f"instrumental nao encontrado: {wav}")
-        loops, masc, fps, meta = scene_compose.carregar_pacote(CENAS / args.scene)
+        loops, masc, fps, _ = scene_compose.carregar_pacote(CENAS / args.scene)
         audio, sr = read_mono_wav(wav)
         rms, fd = onset.compute_rms(audio, sr)
         est, w, g = scene_score.score(rms, fd, onset.detect_onsets(rms, fd), fps, _duracao(wav))
         saida.parent.mkdir(parents=True, exist_ok=True)
+        for velho in (saida, saida.with_suffix(".json"),
+                      saida.with_name("background_scene_relatorio.json")):
+            velho.unlink(missing_ok=True)
         faixa = scene_compose.compor(loops, masc, w, g, fps, saida)
     except Exception as e:
         print(f"ERRO: cena '{args.scene}' nao gerada ({type(e).__name__}: {e})")

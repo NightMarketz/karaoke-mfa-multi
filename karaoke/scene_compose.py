@@ -54,7 +54,7 @@ def carregar_pacote(pasta: Path):
         loops.append(_decodifica(pasta / nome, w, h, "rgb24"))
     contagens = [len(l) for l in loops]
     if len(set(contagens)) != 1:
-        nome = ARQUIVOS_LOOP[contagens.index(min(contagens))]
+        nome = next(n for n, c in zip(ARQUIVOS_LOOP, contagens) if c != contagens[0])
         raise ValueError(f"{nome}: numero de quadros difere ({dict(zip(ARQUIVOS_LOOP, contagens))})")
     masc = _decodifica(pasta / "fogo_mask.png", w, h, "gray", ("-vf", f"scale={w}:{h}"))
     meta_p = pasta / "scene.json"
@@ -103,8 +103,32 @@ def compor(loops, mascara, w_todos, g_todos, fps, saida: Path):
     return faixa
 
 
-def fundo_do_job(scene_mp4: Path, bg_png: Path) -> Path | None:
-    for p in (Path(scene_mp4), Path(bg_png)):
-        if p.exists():
-            return p
-    return None
+def _nome_no_sidecar(side: Path):
+    try:
+        return json.loads(side.read_text(encoding="utf-8")).get("scene")
+    except (ValueError, AttributeError):  # sidecar corrompido: o 09 nao pode cair
+        return "<ilegivel>"
+
+
+def fundo_do_job(scene_mp4: Path, bg_png: Path, cena: str | None,
+                 audio: Path) -> tuple[Path | None, str]:
+    """(fundo, rotulo). A cena so entra se foi pedida, e dela e nao e mais
+    velha que o audio — senao um background_scene.mp4 de outra rodada vaza."""
+    scene_mp4, bg_png, audio = Path(scene_mp4), Path(bg_png), Path(audio)
+    motivo = ""
+    if cena is not None:
+        side = scene_mp4.with_suffix(".json")
+        if not scene_mp4.exists():
+            motivo = f"{scene_mp4.name} nao existe"
+        elif not side.exists():
+            motivo = f"{side.name} nao existe"
+        elif (nome := _nome_no_sidecar(side)) != cena:
+            motivo = f"sidecar diz {nome}"
+        elif audio.exists() and scene_mp4.stat().st_mtime < audio.stat().st_mtime:
+            motivo = "mais velha que o audio"
+        else:
+            return scene_mp4, f"cena {cena}"
+    p, rotulo = (bg_png, "ilustracao") if bg_png.exists() else (None, "chapado #08090f")
+    if motivo:
+        rotulo += f" (cena {cena} ignorada: {motivo})"
+    return p, rotulo

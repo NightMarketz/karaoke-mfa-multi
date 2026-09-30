@@ -380,6 +380,7 @@ def build_adlib_events(adlibs: list, layer_ends: list) -> list:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-id", required=True)
+    parser.add_argument("--scene", default=None)
     args = parser.parse_args()
     job_id = args.job_id
 
@@ -548,7 +549,8 @@ def main():
         sys.exit(1)
 
     from karaoke.scene_compose import fundo_do_job
-    bg_png = fundo_do_job(kpaths.background_scene_mp4(job_id), kpaths.background_png(job_id))
+    bg_png, rotulo = fundo_do_job(kpaths.background_scene_mp4(job_id), kpaths.background_png(job_id),
+                                  args.scene, instrumental)
 
     sendcmd_path = None
     if bg_png is not None:
@@ -569,8 +571,6 @@ def main():
             if tmp_sendcmd is not None:
                 tmp_sendcmd.unlink(missing_ok=True)
 
-    rotulo = ("cena" if bg_png and bg_png.suffix == ".mp4"
-              else "ilustracao" if bg_png else "chapado #08090f")
     print(f"  Fundo: {rotulo}")
     cmd_video = build_render_cmd(bg_png, [instrumental, vocals],
                                  out_ass, out_mp4, duration, sendcmd_path)
@@ -586,7 +586,7 @@ def main():
         # O fundo e enfeite: PNG corrompido/truncado ou sendcmd invalido nao
         # pode custar o MP4. Uma única retentativa no caminho chapado, que
         # nao depende de nenhum dos dois.
-        print("  AVISO: render com ilustracao falhou — refazendo com fundo chapado.")
+        print("  AVISO: render com fundo falhou — refazendo com fundo chapado.")
         print(f"  Motivo (ffmpeg): {erro}")
         cmd_flat = build_render_cmd(None, [instrumental, vocals],
                                     out_ass, out_mp4, duration, None)
