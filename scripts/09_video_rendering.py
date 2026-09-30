@@ -31,6 +31,7 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import karaoke.paths as kpaths
+from karaoke.lyrics_cleaner import clean_lyrics_strict, normalise_lyrics
 
 
 def _progress(pct: int, msg: str = ""):
@@ -53,6 +54,11 @@ def format_ass_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:05.2f}"
 
 
+def _chave(texto: str) -> str:
+    """Minusculo, so letras/digitos: 'half-time' e 'half'+'time' dao a mesma chave."""
+    return re.sub(r"\W+", "", texto.lower())
+
+
 # ── Modo CTC ──────────────────────────────────────────────────────────────────
 
 def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, list]:
@@ -60,6 +66,11 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
     Constrói eventos ASS a partir do char_timing.json do CTC.
     Cada entrada em char_timing é um dict com 'word', 'start', 'end', 'chars'.
     Chars é lista de {'char', 'start', 'end'}.
+
+    lyrics_lines são as linhas cruas do lyrics.txt. O timing nasce do song.lab
+    (03_prepare_corpus): sem [Secao], sem (direcao), contracoes expandidas. A
+    letra passa aqui pela mesma limpeza, e cada palavra exibida consome as
+    entradas em que o song.lab a divide ("I'm" -> "i", "am").
 
     Retorna (events, layer_ends) — layer_ends é passado para build_adlib_events
     para que adlibs compartilhem o mesmo sistema de anti-colisão de layers.
@@ -74,8 +85,11 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
     for entry in char_timing:
         flat_words.append(entry)
 
+    lyrics_lines = clean_lyrics_strict("\n".join(lyrics_lines)).splitlines()
+
     events = []
     word_idx = 0
+    palavras = casadas = 0
     total_lines = len(lyrics_lines)
 
     _progress(20, f"Gerando {total_lines} linhas de ASS...")
@@ -84,18 +98,32 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
     layer_ends = []
 
     for line_num, line in enumerate(lyrics_lines):
-        words_in_line = line.split()
-        if not words_in_line or word_idx >= len(flat_words):
-            continue
-
         # Coleta mapeamentos desta linha
         line_entries = []
-        for raw_word in words_in_line:
-            if word_idx < len(flat_words):
-                entry = dict(flat_words[word_idx])
-                entry["display_word"] = raw_word # Preserva pontuação/casing
-                line_entries.append(entry)
+        for raw_word in line.split():
+            falado = normalise_lyrics(raw_word).split()
+            if not falado:
+                continue  # so pontuacao: o song.lab tambem nao tem
+            palavras += 1
+            if word_idx >= len(flat_words):
+                continue
+            # Casa por texto, nao so por contagem: o 06_alignment_rescue parte
+            # "half-time" em duas entradas que o song.lab guarda como uma.
+            alvo = "".join(map(_chave, falado))
+            ini, lido = word_idx, ""
+            while word_idx < len(flat_words) and len(lido) < len(alvo):
+                lido += _chave(flat_words[word_idx].get("word", ""))
                 word_idx += 1
+            if lido == alvo:
+                casadas += 1
+            else:
+                word_idx = min(ini + len(falado), len(flat_words))
+            grupo = flat_words[ini:word_idx]
+            entry = dict(grupo[0])
+            entry["end"] = grupo[-1]["end"]
+            entry["chars"] = [c for g in grupo for c in g.get("chars", [])]
+            entry["display_word"] = raw_word # Preserva pontuação/casing
+            line_entries.append(entry)
 
         if not line_entries:
             continue
@@ -176,6 +204,10 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
             pct = 20 + int((line_num / total_lines) * 60)
             _progress(pct, f"Linha {line_num + 1}/{total_lines}...")
 
+    sobra = len(flat_words) - word_idx
+    if casadas < palavras or sobra:
+        print(f"  AVISO: {casadas} de {palavras} palavras da letra batem com o timing "
+              f"(o resto foi por posicao); {sobra} de {len(flat_words)} entradas de timing sobraram")
     _progress(80, "Eventos ASS gerados")
     return events, layer_ends
 
