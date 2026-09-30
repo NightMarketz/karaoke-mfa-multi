@@ -50,7 +50,7 @@ def run_command(cmd, shell=False):
         print(f"\n[ERROR] Exception during execution: {e}")
         return 1
 
-def build_steps(job_id, lang, romanization, aligner="mfa"):
+def build_steps(job_id, lang, romanization, aligner="mfa", scene=None):
     python = sys.executable
     
     steps = [
@@ -136,7 +136,16 @@ def build_steps(job_id, lang, romanization, aligner="mfa"):
             "cmd": [python, _p("scripts", "13_process_conclusion.py"), "--job-id", job_id]
         }
     ])
-    
+
+    if scene:
+        # So quando pedida: sem --scene os indices de --start-at nao mudam.
+        i = [s["name"] for s in steps].index("Video Rendering")
+        steps.insert(i, {
+            "id": "11b", "name": "Scene Background",
+            "cmd": [python, _p("scripts", "08c_scene_background.py"),
+                    "--job-id", job_id, "--scene", scene],
+        })
+
     return steps
 
 def main():
@@ -149,6 +158,7 @@ def main():
     parser.add_argument("--resume", action="store_true", help="Resume from last failed step")
     parser.add_argument("--start-at", type=int, help="Force start at specific step ID")
     parser.add_argument("--aligner", default="mfa", choices=["mfa", "sofa"], help="Alignment engine (default: mfa)")
+    parser.add_argument("--scene", help="Cena reativa em input/scenes/<nome> (opcional)")
     
     args = parser.parse_args()
     
@@ -197,7 +207,7 @@ def main():
     lang = job_data.get("lang", args.lang)
     romanization = args.romanization # We don't track romanization in state_store usually
     
-    steps = build_steps(job_id, lang, romanization, args.aligner)
+    steps = build_steps(job_id, lang, romanization, args.aligner, args.scene)
     
     # 3. Resume logic
     steps_to_skip = []
