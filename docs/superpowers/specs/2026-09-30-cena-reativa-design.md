@@ -20,7 +20,7 @@ quando cada ato acontece. Primeira cena, `guts_camp`:
 | Onde toca | MP4 renderizado, junto da ASS queimada |
 | O que move a história | Energia do stem instrumental (`no_vocals.wav`), automática |
 | Como fazer as camadas | 4 variantes de quadro inteiro (Qwen-Image-Edit), cada uma um loop Wan, misturadas por crossfade |
-| Onde fica a letra | **No topo** quando a cena pede (`Alignment=8`); músicas sem cena não mudam |
+| Onde fica a letra | **Já mora no topo** em produção: o 09 escreve `n2\pos(640,60+110·camada)` — camada 0 nas linhas 8–48, camada 1 em 118–158 de 720 (medido). Nada a mudar |
 | Qual cena por música | Parâmetro explícito `--scene`; sem ele, fundo atual |
 
 ## Arquitetura
@@ -32,7 +32,7 @@ quando cada ato acontece. Primeira cena, `guts_camp`:
 ```
 calmo.mp4  tensao.mp4  climax.mp4  escuro.mp4   # mesma duração, fps e resolução
 fogo_mask.png                                   # branco = região da fogueira
-scene.json                                      # {"legenda": "topo"}  (opcional: "baixo", padrão)
+scene.json                                      # opcional
 ```
 
 Produção, fora do pipeline:
@@ -97,7 +97,7 @@ ESCURO; 2 s ao voltar a CALMO. Invariante: soma = 1 em todo quadro.
    `i mod n_loop`; mistura em numpy `Σ pesos·quadro`; multiplica a região da
    máscara por `ganho_fogo`; codifica por pipe em
    `step_output(job, "08_background")/background_scene.mp4`.
-4. Escreve ao lado `background_scene.json` = `{"scene": nome, "legenda": ...}`.
+4. Escreve ao lado `background_scene.json` = `{"scene": nome}`.
 
 Falha em qualquer passo: sai com erro e não deixa `.mp4` parcial (escreve em
 temporário e renomeia no fim). Sem pacote de cena → erro claro nomeando o
@@ -107,10 +107,8 @@ arquivo que falta.
 
 - `karaoke/paths.py`: `background_scene_mp4(job)`.
 - `scripts/09_video_rendering.py`: se `background_scene.mp4` existe, usa ele
-  como `bg` (o `build_render_cmd` já aceita vídeo) e lê a legenda do `.json`.
+  como `bg` (o `build_render_cmd` já aceita vídeo).
   Senão, comportamento atual. Bounce continua igual.
-- `karaoke/render_cmd.py`: parâmetro `legenda_topo: bool = False`; quando
-  verdadeiro, o filtro vira `subtitles='...':force_style='Alignment=8'`.
 - `run_pipeline.py`: `--scene <nome>` opcional; quando presente, roda o 08c
   depois do 08b.
 
@@ -133,13 +131,10 @@ remover mínimo e histerese → 4 fica vermelho. Restaurar.
 níveis); duração da saída = duração do áudio (ffprobe) e maior que o loop.
 Controle negativo: trocar a ordem dos loops → falha.
 
-**`tests/test_render_cmd.py`** — `legenda_topo=True` gera `force_style='Alignment=8'`;
-padrão não gera.
-
 **Portão real** (números são triagem; o olho decide, guia §2.7):
 
 - `medir()` de `teste_loop_fundo.py` com a faixa parametrizada — topo
-  ≈ `(0.05, 0.25)` — nas 4 variantes do `guts_camp`: brilho máximo e
+  ≈ `(0.0, 0.25)` — nas 4 variantes do `guts_camp`: brilho máximo e
   respiração da faixa, 4 de 4 reportados.
 - Uma música real: gráfico de `e` com os estados sobrepostos, conferido
   ouvindo; brilho máximo da faixa do topo no vídeo final como "X de N quadros

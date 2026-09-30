@@ -99,14 +99,13 @@ def test_falha_no_meio_nao_deixa_mp4(tmp_path):
     assert not list(tmp_path.glob("*.tmp*"))
 
 
-def test_fundo_do_job_prefere_cena_e_le_legenda(tmp_path):
+def test_fundo_do_job_prefere_cena(tmp_path):
     png = tmp_path / "background.png"
     png.write_bytes(b"x")
     cena = tmp_path / "background_scene.mp4"
-    assert sc.fundo_do_job(cena, png) == (png, False)
+    assert sc.fundo_do_job(cena, png) == png
     cena.write_bytes(b"x")
-    cena.with_suffix(".json").write_text(json.dumps({"scene": "g", "legenda": "topo"}), encoding="utf-8")
-    assert sc.fundo_do_job(cena, png) == (cena, True)
+    assert sc.fundo_do_job(cena, png) == cena
     png.unlink()
     cena.unlink()
-    assert sc.fundo_do_job(cena, png) == (None, False)
+    assert sc.fundo_do_job(cena, png) is None

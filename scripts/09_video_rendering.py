@@ -547,8 +547,8 @@ def main():
               f"(ffprobe: {probe.stderr.strip()[:500]})")
         sys.exit(1)
 
-    bg_png = kpaths.background_png(job_id)
-    bg_png = bg_png if bg_png.exists() else None
+    from karaoke.scene_compose import fundo_do_job
+    bg_png = fundo_do_job(kpaths.background_scene_mp4(job_id), kpaths.background_png(job_id))
 
     sendcmd_path = None
     if bg_png is not None:
@@ -569,7 +569,9 @@ def main():
             if tmp_sendcmd is not None:
                 tmp_sendcmd.unlink(missing_ok=True)
 
-    print(f"  Fundo: {'ilustracao' if bg_png else 'chapado #08090f'}")
+    rotulo = ("cena" if bg_png and bg_png.suffix == ".mp4"
+              else "ilustracao" if bg_png else "chapado #08090f")
+    print(f"  Fundo: {rotulo}")
     cmd_video = build_render_cmd(bg_png, [instrumental, vocals],
                                  out_ass, out_mp4, duration, sendcmd_path)
 

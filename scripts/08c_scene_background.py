@@ -4,7 +4,7 @@
     python scripts/08c_scene_background.py --job-id <id> --scene guts_camp
 
 Le input/scenes/<cena>/ e o no_vocals.wav do job; escreve, em
-08_background/, background_scene.mp4 + .json (legenda) + _relatorio.json
+08_background/, background_scene.mp4 + .json (cena) + _relatorio.json
 (estados e brilho da faixa do topo por quadro, para o portao real).
 """
 import argparse
@@ -52,14 +52,12 @@ def main():
         print(f"ERRO: cena '{args.scene}' nao gerada ({type(e).__name__}: {e})")
         sys.exit(1)
 
-    legenda = meta.get("legenda", "baixo")
-    saida.with_suffix(".json").write_text(
-        json.dumps({"scene": args.scene, "legenda": legenda}), encoding="utf-8")
+    saida.with_suffix(".json").write_text(json.dumps({"scene": args.scene}), encoding="utf-8")
     trocas = [[round(i / fps, 2), int(s)] for i, s in enumerate(est) if i == 0 or s != est[i - 1]]
     saida.with_name("background_scene_relatorio.json").write_text(
         json.dumps({"fps": fps, "estados": trocas, "faixa_topo_luma": [round(x, 1) for x in faixa]}),
         encoding="utf-8")
-    print(f"OK {saida.name}: {len(est)} quadros, {len(trocas)} trechos de estado, legenda={legenda}")
+    print(f"OK {saida.name}: {len(est)} quadros, {len(trocas)} trechos de estado")
 
 
 if __name__ == "__main__":

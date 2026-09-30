@@ -14,7 +14,8 @@ from pathlib import Path
 import numpy as np
 
 ARQUIVOS_LOOP = ("calmo.mp4", "tensao.mp4", "climax.mp4", "escuro.mp4")
-FAIXA_TOPO = (0.05, 0.25)
+# letra do 09: camada 0 nas linhas 8-48, camada 1 em 118-158 de 720 (medido)
+FAIXA_TOPO = (0.0, 0.25)
 # ponytail: os 4 loops inteiros em RAM (~100 MB cada a 832x480x81). Ler por
 # pipe quadro a quadro se um pacote em 720p+ estourar a memoria.
 
@@ -102,10 +103,8 @@ def compor(loops, mascara, w_todos, g_todos, fps, saida: Path):
     return faixa
 
 
-def fundo_do_job(scene_mp4: Path, bg_png: Path):
-    scene_mp4, bg_png = Path(scene_mp4), Path(bg_png)
-    if scene_mp4.exists():
-        meta_p = scene_mp4.with_suffix(".json")
-        meta = json.loads(meta_p.read_text(encoding="utf-8")) if meta_p.exists() else {}
-        return scene_mp4, meta.get("legenda") == "topo"
-    return (bg_png if bg_png.exists() else None), False
+def fundo_do_job(scene_mp4: Path, bg_png: Path) -> Path | None:
+    for p in (Path(scene_mp4), Path(bg_png)):
+        if p.exists():
+            return p
+    return None
