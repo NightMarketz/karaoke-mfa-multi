@@ -20,7 +20,6 @@ Outputs (via --job-id):
 import re
 import sys
 import io
-import difflib
 import json
 import argparse
 from pathlib import Path
@@ -61,12 +60,39 @@ def _unidades(texto: str) -> list:
             for p in w.split("-") if (k := re.sub(r"\W+", "", p))]
 
 
+def _alinhar(a: list, b: list) -> list:
+    """Pares (i, j, igual) do alinhamento de menor edicao (Levenshtein) entre a e b.
+
+    Igual custa 0; troca, falta ou sobra custam 1. Nao e o "maior bloco
+    primeiro" do difflib, que num refrao repetido casa um bloco deslocado de
+    uma repeticao inteira quando ha duas faltas.
+    """
+    # ponytail: O(n*m) em Python puro — medido 0,14 s com 1000 x 989 unidades,
+    # cresce ~100x a cada 10x; faixa diagonal (banded DP) se passar disso.
+    n, m = len(a), len(b)
+    d = [list(range(m + 1))] + [[i] + [0] * m for i in range(1, n + 1)]
+    for i in range(1, n + 1):
+        ai, ant, lin = a[i - 1], d[i - 1], d[i]
+        for j in range(1, m + 1):
+            lin[j] = min(ant[j - 1] + (ai != b[j - 1]), ant[j] + 1, lin[j - 1] + 1)
+    pares, i, j = [], n, m
+    while i and j:
+        if d[i][j] == d[i - 1][j - 1] + (a[i - 1] != b[j - 1]):
+            i, j = i - 1, j - 1
+            pares.append((i, j, a[i] == b[j]))
+        elif d[i][j] == d[i - 1][j] + 1:
+            i -= 1
+        else:
+            j -= 1
+    return pares
+
+
 def _casar_por_texto(linhas: list, flat_words: list):
     """Liga cada palavra da letra, (linha, token), as entradas de timing dela.
 
-    Casa pelo texto (difflib), nao por posicao: palavra que o alinhador pulou,
-    duplicou ou trocou por <unk> fica local em vez de deslocar o resto da musica.
-    Trecho trocado de mesmo tamanho casa 1:1 (o <unk> do MFA); o resto fica sem tempo.
+    Casa pelo texto, nao por posicao: palavra que o alinhador pulou, duplicou
+    ou trocou por <unk> fica local em vez de deslocar o resto da musica. Troca
+    casa 1:1 (o <unk> do MFA); falta fica sem tempo; sobra fica de fora.
     Retorna ({(linha, token): {indices}}, palavras casadas pelo texto, palavras).
     """
     a, dono_a = [], []
@@ -77,18 +103,17 @@ def _casar_por_texto(linhas: list, flat_words: list):
                 dono_a.append((li, ti))
     b, dono_b = [], []
     for ei, entry in enumerate(flat_words):
-        for k in _unidades(str(entry.get("word", ""))):
+        for k in _unidades(entry.get("word") or ""):
             b.append(k)
             dono_b.append(ei)
 
-    entradas, divergentes = {}, set()
-    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
-        if op == "equal" or (op == "replace" and i2 - i1 == j2 - j1):
-            for i, j in zip(range(i1, i2), range(j1, j2)):
-                entradas.setdefault(dono_a[i], set()).add(dono_b[j])
-        if op != "equal":
-            divergentes.update(dono_a[i1:i2])
+    entradas, iguais = {}, set()
+    for i, j, igual in _alinhar(a, b):
+        entradas.setdefault(dono_a[i], set()).add(dono_b[j])
+        if igual:
+            iguais.add(i)
     palavras = set(dono_a)
+    divergentes = {dono_a[i] for i in range(len(a)) if i not in iguais}
     return entradas, len(palavras - divergentes), len(palavras)
 
 
@@ -151,6 +176,8 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
             antes = []
             line_entries.append(entry)
 
+        # ponytail: linha sem nenhuma palavra com tempo some do video; mostrar
+        # no vao entre as vizinhas se o alinhador passar a pular linha inteira.
         if not line_entries:
             continue
 

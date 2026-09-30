@@ -97,3 +97,18 @@ def test_pontuacao_solta_continua_na_tela():
     eventos, _ = vr.build_ass_from_ctc(_timing("rock", "roll", "oh", "i", "know", "wait"),
                                        ["Rock & roll", "Oh — I know", "... wait"])
     assert [linha[0] for linha in _linhas(eventos)] == ["Rock & roll", "Oh — I know", "... wait"]
+
+
+def test_refrao_repetido_com_duas_faltas_nao_pula_uma_repeticao():
+    # Duas entradas a menos num trecho periodico: casar pelo maior bloco igual
+    # (difflib) empurrava linhas uma repeticao para frente e descartava o fim.
+    letra = ["Hold on"] + ["I won't fall", "for that"] * 3
+    falado = "hold on" + " i will not fall for that" * 3
+    completo = _timing(*falado.split())
+    faltando = [e for k, e in enumerate(completo) if k not in (0, 7)]   # "hold" e o 1o "that"
+    eventos, _ = vr.build_ass_from_ctc(faltando, letra)
+    t = vr.format_ass_time
+    # (1a, ultima) entrada com tempo de cada linha, em indices de `completo`
+    faixas = [(1, 1), (2, 5), (6, 6), (8, 11), (12, 13), (14, 17), (18, 19)]
+    assert _linhas(eventos) == [(txt, t(9.0 + a), t(10.5 + b + 0.5))
+                                for txt, (a, b) in zip(letra, faixas)]
