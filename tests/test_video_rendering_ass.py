@@ -3,6 +3,8 @@
 O timing (word_timing*.json, fused, char_timing) vem do song.lab: sem [Secao],
 contracoes expandidas (I'm -> i am). A letra crua tem os cabecalhos e as
 contracoes. Casar as duas por posicao pura desloca uma palavra por cabecalho.
+Casar pelo texto deixa local o estrago de uma palavra que o alinhador pulou,
+duplicou ou trocou por <unk>.
 """
 import importlib.util
 import re
@@ -20,7 +22,7 @@ LETRA = """[Verse]
 I'm still here
 
 [Chorus]
-I won't fall"""
+I won't fall (For that!)"""
 
 # Uma entrada por palavra do song.lab, na ordem: "i am still here / i will not fall".
 FALADO = ["i", "am", "still", "here", "i", "will", "not", "fall"]
@@ -60,12 +62,38 @@ def test_hifen_partido_pelo_rescue_casa_por_texto():
                                 ("Go", t(12.0), t(13.5 + 0.5))]
 
 
-def test_palavra_que_nao_bate_cai_na_posicao_e_avisa(capsys):
-    # MFA sem a palavra no dicionario: "<unk>" no lugar de "here". A chave
-    # "unk" e mais curta que "here", entao a busca por texto engoliria o "go".
+def test_unk_do_mfa_fica_no_lugar_da_palavra_e_avisa(capsys):
+    # MFA sem a palavra no dicionario: "<unk>" no lugar de "here".
     eventos, _ = vr.build_ass_from_ctc(_timing("i", "am", "<unk>", "go"),
                                        ["I'm here", "Go"])
     t = vr.format_ass_time
     assert _linhas(eventos) == [("I'm here", t(9.0), t(12.5 + 0.5)),
                                 ("Go", t(12.0), t(13.5 + 0.5))]
     assert "2 de 3 palavras" in capsys.readouterr().out
+
+
+def test_palavra_pulada_pelo_alinhador_nao_desloca_o_resto():
+    # O rescue (modo full) descarta palavra sem start/end: aqui sumiu o "é".
+    eventos, _ = vr.build_ass_from_ctc(
+        _timing("eu", "sei", "que", "assim", "você", "vem", "vai", "embora"),
+        ["Eu sei que é assim", "Você vem", "Vai embora"])
+    t = vr.format_ass_time
+    assert _linhas(eventos) == [("Eu sei que é assim", t(9.0), t(13.5 + 0.5)),
+                                ("Você vem", t(13.0), t(15.5 + 0.5)),
+                                ("Vai embora", t(15.0), t(17.5 + 0.5))]
+
+
+def test_entrada_a_mais_fica_de_fora_e_avisa(capsys):
+    # "still" duplicado no timing: sobra uma entrada e nada desloca.
+    eventos, _ = vr.build_ass_from_ctc(_timing("i", "am", "still", "still", "here", "go"),
+                                       ["I'm still here", "Go"])
+    t = vr.format_ass_time
+    assert _linhas(eventos) == [("I'm still here", t(9.0), t(14.5 + 0.5)),
+                                ("Go", t(14.0), t(15.5 + 0.5))]
+    assert "1 de 6 entradas" in capsys.readouterr().out
+
+
+def test_pontuacao_solta_continua_na_tela():
+    eventos, _ = vr.build_ass_from_ctc(_timing("rock", "roll", "oh", "i", "know", "wait"),
+                                       ["Rock & roll", "Oh — I know", "... wait"])
+    assert [linha[0] for linha in _linhas(eventos)] == ["Rock & roll", "Oh — I know", "... wait"]

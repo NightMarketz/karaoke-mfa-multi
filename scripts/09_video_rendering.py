@@ -20,6 +20,7 @@ Outputs (via --job-id):
 import re
 import sys
 import io
+import difflib
 import json
 import argparse
 from pathlib import Path
@@ -54,9 +55,41 @@ def format_ass_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:05.2f}"
 
 
-def _chave(texto: str) -> str:
-    """Minusculo, so letras/digitos: 'half-time' e 'half'+'time' dao a mesma chave."""
-    return re.sub(r"\W+", "", texto.lower())
+def _unidades(texto: str) -> list:
+    """Chaves das palavras como o song.lab as escreve, com hifen partido como o rescue parte."""
+    return [k for w in normalise_lyrics(texto).split()
+            for p in w.split("-") if (k := re.sub(r"\W+", "", p))]
+
+
+def _casar_por_texto(linhas: list, flat_words: list):
+    """Liga cada palavra da letra, (linha, token), as entradas de timing dela.
+
+    Casa pelo texto (difflib), nao por posicao: palavra que o alinhador pulou,
+    duplicou ou trocou por <unk> fica local em vez de deslocar o resto da musica.
+    Trecho trocado de mesmo tamanho casa 1:1 (o <unk> do MFA); o resto fica sem tempo.
+    Retorna ({(linha, token): {indices}}, palavras casadas pelo texto, palavras).
+    """
+    a, dono_a = [], []
+    for li, toks in enumerate(linhas):
+        for ti, tok in enumerate(toks):
+            for k in _unidades(tok):
+                a.append(k)
+                dono_a.append((li, ti))
+    b, dono_b = [], []
+    for ei, entry in enumerate(flat_words):
+        for k in _unidades(str(entry.get("word", ""))):
+            b.append(k)
+            dono_b.append(ei)
+
+    entradas, divergentes = {}, set()
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if op == "equal" or (op == "replace" and i2 - i1 == j2 - j1):
+            for i, j in zip(range(i1, i2), range(j1, j2)):
+                entradas.setdefault(dono_a[i], set()).add(dono_b[j])
+        if op != "equal":
+            divergentes.update(dono_a[i1:i2])
+    palavras = set(dono_a)
+    return entradas, len(palavras - divergentes), len(palavras)
 
 
 # ── Modo CTC ──────────────────────────────────────────────────────────────────
@@ -69,8 +102,8 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
 
     lyrics_lines são as linhas cruas do lyrics.txt. O timing nasce do song.lab
     (03_prepare_corpus): sem [Secao], sem (direcao), contracoes expandidas. A
-    letra passa aqui pela mesma limpeza, e cada palavra exibida consome as
-    entradas em que o song.lab a divide ("I'm" -> "i", "am").
+    letra passa aqui pela mesma limpeza, e cada palavra exibida recebe, casando
+    pelo texto, as entradas em que o song.lab a divide ("I'm" -> "i", "am").
 
     Retorna (events, layer_ends) — layer_ends é passado para build_adlib_events
     para que adlibs compartilhem o mesmo sistema de anti-colisão de layers.
@@ -86,43 +119,36 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
         flat_words.append(entry)
 
     lyrics_lines = clean_lyrics_strict("\n".join(lyrics_lines)).splitlines()
+    linhas = [line.split() for line in lyrics_lines]
+    entradas, casadas, palavras = _casar_por_texto(linhas, flat_words)
 
     events = []
-    word_idx = 0
-    palavras = casadas = 0
-    total_lines = len(lyrics_lines)
+    total_lines = len(linhas)
 
     _progress(20, f"Gerando {total_lines} linhas de ASS...")
 
     # Layer collision tracker
     layer_ends = []
 
-    for line_num, line in enumerate(lyrics_lines):
+    for line_num, toks in enumerate(linhas):
         # Coleta mapeamentos desta linha
-        line_entries = []
-        for raw_word in line.split():
-            falado = normalise_lyrics(raw_word).split()
-            if not falado:
-                continue  # so pontuacao: o song.lab tambem nao tem
-            palavras += 1
-            if word_idx >= len(flat_words):
+        line_entries, antes = [], []
+        for ti, raw_word in enumerate(toks):
+            idx = sorted(entradas.get((line_num, ti), ()))
+            if not idx:
+                # Sem tempo (pontuacao solta, ou palavra que o alinhador pulou):
+                # continua na tela, junto da palavra vizinha.
+                if line_entries:
+                    line_entries[-1]["display_word"] += " " + raw_word
+                else:
+                    antes.append(raw_word)
                 continue
-            # Casa por texto, nao so por contagem: o 06_alignment_rescue parte
-            # "half-time" em duas entradas que o song.lab guarda como uma.
-            alvo = "".join(map(_chave, falado))
-            ini, lido = word_idx, ""
-            while word_idx < len(flat_words) and len(lido) < len(alvo):
-                lido += _chave(flat_words[word_idx].get("word", ""))
-                word_idx += 1
-            if lido == alvo:
-                casadas += 1
-            else:
-                word_idx = min(ini + len(falado), len(flat_words))
-            grupo = flat_words[ini:word_idx]
+            grupo = [flat_words[i] for i in idx]
             entry = dict(grupo[0])
             entry["end"] = grupo[-1]["end"]
             entry["chars"] = [c for g in grupo for c in g.get("chars", [])]
-            entry["display_word"] = raw_word # Preserva pontuação/casing
+            entry["display_word"] = " ".join(antes + [raw_word])  # Preserva pontuação/casing
+            antes = []
             line_entries.append(entry)
 
         if not line_entries:
@@ -204,10 +230,11 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
             pct = 20 + int((line_num / total_lines) * 60)
             _progress(pct, f"Linha {line_num + 1}/{total_lines}...")
 
-    sobra = len(flat_words) - word_idx
+    sobra = len(flat_words) - len(set().union(*entradas.values()))
     if casadas < palavras or sobra:
-        print(f"  AVISO: {casadas} de {palavras} palavras da letra batem com o timing "
-              f"(o resto foi por posicao); {sobra} de {len(flat_words)} entradas de timing sobraram")
+        print(f"  AVISO: {casadas} de {palavras} palavras da letra batem com o timing pelo texto "
+              f"(as outras foram trocadas ou ficaram sem tempo); "
+              f"{sobra} de {len(flat_words)} entradas de timing sobraram")
     _progress(80, "Eventos ASS gerados")
     return events, layer_ends
 
