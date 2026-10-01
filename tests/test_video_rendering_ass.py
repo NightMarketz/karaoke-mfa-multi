@@ -112,3 +112,44 @@ def test_refrao_repetido_com_duas_faltas_nao_pula_uma_repeticao():
     faixas = [(1, 1), (2, 5), (6, 6), (8, 11), (12, 13), (14, 17), (18, 19)]
     assert _linhas(eventos) == [(txt, t(9.0 + a), t(10.5 + b + 0.5))
                                 for txt, (a, b) in zip(letra, faixas)]
+
+
+def test_audio_cortado_no_fim_deixa_sem_tempo_a_ultima_linha():
+    # O final repete a linha anterior e o timing acaba antes dele. Pelo texto
+    # tanto faz qual das duas ficou sem tempo; pelo tempo, foi a ultima. O "!"
+    # so serve para o teste distinguir as duas (a chave de texto e a mesma).
+    eventos, _ = vr.build_ass_from_ctc(_timing(*"hold on i must carry on".split()),
+                                       ["Hold on", "I must carry on", "I must carry on!"])
+    t = vr.format_ass_time
+    assert _linhas(eventos) == [("Hold on", t(9.0), t(11.5 + 0.5)),
+                                ("I must carry on", t(11.0), t(15.5 + 0.5))]
+
+
+def test_audio_cortado_no_inicio_deixa_sem_tempo_a_primeira_linha():
+    # Espelho do anterior: o timing comeca depois da primeira de duas linhas iguais.
+    eventos, _ = vr.build_ass_from_ctc(_timing(*"i must carry on hold on".split()),
+                                       ["I must carry on!", "I must carry on", "Hold on"])
+    t = vr.format_ass_time
+    assert _linhas(eventos) == [("I must carry on", t(9.0), t(13.5 + 0.5)),
+                                ("Hold on", t(13.0), t(15.5 + 0.5))]
+
+
+def test_word_que_nao_e_texto_nao_quebra_nem_vira_none():
+    # word None nao pode casar com a palavra "None"; word 7 (int) casa com "7".
+    timing = [{"word": None, "start": 9.0, "end": 9.5},
+              {"word": "of", "start": 10.0, "end": 10.5},
+              {"word": 7, "start": 11.0, "end": 11.5}]
+    eventos, _ = vr.build_ass_from_ctc(timing, ["None of 7"])
+    t = vr.format_ass_time
+    assert _linhas(eventos) == [("None of 7", t(9.0), t(11.5 + 0.5))]
+
+
+def test_unk_seguido_de_palavra_pulada_fica_na_propria_palavra():
+    # "fall" virou <unk> e o "for" seguinte sumiu. O buraco no tempo esta depois
+    # do <unk>: quem fica sem tempo e o "for", nao o "fall".
+    completo = _timing("i", "will", "not", "<unk>", "for", "that")
+    eventos, _ = vr.build_ass_from_ctc([e for k, e in enumerate(completo) if k != 4],
+                                       ["I won't fall", "for that"])
+    t = vr.format_ass_time
+    assert _linhas(eventos) == [("I won't fall", t(9.0), t(13.5 + 0.5)),
+                                ("for that", t(14.0), t(15.5 + 0.5))]

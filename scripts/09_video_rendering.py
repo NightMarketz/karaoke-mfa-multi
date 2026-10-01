@@ -60,27 +60,39 @@ def _unidades(texto: str) -> list:
             for p in w.split("-") if (k := re.sub(r"\W+", "", p))]
 
 
-def _alinhar(a: list, b: list) -> list:
+def _alinhar(a: list, b: list, folga: list) -> list:
     """Pares (i, j, igual) do alinhamento de menor edicao (Levenshtein) entre a e b.
 
     Igual custa 0; troca, falta ou sobra custam 1. Nao e o "maior bloco
     primeiro" do difflib, que num refrao repetido casa um bloco deslocado de
     uma repeticao inteira quando ha duas faltas.
+
+    Quando a palavra sem tempo cabe em varios lugares pelo mesmo custo (trecho
+    repetido), vai para onde o timing tem buraco: folga[j] sao os segundos
+    livres antes da unidade j de b, infinito nas pontas. O desempate soma
+    menos de 0,5 no total, entao nunca vence uma edicao de verdade.
     """
-    # ponytail: O(n*m) em Python puro — medido 0,14 s com 1000 x 989 unidades,
+    # ponytail: O(n*m) em Python puro — medido 0,16 s com 1000 x 989 unidades,
     # cresce ~100x a cada 10x; faixa diagonal (banded DP) se passar disso.
     n, m = len(a), len(b)
-    d = [list(range(m + 1))] + [[i] + [0] * m for i in range(1, n + 1)]
+    eps = 0.5 / (n + 1)
+    falta = [1 + eps / (1 + f) for f in folga]
+    d = [[float(j) for j in range(m + 1)]] + [[0.0] * (m + 1) for _ in range(n)]
+    volta = [[2] * (m + 1)] + [[1] + [0] * m for _ in range(n)]  # 0 par, 1 falta, 2 sobra
     for i in range(1, n + 1):
-        ai, ant, lin = a[i - 1], d[i - 1], d[i]
+        ai, ant, lin, vol = a[i - 1], d[i - 1], d[i], volta[i]
+        lin[0] = ant[0] + falta[0]
         for j in range(1, m + 1):
-            lin[j] = min(ant[j - 1] + (ai != b[j - 1]), ant[j] + 1, lin[j - 1] + 1)
+            c = (ant[j - 1] + (ai != b[j - 1]), ant[j] + falta[j], lin[j - 1] + 1)
+            k = 0 if c[0] <= c[1] and c[0] <= c[2] else (1 if c[1] <= c[2] else 2)
+            lin[j], vol[j] = c[k], k
     pares, i, j = [], n, m
     while i and j:
-        if d[i][j] == d[i - 1][j - 1] + (a[i - 1] != b[j - 1]):
+        k = volta[i][j]
+        if k == 0:
             i, j = i - 1, j - 1
             pares.append((i, j, a[i] == b[j]))
-        elif d[i][j] == d[i - 1][j] + 1:
+        elif k == 1:
             i -= 1
         else:
             j -= 1
@@ -103,12 +115,17 @@ def _casar_por_texto(linhas: list, flat_words: list):
                 dono_a.append((li, ti))
     b, dono_b = [], []
     for ei, entry in enumerate(flat_words):
-        for k in _unidades(entry.get("word") or ""):
+        for k in _unidades(str(entry.get("word") or "")):
             b.append(k)
             dono_b.append(ei)
+    # Segundos livres antes de cada unidade do timing: 0 dentro da mesma entrada.
+    folga = [float("inf")] + [
+        0.0 if dono_b[j - 1] == dono_b[j]
+        else max(0.0, flat_words[dono_b[j]]["start"] - flat_words[dono_b[j - 1]]["end"])
+        for j in range(1, len(b))] + [float("inf")]
 
     entradas, iguais = {}, set()
-    for i, j, igual in _alinhar(a, b):
+    for i, j, igual in _alinhar(a, b, folga):
         entradas.setdefault(dono_a[i], set()).add(dono_b[j])
         if igual:
             iguais.add(i)
