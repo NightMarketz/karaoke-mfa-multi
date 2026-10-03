@@ -54,6 +54,86 @@ def format_ass_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:05.2f}"
 
 
+def _unidades(texto: str) -> list:
+    """Chaves das palavras como o song.lab as escreve, com hifen partido como o rescue parte."""
+    return [k for w in normalise_lyrics(texto).split()
+            for p in w.split("-") if (k := re.sub(r"\W+", "", p))]
+
+
+def _alinhar(a: list, b: list, folga: list) -> list:
+    """Pares (i, j, igual) do alinhamento de menor edicao (Levenshtein) entre a e b.
+
+    Igual custa 0; troca, falta ou sobra custam 1. Nao e o "maior bloco
+    primeiro" do difflib, que num refrao repetido casa um bloco deslocado de
+    uma repeticao inteira quando ha duas faltas.
+
+    Quando a palavra sem tempo cabe em varios lugares pelo mesmo custo (trecho
+    repetido), vai para onde o timing tem buraco: folga[j] sao os segundos
+    livres antes da unidade j de b, infinito nas pontas. O desempate soma
+    menos de 0,5 no total, entao nunca vence uma edicao de verdade.
+    """
+    # ponytail: O(n*m) em Python puro — medido 0,16 s com 1000 x 989 unidades,
+    # cresce ~100x a cada 10x; faixa diagonal (banded DP) se passar disso.
+    n, m = len(a), len(b)
+    eps = 0.5 / (n + 1)
+    falta = [1 + eps / (1 + f) for f in folga]
+    d = [[float(j) for j in range(m + 1)]] + [[0.0] * (m + 1) for _ in range(n)]
+    volta = [[2] * (m + 1)] + [[1] + [0] * m for _ in range(n)]  # 0 par, 1 falta, 2 sobra
+    for i in range(1, n + 1):
+        ai, ant, lin, vol = a[i - 1], d[i - 1], d[i], volta[i]
+        lin[0] = ant[0] + falta[0]
+        for j in range(1, m + 1):
+            c = (ant[j - 1] + (ai != b[j - 1]), ant[j] + falta[j], lin[j - 1] + 1)
+            k = 0 if c[0] <= c[1] and c[0] <= c[2] else (1 if c[1] <= c[2] else 2)
+            lin[j], vol[j] = c[k], k
+    pares, i, j = [], n, m
+    while i and j:
+        k = volta[i][j]
+        if k == 0:
+            i, j = i - 1, j - 1
+            pares.append((i, j, a[i] == b[j]))
+        elif k == 1:
+            i -= 1
+        else:
+            j -= 1
+    return pares
+
+
+def _casar_por_texto(linhas: list, flat_words: list):
+    """Liga cada palavra da letra, (linha, token), as entradas de timing dela.
+
+    Casa pelo texto, nao por posicao: palavra que o alinhador pulou, duplicou
+    ou trocou por <unk> fica local em vez de deslocar o resto da musica. Troca
+    casa 1:1 (o <unk> do MFA); falta fica sem tempo; sobra fica de fora.
+    Retorna ({(linha, token): {indices}}, palavras casadas pelo texto, palavras).
+    """
+    a, dono_a = [], []
+    for li, toks in enumerate(linhas):
+        for ti, tok in enumerate(toks):
+            for k in _unidades(tok):
+                a.append(k)
+                dono_a.append((li, ti))
+    b, dono_b = [], []
+    for ei, entry in enumerate(flat_words):
+        for k in _unidades(str(entry.get("word") or "")):
+            b.append(k)
+            dono_b.append(ei)
+    # Segundos livres antes de cada unidade do timing: 0 dentro da mesma entrada.
+    folga = [float("inf")] + [
+        0.0 if dono_b[j - 1] == dono_b[j]
+        else max(0.0, flat_words[dono_b[j]]["start"] - flat_words[dono_b[j - 1]]["end"])
+        for j in range(1, len(b))] + [float("inf")]
+
+    entradas, iguais = {}, set()
+    for i, j, igual in _alinhar(a, b, folga):
+        entradas.setdefault(dono_a[i], set()).add(dono_b[j])
+        if igual:
+            iguais.add(i)
+    palavras = set(dono_a)
+    divergentes = {dono_a[i] for i in range(len(a)) if i not in iguais}
+    return entradas, len(palavras - divergentes), len(palavras)
+
+
 def _chave(texto: str) -> str:
     """Minusculo, so letras/digitos: 'half-time' e 'half'+'time' dao a mesma chave."""
     return re.sub(r"\W+", "", texto.lower())
@@ -66,6 +146,11 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
     Constrói eventos ASS a partir do char_timing.json do CTC.
     Cada entrada em char_timing é um dict com 'word', 'start', 'end', 'chars'.
     Chars é lista de {'char', 'start', 'end'}.
+
+    lyrics_lines são as linhas cruas do lyrics.txt. O timing nasce do song.lab
+    (03_prepare_corpus): sem [Secao], sem (direcao), contracoes expandidas. A
+    letra passa aqui pela mesma limpeza, e cada palavra exibida recebe, casando
+    pelo texto, as entradas em que o song.lab a divide ("I'm" -> "i", "am").
 
     Retorna (events, layer_ends) — layer_ends é passado para build_adlib_events
     para que adlibs compartilhem o mesmo sistema de anti-colisão de layers.
@@ -80,29 +165,41 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
     for entry in char_timing:
         flat_words.append(entry)
 
+    lyrics_lines = clean_lyrics_strict("\n".join(lyrics_lines)).splitlines()
+    linhas = [line.split() for line in lyrics_lines]
+    entradas, casadas, palavras = _casar_por_texto(linhas, flat_words)
+
     events = []
-    word_idx = 0
-    total_lines = len(lyrics_lines)
+    total_lines = len(linhas)
 
     _progress(20, f"Gerando {total_lines} linhas de ASS...")
 
     # Layer collision tracker
     layer_ends = []
 
-    for line_num, line in enumerate(lyrics_lines):
-        words_in_line = line.split()
-        if not words_in_line or word_idx >= len(flat_words):
-            continue
-
+    for line_num, toks in enumerate(linhas):
         # Coleta mapeamentos desta linha
-        line_entries = []
-        for raw_word in words_in_line:
-            if word_idx < len(flat_words):
-                entry = dict(flat_words[word_idx])
-                entry["display_word"] = raw_word # Preserva pontuação/casing
-                line_entries.append(entry)
-                word_idx += 1
+        line_entries, antes = [], []
+        for ti, raw_word in enumerate(toks):
+            idx = sorted(entradas.get((line_num, ti), ()))
+            if not idx:
+                # Sem tempo (pontuacao solta, ou palavra que o alinhador pulou):
+                # continua na tela, junto da palavra vizinha.
+                if line_entries:
+                    line_entries[-1]["display_word"] += " " + raw_word
+                else:
+                    antes.append(raw_word)
+                continue
+            grupo = [flat_words[i] for i in idx]
+            entry = dict(grupo[0])
+            entry["end"] = grupo[-1]["end"]
+            entry["chars"] = [c for g in grupo for c in g.get("chars", [])]
+            entry["display_word"] = " ".join(antes + [raw_word])  # Preserva pontuação/casing
+            antes = []
+            line_entries.append(entry)
 
+        # ponytail: linha sem nenhuma palavra com tempo some do video; mostrar
+        # no vao entre as vizinhas se o alinhador passar a pular linha inteira.
         if not line_entries:
             continue
 
@@ -182,6 +279,11 @@ def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, lis
             pct = 20 + int((line_num / total_lines) * 60)
             _progress(pct, f"Linha {line_num + 1}/{total_lines}...")
 
+    sobra = len(flat_words) - len(set().union(*entradas.values()))
+    if casadas < palavras or sobra:
+        print(f"  AVISO: {casadas} de {palavras} palavras da letra batem com o timing pelo texto "
+              f"(as outras foram trocadas ou ficaram sem tempo); "
+              f"{sobra} de {len(flat_words)} entradas de timing sobraram")
     _progress(80, "Eventos ASS gerados")
     return events, layer_ends
 
