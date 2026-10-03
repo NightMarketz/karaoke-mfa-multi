@@ -3,6 +3,7 @@
 from pathlib import Path
 
 OUT_W, OUT_H = 1280, 720
+OUT_FPS = 25                    # fundo em video nao dita o fps do MP4
 WORK_W, WORK_H = 1408, 792      # 10% acima de 1280x720: folga para o zoom
 # Derivado das constantes de proposito: hardcodar 1280x720 aqui deixava o ramo
 # chapado driftar do ilustrado sem nada acusar.
@@ -60,6 +61,8 @@ def build_render_cmd(bg_png, audio_inputs, ass_path: Path, out_mp4: Path,
 
     filtros = []
     if bg_png is not None:
+        if Path(bg_png).suffix.lower() in _EXT_VIDEO:
+            filtros.append(f"fps={OUT_FPS}")
         filtros.append(f"scale={WORK_W}:{WORK_H}")
         if sendcmd_path is not None:
             filtros.append(f"sendcmd=f='{_escape(sendcmd_path)}'")

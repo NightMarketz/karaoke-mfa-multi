@@ -103,8 +103,8 @@ def build_sendcmd(onsets, base_w: int, base_h: int,
     )
 
 
-def onsets_from_wav(wav_path: Path) -> list:
-    """RMS frame a frame + derivada, igual ao 05c_onset_dtw_align.py."""
+def read_mono_wav(wav_path: Path):
+    """WAV int16 -> (float32 mono normalizado em [-1, 1], sample rate)."""
     with wave.open(str(wav_path), "rb") as wf:
         sr = wf.getframerate()
         canais = wf.getnchannels()
@@ -122,6 +122,12 @@ def onsets_from_wav(wav_path: Path) -> list:
             audio = audio[:-sobra]     # frame parcial no fim do buffer
         audio = audio.reshape(-1, canais).mean(axis=1)
     audio /= np.abs(audio).max() + 1e-8
+    return audio, sr
+
+
+def onsets_from_wav(wav_path: Path) -> list:
+    """RMS frame a frame + derivada, igual ao 05c_onset_dtw_align.py."""
+    audio, sr = read_mono_wav(wav_path)
 
     hop = int(sr * HOP_MS / 1000)
     win = int(sr * WINDOW_MS / 1000)

@@ -169,6 +169,10 @@ def background_png(job_id: str) -> Path:
     """Ilustracao gerada pelo Step 08b."""
     return step_output(job_id, "08_background") / "background.png"
 
+def background_scene_mp4(job_id: str) -> Path:
+    """Fundo da cena reativa (Step 08c). Sidecar .json ao lado guarda o nome da cena."""
+    return step_output(job_id, "08_background") / "background_scene.mp4"
+
 def output_video(job_id: str) -> Path:
     """MP4 final. Alias do final_video ja existente."""
     return final_video(job_id)

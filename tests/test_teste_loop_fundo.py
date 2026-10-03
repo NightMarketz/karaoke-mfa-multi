@@ -66,3 +66,13 @@ def test_template_one_obsession_preenche_so_com_prompt_e_seed():
                       .read_text(encoding="utf-8"), {"seed": 3, "prompt": "scenery"})
     assert g["1"]["inputs"]["unet_name"] == "oneObsession_anima29BV1.safetensors"
     assert g["2"]["inputs"]["clip_name"] == "qwen_3_06b_base.safetensors"  # identico byte a byte ao _txt do Civitai (SHA256 CD2A5120...)
+
+
+def test_medir_olha_a_faixa_do_topo():
+    import numpy as np
+    topo = np.zeros((4, 100, 10, 3))
+    topo[:, 5:20] = 200.0                   # so o topo acende
+    baixo = np.zeros((4, 100, 10, 3))
+    baixo[:, 70:90] = 200.0                 # so embaixo acende
+    assert tlf.medir(topo)["faixa_legenda_luma_max"] > 100
+    assert tlf.medir(baixo)["faixa_legenda_luma_max"] == 0.0
