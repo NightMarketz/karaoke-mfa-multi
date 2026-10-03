@@ -1,9 +1,25 @@
 import io
+import json
 
+import numpy as np
 import pytest
+import soundfile as sf
 from flask import Flask
 
+from karaoke.audio_fixtures import SR, bursts
 from server_score_addendum import MODES, REF_ID_RE, make_score_route
+
+# 5 ataques reais — o mesmo par usado em tests/test_scorer.py, so pra ter um
+# take que passa pelo ffmpeg de verdade e produz um ScoreReport de verdade.
+TIMES = [0.3, 0.9, 1.5, 2.4, 3.0]
+FREQS = [220.0, 247.0, 262.0, 294.0, 330.0]
+
+
+def _wav_bytes(samples, sr=SR):
+    buf = io.BytesIO()
+    sf.write(buf, samples, sr, format="WAV")
+    buf.seek(0)
+    return buf
 
 
 @pytest.fixture
@@ -170,3 +186,72 @@ def test_regex_de_ref_rejeita_entradas_ruins(mau):
 @pytest.mark.parametrize("bom", ["mimic_gab_01", "abc-123", "A", "x" * 64])
 def test_regex_de_ref_aceita_entradas_boas(bom):
     assert REF_ID_RE.match(bom) is not None, f"{bom!r} foi rejeitado"
+
+
+# ── Coleta de take humano para pesquisa (save=1) ─────────────────────────────
+# Objetivo: calibrar VOICE_FRAC/VOICE_PAD_MS/limiares de onset contra microfone
+# de verdade em vez de stem do Demucs fazendo o papel de take (spec 2026-09-10,
+# secao "Fica aberto"). Por padrao NADA e gravado — e opt-in por design, pra
+# uma partida normal do jogo de festa nao acumular arquivo.
+
+def test_sem_save_nao_grava_nada(client, monkeypatch, tmp_path):
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    monkeypatch.setattr(mod, "HUMAN_TAKES_DIR", tmp_path / "human_takes")
+    sf.write(tmp_path / "abc.wav", bursts(TIMES, FREQS), SR)
+
+    r = client.post("/api/score", data={
+        "mode": "mimic", "ref": "abc",
+        "take": (_wav_bytes(bursts(TIMES, FREQS)), "take.wav"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200, f"veio {r.status_code}: {r.data[:200]}"
+    assert not (tmp_path / "human_takes").exists(), "sem save=1, nao deveria existir nem o diretorio"
+
+
+def test_save_truthy_grava_wav_e_json(client, monkeypatch, tmp_path):
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    takes_dir = tmp_path / "human_takes"
+    monkeypatch.setattr(mod, "HUMAN_TAKES_DIR", takes_dir)
+    sf.write(tmp_path / "abc.wav", bursts(TIMES, FREQS), SR)
+
+    r = client.post("/api/score", data={
+        "mode": "mimic", "ref": "abc", "save": "1",
+        "participante": "ana", "condicao": "quarto silencioso",
+        "take": (_wav_bytes(bursts(TIMES, FREQS)), "take.wav"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200, f"veio {r.status_code}: {r.data[:200]}"
+
+    wavs = list(takes_dir.glob("*.wav"))
+    jsons = list(takes_dir.glob("*.json"))
+    assert len(wavs) == 1, f"esperava 1 wav salvo, achei {len(wavs)}"
+    assert len(jsons) == 1, f"esperava 1 json salvo, achei {len(jsons)}"
+
+    meta = json.loads(jsons[0].read_text(encoding="utf-8"))
+    assert meta["mode"] == "mimic"
+    assert meta["ref"] == "abc"
+    assert meta["participante"] == "ana"
+    assert meta["condicao"] == "quarto silencioso"
+    assert meta["total"] == r.get_json()["total"], "json salvo tem que bater com a resposta HTTP"
+    assert "timestamp" in meta
+
+    # o wav salvo e' o take JA convertido (16k mono) — decodavel de volta sem ffmpeg
+    saved_samples, saved_sr = sf.read(wavs[0])
+    assert saved_sr == 16000
+    assert len(saved_samples) > 0
+
+
+def test_save_truthy_mas_scoring_falhou_nao_grava(client, monkeypatch, tmp_path):
+    """save=1 nao deve gravar nada se o take nem chegou a ser pontuado (404 de
+    referencia inexistente) — nao ha ScoreReport pra descrever."""
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    takes_dir = tmp_path / "human_takes"
+    monkeypatch.setattr(mod, "HUMAN_TAKES_DIR", takes_dir)
+
+    r = client.post("/api/score", data={
+        "mode": "mimic", "ref": "nao_existe", "save": "1",
+        "take": (_wav_bytes(bursts(TIMES, FREQS)), "take.wav"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 404
+    assert not takes_dir.exists()
