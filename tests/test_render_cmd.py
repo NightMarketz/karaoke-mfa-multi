@@ -97,3 +97,13 @@ def test_fundo_em_imagem_continua_levando_loop():
     # E a outra ponta: imagem SEM loop vira um frame so.
     cmd = build_render_cmd(BG, [INST, VOX], ASS, OUT, 176.1, SC)
     assert "-loop" in cmd and cmd[cmd.index("-loop") + 1] == "1"
+
+
+def test_fundo_em_video_forca_25_fps_antes_do_scale():
+    # loop da cena a 16 fps nao pode ditar o fps do MP4 final
+    fc = _fc(build_render_cmd(Path("/tmp/fundo.mp4"), [INST, VOX], ASS, OUT, 176.1, SC))
+    assert "fps=25" in fc and fc.index("fps=25") < fc.index("scale="), fc
+
+
+def test_fundo_em_imagem_nao_leva_filtro_fps():
+    assert "fps=" not in _fc(build_render_cmd(BG, [INST, VOX], ASS, OUT, 176.1, SC))

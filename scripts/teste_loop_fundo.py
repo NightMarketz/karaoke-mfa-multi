@@ -59,7 +59,7 @@ PROMPT_MOVIMENTO = ("static camera, locked shot, gentle drifting clouds, "
                     "lights, constant lighting, calm seamless loop")
 
 FPS = 16            # fps nativo do Wan
-FAIXA_LEGENDA = (0.62, 0.92)   # fracao da altura onde a legenda do ASS mora
+FAIXA_LEGENDA = (0.0, 0.25)    # letra do 09 mora no topo: \an2\pos(640,60+110*camada) -> camada 0 linhas 8-48, camada 1 118-158 de 720 (medido 2026-09-30)
 RAZAO_EMENDA_MAX = 1.5         # mesmo limite do make_loop_gif --forward
 
 

@@ -134,6 +134,11 @@ def _casar_por_texto(linhas: list, flat_words: list):
     return entradas, len(palavras - divergentes), len(palavras)
 
 
+def _chave(texto: str) -> str:
+    """Minusculo, so letras/digitos: 'half-time' e 'half'+'time' dao a mesma chave."""
+    return re.sub(r"\W+", "", texto.lower())
+
+
 # ── Modo CTC ──────────────────────────────────────────────────────────────────
 
 def build_ass_from_ctc(char_timing: list, lyrics_lines: list) -> tuple[list, list]:
@@ -312,31 +317,50 @@ def build_ass_from_textgrid(tg_path: Path, lyrics_lines: list) -> tuple[list, li
 
     _progress(20, f"{len(mappings)} palavras carregadas")
 
+    # O TextGrid nasce do song.lab (03_prepare_corpus): sem [Secao], sem
+    # (direcao), contracoes expandidas. A letra passa aqui pela mesma limpeza,
+    # e cada palavra exibida consome as palavras em que o song.lab a divide
+    # ("I'm" -> "i", "am").
+    lyrics_lines = clean_lyrics_strict("\n".join(lyrics_lines)).splitlines()
+
     PRE_ROLL  = 1.0
     POST_ROLL = 0.5
     events = []
     word_idx = 0
+    palavras = casadas = 0
     total_lines = len(lyrics_lines)
 
     # Layer collision tracker
     layer_ends = []
 
     for line_num, line in enumerate(lyrics_lines):
-        line_words = line.split()
-        if not line_words or word_idx >= len(mappings):
-            continue
-
-        line_mappings = []
-        for _ in line_words:
-            if word_idx < len(mappings):
-                line_mappings.append(mappings[word_idx])
+        # (palavra exibida, inicio, fim) de cada palavra desta linha
+        line_words = []
+        for raw_word in line.split():
+            falado = normalise_lyrics(raw_word).split()
+            if not falado:
+                continue  # so pontuacao: o song.lab tambem nao tem
+            palavras += 1
+            if word_idx >= len(mappings):
+                continue
+            # Casa por texto, nao so por contagem: o alinhador pode partir
+            # "half-time" em duas palavras que o song.lab guarda como uma.
+            alvo = "".join(map(_chave, falado))
+            ini, lido = word_idx, ""
+            while word_idx < len(mappings) and len(lido) < len(alvo):
+                lido += _chave(mappings[word_idx].word.text)
                 word_idx += 1
+            if lido == alvo:
+                casadas += 1
+            else:
+                word_idx = min(ini + len(falado), len(mappings))
+            line_words.append((raw_word, mappings[ini].word.start, mappings[word_idx - 1].word.end))
 
-        if not line_mappings:
+        if not line_words:
             continue
 
-        line_start_audio = line_mappings[0].word.start
-        line_end_audio   = line_mappings[-1].word.end
+        line_start_audio = line_words[0][1]
+        line_end_audio   = line_words[-1][2]
         start_visual = max(0.0, line_start_audio - PRE_ROLL)
         end_visual   = line_end_audio + POST_ROLL
 
@@ -355,27 +379,19 @@ def build_ass_from_textgrid(tg_path: Path, lyrics_lines: list) -> tuple[list, li
         k_parts = []
         current_time = start_visual
 
-        for i, lw in enumerate(line_words):
-            if word_idx - len(line_words) + i < len(mappings):
-                m = line_mappings[i] if i < len(line_mappings) else None
-                if not m:
-                    k_parts.append(f" {lw}")
-                    continue
+        for i, (palavra, w_start, w_end) in enumerate(line_words):
+            gap = w_start - current_time
+            if gap > 0.001:
+                gap_cs = max(0, int(round(gap * 100)))
+                k_parts.append(f"{{\\k{gap_cs}}}" if i == 0 else f"{{\\k{gap_cs}}} ")
+            elif i > 0:
+                k_parts.append("{\\k0} ")
 
-                gap = m.word.start - current_time
-                if gap > 0.001:
-                    gap_cs = max(0, int(round(gap * 100)))
-                    k_parts.append(f"{{\\k{gap_cs}}}" if i == 0 else f"{{\\k{gap_cs}}} ")
-                elif i > 0:
-                    k_parts.append("{\\k0} ")
-
-                word_dur = max(min_word, min(max_word, m.word.duration))
-                dur_cs = int(round(word_dur * 100))
-                color_dur = dur_cs * 10
-                k_parts.append(f"{{\\kf{dur_cs}\\t(0,{color_dur},\\1c&H00FFFF&)}}{m.word.text}")
-                current_time = m.word.start + word_dur
-            else:
-                k_parts.append(f" {lw}")
+            word_dur = max(min_word, min(max_word, w_end - w_start))
+            dur_cs = int(round(word_dur * 100))
+            color_dur = dur_cs * 10
+            k_parts.append(f"{{\\kf{dur_cs}\\t(0,{color_dur},\\1c&H00FFFF&)}}{palavra}")
+            current_time = w_start + word_dur
 
         k_text = "".join(k_parts)
         start_ass = format_ass_time(start_visual)
@@ -389,6 +405,10 @@ def build_ass_from_textgrid(tg_path: Path, lyrics_lines: list) -> tuple[list, li
             pct = 20 + int((line_num / total_lines) * 60)
             _progress(pct, f"Linha {line_num + 1}/{total_lines} (legacy)...")
 
+    sobra = len(mappings) - word_idx
+    if casadas < palavras or sobra:
+        print(f"  AVISO: {casadas} de {palavras} palavras da letra batem com o TextGrid "
+              f"(o resto foi por posicao); {sobra} de {len(mappings)} palavras do TextGrid sobraram")
     _progress(80, "Eventos ASS gerados (modo legacy)")
     return events, layer_ends
 
@@ -483,6 +503,7 @@ def build_adlib_events(adlibs: list, layer_ends: list) -> list:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-id", required=True)
+    parser.add_argument("--scene", default=None)
     args = parser.parse_args()
     job_id = args.job_id
 
@@ -492,6 +513,7 @@ def main():
     word_timing_path     = kpaths.word_timing_json(job_id)
     word_timing_fixed_path = kpaths.alignment_dir(job_id) / "word_timing_fixed.json"
     fused_alignment_path = kpaths.fused_alignment_json(job_id)
+    char_timing_path     = kpaths.char_timing_json(job_id)
     adlibs_path          = kpaths.adlibs_json(job_id)
     tg_corrected         = kpaths.alignment_dir(job_id) / "song.corrected.TextGrid"
     tg_original          = kpaths.alignment_dir(job_id) / "song.TextGrid"
@@ -650,8 +672,9 @@ def main():
               f"(ffprobe: {probe.stderr.strip()[:500]})")
         sys.exit(1)
 
-    bg_png = kpaths.background_png(job_id)
-    bg_png = bg_png if bg_png.exists() else None
+    from karaoke.scene_compose import fundo_do_job
+    bg_png, rotulo = fundo_do_job(kpaths.background_scene_mp4(job_id), kpaths.background_png(job_id),
+                                  args.scene, instrumental)
 
     sendcmd_path = None
     if bg_png is not None:
@@ -672,7 +695,7 @@ def main():
             if tmp_sendcmd is not None:
                 tmp_sendcmd.unlink(missing_ok=True)
 
-    print(f"  Fundo: {'ilustracao' if bg_png else 'chapado #08090f'}")
+    print(f"  Fundo: {rotulo}")
     cmd_video = build_render_cmd(bg_png, [instrumental, vocals],
                                  out_ass, out_mp4, duration, sendcmd_path)
 
@@ -687,7 +710,7 @@ def main():
         # O fundo e enfeite: PNG corrompido/truncado ou sendcmd invalido nao
         # pode custar o MP4. Uma única retentativa no caminho chapado, que
         # nao depende de nenhum dos dois.
-        print("  AVISO: render com ilustracao falhou — refazendo com fundo chapado.")
+        print("  AVISO: render com fundo falhou — refazendo com fundo chapado.")
         print(f"  Motivo (ffmpeg): {erro}")
         cmd_flat = build_render_cmd(None, [instrumental, vocals],
                                     out_ass, out_mp4, duration, None)
