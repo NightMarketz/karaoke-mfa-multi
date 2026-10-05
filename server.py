@@ -29,6 +29,8 @@ from karaoke import state_store, resume_planner, paths as kpaths
 from server_preview_addendum import write_preview_config, make_promote_route
 from server_score_addendum import make_score_route
 from server_mimic_refs_addendum import make_mimic_refs_route
+from server_karaoke_game_addendum import make_karaoke_game_route
+from server_result_addendum import make_result_route
 
 try:
     _res_cuda = subprocess.run(
@@ -42,6 +44,8 @@ except Exception:
 app = Flask(__name__, static_folder="web", static_url_path="/static")
 make_score_route(app)
 make_mimic_refs_route(app)
+make_karaoke_game_route(app)
+make_result_route(app)
 
 # ── Security ─────────────────────────────────────────────────────────────────
 app.config["MAX_CONTENT_LENGTH"] = 1000 * 1024 * 1024  # 1 GB
@@ -481,60 +485,6 @@ def api_progress():
 
     return Response(stream(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-
-@app.route("/api/result/ass")
-def api_result_ass():
-    job_id = request.args.get("job_id")
-    if not job_id:
-        raise APIError("Missing job_id", status_code=400, code="MISSING_PARAM")
-    ass_path = _p("06_ass", "karaoke.ass", job_id=job_id)
-    if os.path.exists(ass_path):
-        return send_file(ass_path, mimetype="text/plain", as_attachment=True, download_name="karaoke.ass")
-    raise APIError("ASS file not found", status_code=404, code="NOT_FOUND")
-
-
-@app.route("/api/result/lyrics")
-def api_result_lyrics():
-    job_id = request.args.get("job_id")
-    if not job_id:
-        raise APIError("Missing job_id", status_code=400, code="MISSING_PARAM")
-    path = Path("input", "jobs", job_id) / "lyrics.txt"
-    if os.path.exists(path):
-        return send_file(str(path), mimetype="text/plain", as_attachment=True, download_name="lyrics.txt")
-    raise APIError("Lyrics not found", status_code=404, code="NOT_FOUND")
-
-
-@app.route("/api/result/audio")
-def api_result_audio():
-    job_id = request.args.get("job_id")
-    if not job_id:
-        raise APIError("Missing job_id", status_code=400, code="MISSING_PARAM")
-    input_job_dir = Path("input", "jobs", job_id)
-    for ext in [".mp3", ".wav", ".ogg", ".flac", ".m4a"]:
-        p = input_job_dir / f"song{ext}"
-        if p.exists():
-            mime = {
-                ".mp3": "audio/mpeg", ".wav": "audio/wav",
-                ".ogg": "audio/ogg",  ".flac": "audio/flac", ".m4a": "audio/mp4",
-            }.get(ext, "audio/mpeg")
-            return send_file(str(p), mimetype=mime)
-    raise APIError("Audio not found", status_code=404, code="NOT_FOUND")
-
-
-@app.route("/api/result/word_timing")
-def api_result_word_timing():
-    job_id = request.args.get("job_id")
-    if not job_id:
-        raise APIError("Missing job_id", status_code=400, code="MISSING_PARAM")
-    path = _p("05_alignment", "word_timing.json", job_id=job_id)
-    if os.path.exists(path):
-        return send_file(path, mimetype="application/json")
-    # Tenta resgatar da etapa 07 ou 08 se houver
-    path_fixed = _p("07_dtw", "word_timing_fixed.json", job_id=job_id)
-    if os.path.exists(path_fixed):
-        return send_file(path_fixed, mimetype="application/json")
-    raise APIError("Not found", status_code=404, code="NOT_FOUND")
 
 
 @app.route("/api/karaoke/data")

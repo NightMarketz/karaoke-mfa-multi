@@ -293,3 +293,72 @@ def test_save_truthy_mas_scoring_falhou_nao_grava(client, monkeypatch, tmp_path)
     }, content_type="multipart/form-data")
     assert r.status_code == 404
     assert not takes_dir.exists()
+
+
+# ── Trecho [start, end] no karaoke ───────────────────────────────────────────
+from karaoke import paths as kpaths
+from karaoke.trechos import TRECHO_MAX_S
+
+
+@pytest.fixture
+def job_karaoke(monkeypatch, tmp_path):
+    """Job falso de 10 s: 5 palavras em 0-3,25 s, silencio depois."""
+    monkeypatch.setattr(kpaths, "repos_root", lambda: tmp_path)
+    job = "job_trecho"
+    wt = kpaths.word_timing_json(job)
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    words = [{"word": f"w{i}", "start": t, "end": t + 0.25, "score": 1.0}
+             for i, t in enumerate(TIMES)]
+    wt.write_text(json.dumps(words), encoding="utf-8")
+    voz = np.zeros(10 * SR, dtype="float32")
+    b = bursts(TIMES, FREQS)
+    voz[:len(b)] = b[:len(voz)]
+    voc = kpaths.vocals_raw(job)
+    voc.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(voc, voz, SR)
+    return job
+
+
+def _post_karaoke(client, job, **extra):
+    return client.post("/api/score", data={
+        "mode": "karaoke", "ref": job, **extra,
+        "take": (_wav_bytes(bursts(TIMES, FREQS)), "take.wav"),
+    }, content_type="multipart/form-data")
+
+
+def test_max_take_cobre_trecho_mais_pre_roll():
+    import server_score_addendum as mod
+    assert mod.MAX_TAKE_S >= TRECHO_MAX_S + 2 + 0.5  # pre-roll + pos-roll de karaoke-vez.js
+
+
+@pytest.mark.parametrize("start,end", [("-1", "5"), ("5", "5"), ("6", "2"), ("0", "31"),
+                                       ("0", "99"), ("a", "5"), ("5", "")])
+def test_trecho_invalido_da_400(client, monkeypatch, job_karaoke, start, end):
+    import server_score_addendum as mod
+    chamadas = []
+    monkeypatch.setattr(mod, "_webm_para_wav", lambda *a, **k: chamadas.append(a) or False)
+    r = _post_karaoke(client, job_karaoke, start=start, end=end)
+    assert r.status_code == 400, f"veio {r.status_code}: {r.data[:200]}"
+    assert "trecho" in r.get_json()["error"]
+    assert not chamadas, "ffmpeg foi chamado antes de validar o trecho"
+
+
+def test_trecho_so_start_da_400(client, monkeypatch, job_karaoke):
+    import server_score_addendum as mod
+    chamadas = []
+    monkeypatch.setattr(mod, "_webm_para_wav", lambda *a, **k: chamadas.append(a) or False)
+    r = _post_karaoke(client, job_karaoke, start="1")
+    assert r.status_code == 400
+    assert "trecho" in r.get_json()["error"]
+    assert not chamadas
+
+
+def test_trecho_sem_palavras_da_422(client, job_karaoke):
+    r = _post_karaoke(client, job_karaoke, start="9.0", end="9.9")
+    assert r.status_code == 422, f"veio {r.status_code}: {r.data[:200]}"
+
+
+def test_trecho_valido_pontua(client, job_karaoke):
+    r = _post_karaoke(client, job_karaoke, start="0", end="4")
+    assert r.status_code == 200, f"veio {r.status_code}: {r.data[:200]}"
+    assert isinstance(r.get_json()["total"], (int, float))

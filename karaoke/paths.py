@@ -159,6 +159,10 @@ def demucs_out_dir(job_id: str) -> Path:
     nao pelo diretorio de input — ver scripts/02_vocal_isolation.py."""
     return separation_dir(job_id) / "htdemucs" / "song"
 
+def instrumental(job_id: str) -> Path:
+    """Base sem voz (stem no_vocals do Demucs)."""
+    return demucs_out_dir(job_id) / "no_vocals.wav"
+
 def song_wav(job_id: str) -> Path:
     """WAV normalizado que 01_media_prep.py escreve (linha 49: input_job_dir /
     "song.wav"). Citado por server.py:95, que estourava AttributeError ali —

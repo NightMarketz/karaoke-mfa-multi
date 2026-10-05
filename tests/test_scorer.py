@@ -506,3 +506,26 @@ def test_recorte_tira_silencio_das_duas_pontas_e_desloca_os_ataques():
         f"primeiro ataque em {track.onsets[0]:.3f}s, esperado ~{VOICE_PAD_MS / 1000}s"
     )
     np.testing.assert_allclose(np.diff(track.onsets), np.diff(direto.onsets), atol=0.02)
+
+
+DIFERENTE_FREQS_5 = [392.0, 349.0, 440.0, 330.0, 494.0]
+
+
+def test_karaoke_trecho_certo_supera_trecho_errado():
+    """Mesmo take, dois trechos do mesmo audio: o que bate com o take pontua alto,
+    o outro (melodia diferente, +5 s) pontua baixo."""
+    a = bursts(TIMES, FREQS)
+    b = bursts(TIMES, DIFERENTE_FREQS_5)
+    n = int(5 * SR)
+    audio = np.zeros(n + len(b), dtype=np.float32)
+    audio[:len(a)] += a[:n]
+    audio[n:] += b
+    words_a = [{"word": f"a{i}", "start": t, "end": t + 0.25, "score": 1.0}
+               for i, t in enumerate(TIMES)]
+    words_b = [{"word": f"b{i}", "start": t + 5, "end": t + 5.25, "score": 1.0}
+               for i, t in enumerate(TIMES)]
+    take = track_from_audio(bursts(TIMES, FREQS), SR)
+    certo = score(track_from_word_timing(words_a, audio, SR), take)
+    errado = score(track_from_word_timing(words_b, audio, SR), take)
+    assert certo.melody >= 85, f"trecho certo deu melodia {certo.melody:.1f}"
+    assert errado.melody <= 30, f"trecho errado deu melodia {errado.melody:.1f}"
