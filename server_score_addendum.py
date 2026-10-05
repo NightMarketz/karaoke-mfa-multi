@@ -23,7 +23,7 @@ from karaoke.scorer import PITCH_LEVELS, score, track_from_audio, track_from_wor
 from karaoke.trechos import TRECHO_MAX_S
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024          # take de uma rodada nao passa disso
-# ponytail: >= TRECHO_MAX_S + PRE_ROLL_S do navegador (2 s); subir junto se o pre-roll crescer
+# ponytail: >= TRECHO_MAX_S + PRE_ROLL_S (2 s) + POS_ROLL_S (0,5 s) do navegador; subir junto se crescerem
 MAX_TAKE_S = 35                             # ffmpeg corta aqui: 8 MB de Opus sao ~3 h
 FFMPEG_TIMEOUT_S = 60                       # container malformado nao pendura o worker
 MODES = frozenset({"mimic", "karaoke"})     # lista FECHADA

@@ -328,7 +328,7 @@ def _post_karaoke(client, job, **extra):
 
 def test_max_take_cobre_trecho_mais_pre_roll():
     import server_score_addendum as mod
-    assert mod.MAX_TAKE_S >= TRECHO_MAX_S + 2
+    assert mod.MAX_TAKE_S >= TRECHO_MAX_S + 2 + 0.5  # pre-roll + pos-roll de karaoke-vez.js
 
 
 @pytest.mark.parametrize("start,end", [("-1", "5"), ("5", "5"), ("6", "2"), ("0", "31"),

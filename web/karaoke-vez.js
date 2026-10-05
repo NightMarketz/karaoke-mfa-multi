@@ -4,6 +4,8 @@
 // criaMedidor (mic-meter.js), carregados antes deste arquivo.
 
 const PRE_ROLL_S = 2;   // a base entra 2 s antes do primeiro verso (servidor: MAX_TAKE_S cobre isso)
+const POS_ROLL_S = 0.5; // o gravador segue 0,5 s depois da base parar em `fim`: a latencia do
+                        // alto-falante nao corta a ultima palavra (2 + 30 + 0,5 < MAX_TAKE_S 35)
 const CONTAGEM_S = 3;   // 3-2-1 antes de cantar
 const FOLGA_VIGIA_S = 4;      // vigia de relogio: duracao esperada da vez + esta folga
 const ESPERA_CARGA_S = 15;    // base que nao carrega/toca em 15 s depois da contagem = falha
@@ -33,6 +35,7 @@ function vezKaraoke({ trecho, audio, letraEl, medidorEl, estadoEl, stream, aoTer
   let cancelada = false;   // rec.onstop nao entrega blob
   let timer = null, raf = 0, rec = null, chunks = [];
   let vigiaRelogio = null; // setTimeout: base travada/sem 'ended' nao prende a vez (e o mic)
+  let posRoll = null;      // setTimeout: para o gravador POS_ROLL_S depois da base
   let metaCarregada = false;
   const inicioBase = Math.max(0, trecho.inicio - PRE_ROLL_S);
 
@@ -88,8 +91,10 @@ function vezKaraoke({ trecho, audio, letraEl, medidorEl, estadoEl, stream, aoTer
   function termina() {
     if (encerrada) return;
     encerrada = true;
-    limpa();
-    paraGravador(); // onstop entrega o blob
+    limpa(); // a base para em `fim` (o vigia de relogio sai aqui e nao dispara depois)
+    // pos-roll: o gravador segue POS_ROLL_S; onstop entrega o blob. O /api/score
+    // continua recebendo end = fim.
+    posRoll = setTimeout(() => { posRoll = null; paraGravador(); }, POS_ROLL_S * 1000);
   }
   function falha(msg) {
     if (encerrada) return;
@@ -146,6 +151,13 @@ function vezKaraoke({ trecho, audio, letraEl, medidorEl, estadoEl, stream, aoTer
 
   return {
     cancela() {
+      if (posRoll) { // cancelou durante o pos-roll: descarta o take e solta o gravador ja
+        clearTimeout(posRoll);
+        posRoll = null;
+        cancelada = true;
+        paraGravador();
+        return;
+      }
       if (encerrada) return;
       encerrada = true;
       cancelada = true;

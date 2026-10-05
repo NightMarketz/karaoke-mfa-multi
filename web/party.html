@@ -659,7 +659,6 @@ function proximaRodada() {
 function proximoJogadorDaRodada() {
   const j = jogadores[jogadorAtual];
   $("round-progresso").textContent = `Rodada ${rodadaAtual} / ${numRodadas}`;
-  $("clip-titulo").textContent = `"${clipeAtual.label}"`;
   $("vez-nome").textContent = j.nome;
   $("vez-pts").textContent = `${j.pontos.toFixed(1)} pts`;
   if (modoPartida === "karaoke") {
@@ -674,6 +673,7 @@ function proximoJogadorDaRodada() {
     $("rec").disabled = false;
     return;
   }
+  $("clip-titulo").textContent = `"${clipeAtual.label}"`;
   $("reproduzir-ref").hidden = false;
   $("letra-trecho").hidden = true;
   $("rec").setAttribute("aria-label", "Gravar");
