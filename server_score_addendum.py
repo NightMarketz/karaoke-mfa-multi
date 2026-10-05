@@ -18,12 +18,15 @@ import soundfile as sf
 from flask import jsonify, request, send_file
 
 from karaoke import paths as kpaths
-from karaoke.scorer import score, track_from_audio, track_from_word_timing
+from karaoke.scorer import PITCH_LEVELS, score, track_from_audio, track_from_word_timing
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024          # take de uma rodada nao passa disso
 MAX_TAKE_S = 30                             # ffmpeg corta aqui: 8 MB de Opus sao ~3 h
 FFMPEG_TIMEOUT_S = 60                       # container malformado nao pendura o worker
 MODES = frozenset({"mimic", "karaoke"})     # lista FECHADA
+# Nivel de afinacao quando o cliente nao manda `pitch`: karaoke cobra o tom (ignora
+# oitava); imitar som cru so cobra a melodia. Lista fechada em PITCH_LEVELS.
+PITCH_DEFAULT = {"karaoke": "oitava", "mimic": "relativo"}
 REF_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 # Ancorado na raiz do repo como todos os acessores de kpaths. Relativo ao CWD,
 # path.exists() e send_file() resolviam contra raizes DIFERENTES (CWD vs app.root_path).
@@ -58,6 +61,7 @@ def _salva_take_para_pesquisa(wav_bytes, mode, ref_id, participante, condicao, r
         "ref": ref_id,
         "participante": participante,
         "condicao": condicao,
+        "pitch": report.pitch,
         "melody": round(report.melody, 1),
         "rhythm": round(report.rhythm, 1),
         "attacks": round(report.attacks, 1),
@@ -102,6 +106,9 @@ def make_score_route(app) -> None:
         mode = (request.form.get("mode") or "").strip()
         if mode not in MODES:
             return _erro(f"mode invalido: esperado um de {sorted(MODES)}", 400)
+        pitch = (request.form.get("pitch") or "").strip() or PITCH_DEFAULT[mode]
+        if pitch not in PITCH_LEVELS:
+            return _erro(f"pitch invalido: esperado um de {list(PITCH_LEVELS)}", 400)
 
         ref_id = (request.form.get("ref") or "").strip()
         if REF_ID_RE.match(ref_id) is None:
@@ -170,10 +177,11 @@ def make_score_route(app) -> None:
                     ref_samples = ref_samples.mean(axis=1)
                 ref = track_from_audio(ref_samples, ref_sr)
 
-        report = score(ref, take)
+        report = score(ref, take, pitch=pitch)
         if salvar:
             _salva_take_para_pesquisa(take_wav_bytes, mode, ref_id, participante, condicao, report)
         return jsonify({
+            "pitch": report.pitch,
             "melody": round(report.melody, 1),
             "rhythm": round(report.rhythm, 1),
             "attacks": round(report.attacks, 1),

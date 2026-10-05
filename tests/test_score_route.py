@@ -7,7 +7,7 @@ import soundfile as sf
 from flask import Flask
 
 from karaoke.audio_fixtures import SR, bursts
-from server_score_addendum import MODES, REF_ID_RE, make_score_route
+from server_score_addendum import MODES, PITCH_DEFAULT, REF_ID_RE, make_score_route
 
 # 5 ataques reais — o mesmo par usado em tests/test_scorer.py, so pra ter um
 # take que passa pelo ffmpeg de verdade e produz um ScoreReport de verdade.
@@ -176,6 +176,44 @@ def test_ffmpeg_recebe_corte_de_duracao(client, monkeypatch, tmp_path):
 def test_lista_de_modos_e_fechada():
     assert MODES == frozenset({"mimic", "karaoke"})
     assert len(MODES) == 2, f"MODES tem {len(MODES)} entradas"
+
+
+def test_nivel_de_afinacao_padrao_por_modo():
+    """Karaoke cobra o tom (ignora oitava); imitar som cru so cobra a melodia."""
+    assert PITCH_DEFAULT == {"karaoke": "oitava", "mimic": "relativo"}
+
+
+def _post_mimic(client, monkeypatch, tmp_path, **extra):
+    import server_score_addendum as mod
+    monkeypatch.setattr(mod, "MIMIC_REF_DIR", tmp_path)
+    sf.write(tmp_path / "abc.wav", bursts(TIMES, FREQS), SR)
+    alto = bursts(TIMES, [f * 2 ** (3 / 12) for f in FREQS])
+    return client.post("/api/score", data={
+        "mode": "mimic", "ref": "abc", **extra,
+        "take": (_wav_bytes(alto), "take.wav"),
+    }, content_type="multipart/form-data")
+
+
+def test_pitch_ausente_usa_o_padrao_do_modo(client, monkeypatch, tmp_path):
+    r = _post_mimic(client, monkeypatch, tmp_path)
+    assert r.status_code == 200, f"veio {r.status_code}: {r.data[:200]}"
+    body = r.get_json()
+    assert body["pitch"] == "relativo"
+    assert body["melody"] >= 85.0, f"mimic transposto +3 deu melodia {body['melody']}"
+
+
+def test_pitch_explicito_e_respeitado(client, monkeypatch, tmp_path):
+    r = _post_mimic(client, monkeypatch, tmp_path, pitch="estrito")
+    assert r.status_code == 200, f"veio {r.status_code}: {r.data[:200]}"
+    body = r.get_json()
+    assert body["pitch"] == "estrito"
+    assert body["melody"] <= 15.0, f"estrito com +3 semitons deu melodia {body['melody']}"
+
+
+def test_pitch_fora_da_lista_fechada_da_400(client, monkeypatch, tmp_path):
+    r = _post_mimic(client, monkeypatch, tmp_path, pitch="facil")
+    assert r.status_code == 400
+    assert "pitch" in r.get_json()["error"]
 
 
 @pytest.mark.parametrize("mau", ["../x", "a/b", "x" * 65, "", "a;b", "a b"])
