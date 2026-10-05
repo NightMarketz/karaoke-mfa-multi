@@ -219,6 +219,15 @@
 
   .acoes { display: flex; gap: .6rem; width: 100%; }
   .acoes .btn-glossy { flex: 1; }
+
+  /* letra do trecho (letra-trecho.js): palavra preenche da esquerda pra direita via --fill (0-1) */
+  .verso { text-align: center; font-weight: 700; font-size: 1.15rem; line-height: 1.5; padding: .25rem 0;
+    color: var(--tinta); opacity: .45; transition: opacity .2s linear; }
+  .verso.ativo { opacity: 1; font-size: 1.3rem; }
+  .verso.passado { opacity: .7; }
+  .palavra { position: relative; display: inline-block; }
+  .palavra::after { content: attr(data-t); position: absolute; left: 0; top: 0; white-space: nowrap;
+    color: #c81e1e; overflow: hidden; width: calc(var(--fill, 0) * 100%); }
 </style>
 </head>
 <body>
