@@ -19,7 +19,8 @@ def test_track_extrai_ataques_e_contorno():
         f"apenas {track.n_voiced} frames voiced de {track.n_frames} — populacao insuficiente"
     )
     assert track.n_voiced <= track.n_frames, "voiced nao pode exceder o total de frames"
-    assert len(track.semitones) == track.n_voiced
+    assert len(track.midi) == track.n_frames, "contorno tem um valor por frame, voiced ou nao"
+    assert int(np.sum(~np.isnan(track.midi))) == track.n_voiced
     # duration e do recorte por voz (emenda 3); recorte + pontas removidas = entrada
     assert track.duration + track.trim_start_s + track.trim_end_s == pytest.approx(
         len(bursts(TIMES, FREQS)) / SR, abs=0.01
@@ -27,20 +28,33 @@ def test_track_extrai_ataques_e_contorno():
     assert track.trim_start_s > 0.0, "fixture tem 0,3 s de silencio antes: algo tinha que sair"
 
 
-def test_contorno_centrado_na_mediana():
-    """Mediana em zero e o que torna a nota agnostica a registro."""
+def test_contorno_e_absoluto_e_indexado_por_tempo():
+    """Altura em MIDI absoluto (nao centrada) numa grade de HOP_MS: e o que deixa o
+    nivel `estrito` cobrar tom e oitava e o score() comparar o mesmo instante."""
+    from karaoke.onset import HOP_MS
     track = track_from_audio(bursts(TIMES, FREQS), SR)
-    assert float(np.median(track.semitones)) == pytest.approx(0.0, abs=0.5)
+    assert track.pitch_hop_s == pytest.approx(HOP_MS / 1000)
+    voiced = np.flatnonzero(~np.isnan(track.midi))
+    assert len(voiced) >= MIN_VOICED_FRAMES, f"{len(voiced)} frames voiced"
+    # primeiro burst (220 Hz = MIDI 57) no inicio do recorte (~VOICE_PAD_MS)
+    primeiro = float(track.midi[voiced[0] + 2])
+    assert primeiro == pytest.approx(57.0, abs=0.5), f"primeiro frame voiced em MIDI {primeiro:.2f}"
+    # ultimo burst (330 Hz = MIDI 64) sai no tempo certo: 2,7 s depois do primeiro
+    i_ultimo = int(round((TIMES[-1] - TIMES[0] + 0.1) / track.pitch_hop_s)) + voiced[0]
+    assert float(track.midi[i_ultimo]) == pytest.approx(64.0, abs=0.5), (
+        f"frame {i_ultimo} em MIDI {track.midi[i_ultimo]:.2f}, esperado 64 (330 Hz)"
+    )
 
 
-def test_transposicao_nao_muda_o_contorno():
+def test_transposicao_desloca_o_contorno():
     base = track_from_audio(bursts(TIMES, FREQS), SR)
     alto = track_from_audio(bursts(TIMES, [f * 2 ** (5 / 12) for f in FREQS]), SR)
 
-    n = min(len(base.semitones), len(alto.semitones))
-    assert n >= MIN_VOICED_FRAMES, f"apenas {n} frames comparaveis"
-    diff = float(np.mean(np.abs(base.semitones[:n] - alto.semitones[:n])))
-    assert diff <= 1.0, f"contorno mudou {diff:.2f} semitons com transposicao de +5"
+    n = min(len(base.midi), len(alto.midi))
+    ambos = ~np.isnan(base.midi[:n]) & ~np.isnan(alto.midi[:n])
+    assert int(ambos.sum()) >= MIN_VOICED_FRAMES, f"apenas {int(ambos.sum())} frames comparaveis"
+    diff = float(np.median(alto.midi[:n][ambos] - base.midi[:n][ambos]))
+    assert diff == pytest.approx(5.0, abs=0.3), f"transposicao de +5 virou {diff:+.2f} semitons"
 
 
 def test_conta_suspeita_de_erro_de_oitava():
@@ -94,11 +108,12 @@ def ref():
     return track_from_audio(bursts(TIMES, FREQS), SR)
 
 
-def _total(ref_track, times, freqs):
-    return score(ref_track, track_from_audio(bursts(times, freqs), SR))
+def _total(ref_track, times, freqs, pitch="relativo"):
+    """Controles do spec do modo imitar: pontuam no nivel padrao desse modo."""
+    return score(ref_track, track_from_audio(bursts(times, freqs), SR), pitch=pitch)
 
 
-def _baseline_aleatorio(ref_track, n=30, seed=7):
+def _baseline_aleatorio(ref_track, n=30, seed=7, pitch="relativo"):
     """p95 do acaso. Sem esta regua, nenhuma nota alta significa nada."""
     rng = np.random.default_rng(seed)
     totais = []
@@ -106,7 +121,7 @@ def _baseline_aleatorio(ref_track, n=30, seed=7):
         k = int(rng.integers(3, 7))
         t = np.sort(rng.uniform(0.2, 3.2, k)).tolist()
         f = rng.uniform(150.0, 500.0, k).tolist()
-        totais.append(_total(ref_track, t, f).total)
+        totais.append(_total(ref_track, t, f, pitch).total)
     return np.asarray(totais)
 
 
@@ -118,11 +133,54 @@ def test_controle_1_identidade(ref):
     assert r.total >= 95.0, f"identidade deu {r.total:.1f} (esperado >= 95)"
 
 
-# ── controle 4: transposto ───────────────────────────────────────────────────
-def test_controle_4_transposto_mantem_melodia(ref):
-    r = _total(ref, TIMES, [f * 2 ** (5 / 12) for f in FREQS])
-    assert r.n_frames_compared > 0
-    assert r.melody >= 85.0, f"melodia caiu para {r.melody:.1f} com +5 semitons"
+# ── controle 4: transposto, por nivel de afinacao ────────────────────────────
+OITAVA_ABAIXO = [f / 2 for f in FREQS]
+TRANSPOSTO = [f * 2 ** (3 / 12) for f in FREQS]
+# intervalos pela metade em torno da primeira nota: a falha que a correlacao nao via
+ACHATADO = [FREQS[0] * (f / FREQS[0]) ** 0.5 for f in FREQS]
+
+
+def _mel(ref_track, freqs, pitch, times=TIMES):
+    return score(ref_track, track_from_audio(bursts(times, freqs), SR), pitch=pitch)
+
+
+def test_controle_4_transposto_mantem_melodia_so_no_relativo(ref):
+    rel = _mel(ref, TRANSPOSTO, "relativo")
+    assert rel.n_frames_compared > 0
+    assert rel.melody >= 85.0, f"relativo: melodia {rel.melody:.1f} com +3 semitons"
+    for pitch in ("oitava", "estrito"):
+        r = _mel(ref, TRANSPOSTO, pitch)
+        assert r.melody <= 15.0, f"{pitch}: +3 semitons ainda deu melodia {r.melody:.1f}"
+
+
+def test_oitava_abaixo_so_custa_no_estrito(ref):
+    for pitch in ("relativo", "oitava"):
+        r = _mel(ref, OITAVA_ABAIXO, pitch)
+        assert r.melody >= 85.0, f"{pitch}: uma oitava abaixo deu melodia {r.melody:.1f}"
+    estrito = _mel(ref, OITAVA_ABAIXO, "estrito")
+    assert estrito.melody <= 15.0, f"estrito: oitava abaixo ainda deu {estrito.melody:.1f}"
+
+
+def test_intervalos_achatados_custam_ate_no_relativo(ref):
+    """Ponytail antigo de score(): a correlacao media DIRECAO, nao tamanho do
+    intervalo, e cantar 'flat' (x0,5) dava melodia ~100. Agora cai em todo nivel."""
+    ident = _mel(ref, FREQS, "relativo").melody
+    for pitch in ("relativo", "oitava", "estrito"):
+        r = _mel(ref, ACHATADO, pitch)
+        assert r.melody <= 70.0, f"{pitch}: achatado deu melodia {r.melody:.1f} (identidade {ident:.1f})"
+
+
+def test_silencio_no_meio_conta_como_erro(ref):
+    """Calar uma nota em 5 tira ~1/5 da melodia: o denominador e a voz da REFERENCIA."""
+    times = [t for i, t in enumerate(TIMES) if i != 2]
+    freqs = [f for i, f in enumerate(FREQS) if i != 2]
+    r = score(ref, track_from_audio(bursts(times, freqs), SR), pitch="oitava")
+    assert 60.0 <= r.melody <= 90.0, f"uma nota calada de 5 deu melodia {r.melody:.1f}"
+
+
+def test_nivel_de_afinacao_desconhecido_e_erro(ref):
+    with pytest.raises(ValueError, match="pitch"):
+        score(ref, ref, pitch="facil")
 
 
 # ── controle 3: embaralhado ──────────────────────────────────────────────────
@@ -159,15 +217,30 @@ def test_controle_5_identidade_supera_o_acaso(ref):
 def test_relacoes_de_ordem_completas(ref):
     """As tres relacoes inegociaveis do spec, num teste so, com os numeros a vista."""
     ident = _total(ref, TIMES, FREQS).total
-    transp = _total(ref, TIMES, [f * 2 ** (5 / 12) for f in FREQS]).total
+    transp = score(ref, track_from_audio(bursts(TIMES, [f * 2 ** (5 / 12) for f in FREQS]), SR),
+                   pitch="relativo").total
     emb = _total(ref, EMBARALHADO_TIMES, EMBARALHADO_FREQS).total
     dif = _total(ref, DIFERENTE_TIMES, DIFERENTE_FREQS).total
     p95 = float(np.percentile(_baseline_aleatorio(ref), 95))
 
-    assert abs(ident - transp) <= 5.0, f"identidade {ident:.1f} vs transposto {transp:.1f}"
+    assert abs(ident - transp) <= 5.0, f"identidade {ident:.1f} vs transposto (relativo) {transp:.1f}"
     assert ident > emb > dif, f"ordem quebrou: {ident:.1f} > {emb:.1f} > {dif:.1f}"
     assert ident > p95, f"identidade {ident:.1f} nao supera acaso p95 {p95:.1f}"
     assert dif < p95, f"clipe diferente {dif:.1f} nao ficou abaixo do acaso p95 {p95:.1f}"
+
+
+@pytest.mark.parametrize("pitch", ["oitava", "estrito"])
+def test_niveis_do_karaoke_derrubam_embaralhado_e_diferente_abaixo_do_acaso(ref, pitch):
+    """Comparando no mesmo instante, embaralhado = nota errada em todo frame
+    (melodia ~0). A ordem emb > dif do modo imitar nao vale aqui: o clipe
+    diferente tem um Mi4 que cai sobre o Mi4 da referencia e ganha legitimamente
+    (melodia 20,4, medido 2026-10-05). O que vale: os dois abaixo do acaso."""
+    ident = _total(ref, TIMES, FREQS, pitch).total
+    emb = _total(ref, EMBARALHADO_TIMES, EMBARALHADO_FREQS, pitch).total
+    dif = _total(ref, DIFERENTE_TIMES, DIFERENTE_FREQS, pitch).total
+    p95 = float(np.percentile(_baseline_aleatorio(ref, pitch=pitch), 95))
+    assert ident > p95, f"{pitch}: identidade {ident:.1f} nao supera acaso p95 {p95:.1f}"
+    assert max(emb, dif) < p95, f"{pitch}: emb {emb:.1f} / dif {dif:.1f} nao ficaram abaixo do acaso p95 {p95:.1f}"
 
 
 def test_ritmo_esticado_fica_abaixo_do_acaso(ref):

@@ -60,3 +60,6 @@ web/sfx/
 # OS
 .DS_Store
 Thumbs.db
+
+# worktrees de sessoes do Claude Code
+.claude/worktrees/

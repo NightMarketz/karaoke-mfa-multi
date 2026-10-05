@@ -16,7 +16,6 @@ from karaoke.onset import HOP_MS, compute_rms, detect_onsets
 from karaoke.vad import _mask_to_segments, _smooth_mask  # puras; detect_voice le arquivo e capa em p50
 
 # ── Knobs de calibracao ──────────────────────────────────────────────────────
-MELODY_POINTS = 200        # contornos sao reamostrados para este tamanho comum
 MIN_VOICED_FRAMES = 10     # abaixo disso nao ha contorno para comparar
 F0_MIN_HZ = 65.0           # ~C2
 F0_MAX_HZ = 1000.0         # ~B5
@@ -25,12 +24,10 @@ F0_MAX_HZ = 1000.0         # ~B5
 @dataclass
 class ReferenceTrack:
     onsets: np.ndarray      # instantes de ataque, em segundos
-    semitones: np.ndarray   # contorno de f0 em semitons centrado na mediana (so voiced)
-    frame_dur: float        # hop do RMS/onsets (10 ms). NAO e a grade de `semitones`:
-                            # pyin usa hop proprio (512/sr = 32 ms a 16 kHz).
-                            # ponytail: passar hop_length=int(sr*HOP_MS/1000) ao pyin
-                            # alinha as duas grades quando algo precisar de contorno
-                            # indexado por tempo; hoje score() reamostra por indice.
+    midi: np.ndarray        # altura por frame em MIDI absoluto; NaN onde nao ha voz.
+                            # Indexado por tempo: frame i = i * pitch_hop_s do recorte.
+    pitch_hop_s: float      # grade de `midi` (pyin com hop de HOP_MS)
+    frame_dur: float        # hop do RMS/onsets (10 ms)
     duration: float         # do RECORTE por voz, nao da entrada (emenda 3);
                             # scripts/fetch_mimic_refs.py compara com MIN_DUR_S
     n_voiced: int           # denominador do contorno
@@ -103,25 +100,28 @@ def track_from_audio(samples: np.ndarray, sr: int) -> ReferenceTrack:
     rms, frame_dur = compute_rms(samples, sr)
     onsets = detect_onsets(rms, frame_dur)
 
-    f0, voiced, _ = librosa.pyin(samples, fmin=F0_MIN_HZ, fmax=F0_MAX_HZ, sr=sr)
+    # Mesmo hop do RMS: score() compara a altura no MESMO instante, entao a grade
+    # precisa ser em tempo, nao por indice de frame voiced.
+    hop = int(sr * HOP_MS / 1000)
+    f0, voiced, _ = librosa.pyin(samples, fmin=F0_MIN_HZ, fmax=F0_MAX_HZ, sr=sr,
+                                 hop_length=hop)
     n_frames = int(len(f0))
-    vals = f0[voiced]
-    n_voiced = int(len(vals))
-    if n_voiced >= MIN_VOICED_FRAMES:
-        semitones = 12.0 * np.log2(vals / np.nanmedian(vals))
-    else:
-        semitones = np.empty(0, dtype=np.float64)
-    semitones = np.asarray(semitones, dtype=np.float64)
+    midi = np.full(n_frames, np.nan, dtype=np.float64)
+    midi[voiced] = librosa.hz_to_midi(f0[voiced])
+    n_voiced = int(np.sum(voiced))
 
     # Risco declarado no spec: pyin erra oitava em voz cantada separada pelo Demucs.
     # Medido em 2026-09-10 no material real: 59 de 1207 frames voiced (4.9%). Nao
     # corrigimos a oitava aqui — contamos, para que o erro seja VISIVEL em vez de
     # silenciosamente embutido na nota.
-    n_octave_suspect = int(np.sum(np.abs(semitones) > 11.0)) if len(semitones) else 0
+    vals = midi[voiced]
+    n_octave_suspect = (int(np.sum(np.abs(vals - np.median(vals)) > 11.0))
+                        if n_voiced >= MIN_VOICED_FRAMES else 0)
 
     return ReferenceTrack(
         onsets=onsets,
-        semitones=semitones,
+        midi=midi,
+        pitch_hop_s=hop / sr,
         frame_dur=frame_dur,
         duration=len(samples) / sr,
         n_voiced=n_voiced,
@@ -141,6 +141,16 @@ MATCH_TOL_S = 0.080
 XCORR_BIN_S = 0.010        # grade do trem de impulsos para o alinhamento global
 WEIGHTS = {"melody": 0.45, "rhythm": 0.35, "attacks": 0.20}
 
+# Melodia por frame no mesmo instante (ideia do Encore Karaoke, ScoreEngine.cs):
+# ate 0,5 semitom vale 1, ate 1 semitom vale 0,5, alem disso 0. Silencio do take
+# onde a referencia canta vale 0. Niveis de afinacao, do mais generoso ao mais duro:
+#   relativo — desconta o tom geral do take e ignora oitava (so a melodia importa)
+#   oitava   — cobra o tom, ignora oitava (homem uma oitava abaixo nao perde)
+#   estrito  — cobra tom e oitava
+PITCH_LEVELS = ("relativo", "oitava", "estrito")
+PITCH_FULL_ST = 0.5
+PITCH_HALF_ST = 1.0
+
 # Folga em torno de [words[0].start, words[-1].end] no modo karaoke. O detector
 # precisa ver o RMS SUBIR: recorte que comeca em cima do primeiro ataque perde
 # esse ataque (medido em 2026-09-12: na fixture sintetica de 5 bursts, pad 0
@@ -158,14 +168,9 @@ class ScoreReport:
     n_onsets_ref: int
     n_onsets_take: int
     n_matched: int          # numerador do F1: pares casados dentro de rhythm_tol_s
-    n_frames_compared: int  # zero e FALHA, nao sucesso
+    n_frames_compared: int  # frames voiced nos DOIS lados; zero e FALHA, nao sucesso
     rhythm_tol_s: float     # = MATCH_TOL_S, para auditoria
-
-
-def _resample(contour: np.ndarray, n: int = MELODY_POINTS) -> np.ndarray:
-    return np.interp(np.linspace(0.0, 1.0, n),
-                     np.linspace(0.0, 1.0, len(contour)),
-                     contour)
+    pitch: str = "oitava"   # nivel de afinacao usado na melodia
 
 
 def _align_offset(on_ref: np.ndarray, on_take: np.ndarray) -> float:
@@ -219,9 +224,41 @@ def _match_f1(on_ref: np.ndarray, on_take_alinhado: np.ndarray) -> tuple[float, 
     return f1, pares
 
 
-def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
-    """Compara forma relativa, nunca sincronia absoluta: um atraso global na
-    captura e ESTIMADO (correlacao cruzada) e descontado, nao assumido."""
+def _fold(d: np.ndarray) -> np.ndarray:
+    """Distancia em semitons ignorando oitava: [-6, 6)."""
+    return (d + 6.0) % 12.0 - 6.0
+
+
+def _melody(ref: ReferenceTrack, take: ReferenceTrack, b: float,
+            pitch: str) -> tuple[float, int]:
+    """(0..100, frames comparados). Denominador = frames voiced da REFERENCIA."""
+    ref_voiced = np.flatnonzero(~np.isnan(ref.midi))
+    if len(ref_voiced) < MIN_VOICED_FRAMES:
+        return 0.0, 0
+    # frame i da ref <-> instante i*hop + b no take (b vem do alinhamento dos ataques)
+    j = np.rint((ref_voiced * ref.pitch_hop_s + b) / take.pitch_hop_s).astype(int)
+    dentro = (j >= 0) & (j < len(take.midi))
+    t = np.full(len(ref_voiced), np.nan)
+    t[dentro] = take.midi[j[dentro]]
+    par = ~np.isnan(t)
+    n_par = int(par.sum())
+    if n_par == 0:
+        return 0.0, 0
+    d = t[par] - ref.midi[ref_voiced[par]]
+    if pitch == "relativo":
+        # tom geral do take = media circular do desvio (robusta a saltos de oitava)
+        ang = 2 * np.pi * d / 12.0
+        d = d - 12.0 * np.angle(np.mean(np.exp(1j * ang))) / (2 * np.pi)
+    dist = np.abs(d if pitch == "estrito" else _fold(d))
+    pontos = np.where(dist <= PITCH_FULL_ST, 1.0, np.where(dist <= PITCH_HALF_ST, 0.5, 0.0))
+    return 100.0 * float(pontos.sum()) / len(ref_voiced), n_par
+
+
+def score(ref: ReferenceTrack, take: ReferenceTrack, pitch: str = "oitava") -> ScoreReport:
+    """Compara no mesmo instante, nunca por sincronia absoluta: um atraso global na
+    captura e ESTIMADO (correlacao cruzada dos ataques) e descontado, nao assumido."""
+    if pitch not in PITCH_LEVELS:
+        raise ValueError(f"pitch invalido: {pitch!r}, esperado um de {PITCH_LEVELS}")
     n_ref, n_take = len(ref.onsets), len(take.onsets)
 
     # ataques: quanto as contagens batem
@@ -231,6 +268,7 @@ def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
     # 2026-09-12 (2)). Posicional dava 0.0 ao vocal inteiro, a sala e aos blocos
     # embaralhados — nao distinguia take bom de aleatorio.
     tol = MATCH_TOL_S
+    b = 0.0
     if n_ref >= 2 and n_take >= 1:
         b = _align_offset(ref.onsets, take.onsets)
         f1, n_matched = _match_f1(ref.onsets, take.onsets - b)
@@ -238,18 +276,7 @@ def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
     else:
         rhythm, n_matched = 0.0, 0
 
-    # melodia: correlacao dos contornos centrados, reamostrados a tamanho comum
-    if len(ref.semitones) >= MIN_VOICED_FRAMES and len(take.semitones) >= MIN_VOICED_FRAMES:
-        # ponytail: correlacao mede a DIRECAO do contorno, nao o tamanho dos
-        # intervalos — cantar "flat" (intervalos x0.5) da melody ~100. Upgrade:
-        # distancia RMS em semitons apos centragem, quando isso importar.
-        with np.errstate(invalid="ignore"):
-            r = float(np.corrcoef(_resample(ref.semitones), _resample(take.semitones))[0, 1])
-        melody = 0.0 if np.isnan(r) else 100.0 * max(0.0, r)
-        n_frames_compared = min(len(ref.semitones), len(take.semitones))
-    else:
-        melody = 0.0
-        n_frames_compared = 0
+    melody, n_frames_compared = _melody(ref, take, b, pitch)
 
     total = (WEIGHTS["melody"] * melody
              + WEIGHTS["rhythm"] * rhythm
@@ -258,7 +285,7 @@ def score(ref: ReferenceTrack, take: ReferenceTrack) -> ScoreReport:
     return ScoreReport(
         melody=melody, rhythm=rhythm, attacks=attacks, total=total,
         n_onsets_ref=n_ref, n_onsets_take=n_take, n_matched=n_matched,
-        n_frames_compared=n_frames_compared, rhythm_tol_s=tol,
+        n_frames_compared=n_frames_compared, rhythm_tol_s=tol, pitch=pitch,
     )
 
 

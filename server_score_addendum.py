@@ -11,26 +11,68 @@ import json
 import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import soundfile as sf
 from flask import jsonify, request, send_file
 
 from karaoke import paths as kpaths
-from karaoke.scorer import score, track_from_audio, track_from_word_timing
+from karaoke.scorer import PITCH_LEVELS, score, track_from_audio, track_from_word_timing
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024          # take de uma rodada nao passa disso
 MAX_TAKE_S = 30                             # ffmpeg corta aqui: 8 MB de Opus sao ~3 h
 FFMPEG_TIMEOUT_S = 60                       # container malformado nao pendura o worker
 MODES = frozenset({"mimic", "karaoke"})     # lista FECHADA
+# Nivel de afinacao quando o cliente nao manda `pitch`: karaoke cobra o tom (ignora
+# oitava); imitar som cru so cobra a melodia. Lista fechada em PITCH_LEVELS.
+PITCH_DEFAULT = {"karaoke": "oitava", "mimic": "relativo"}
 REF_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 # Ancorado na raiz do repo como todos os acessores de kpaths. Relativo ao CWD,
 # path.exists() e send_file() resolviam contra raizes DIFERENTES (CWD vs app.root_path).
 MIMIC_REF_DIR = kpaths.repos_root() / "input" / "mimic_refs"
+# Coleta pra calibrar contra microfone de verdade (spec 2026-09-10, "Fica aberto":
+# todo numero existente vem do stem do Demucs fazendo papel de take). Opt-in via
+# save=1 no POST — uma partida normal do jogo de festa nunca escreve aqui.
+HUMAN_TAKES_DIR = kpaths.repos_root() / "input" / "human_takes"
+_SLUG_RE = re.compile(r"[^A-Za-z0-9_-]")
 
 
 def _erro(msg: str, status: int):
     return jsonify({"error": msg}), status
+
+
+def _salva_take_para_pesquisa(wav_bytes, mode, ref_id, participante, condicao, report):
+    """Grava o take (ja convertido, 16k mono) + o ScoreReport ao lado, pra alimentar
+    scripts/analyze_human_takes.py depois. ponytail: nome de arquivo so com timestamp
+    em ms, sem dedup — coleta e manual, uma pessoa grava um take de cada vez; upgrade
+    seria um contador atomico se isso um dia virar automatizado."""
+    HUMAN_TAKES_DIR.mkdir(parents=True, exist_ok=True)
+    ts = int(time.time() * 1000)
+    partes = [str(ts), mode, ref_id]
+    for campo in (participante, condicao):
+        if campo:
+            partes.append(_SLUG_RE.sub("_", campo.strip())[:40])
+    base = "_".join(partes)
+    (HUMAN_TAKES_DIR / f"{base}.wav").write_bytes(wav_bytes)
+    meta = {
+        "timestamp": ts,
+        "mode": mode,
+        "ref": ref_id,
+        "participante": participante,
+        "condicao": condicao,
+        "pitch": report.pitch,
+        "melody": round(report.melody, 1),
+        "rhythm": round(report.rhythm, 1),
+        "attacks": round(report.attacks, 1),
+        "total": round(report.total, 1),
+        "n_onsets_ref": report.n_onsets_ref,
+        "n_onsets_take": report.n_onsets_take,
+        "n_matched": report.n_matched,
+    }
+    (HUMAN_TAKES_DIR / f"{base}.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 class FfmpegAusente(RuntimeError):
@@ -64,10 +106,18 @@ def make_score_route(app) -> None:
         mode = (request.form.get("mode") or "").strip()
         if mode not in MODES:
             return _erro(f"mode invalido: esperado um de {sorted(MODES)}", 400)
+        pitch = (request.form.get("pitch") or "").strip() or PITCH_DEFAULT[mode]
+        if pitch not in PITCH_LEVELS:
+            return _erro(f"pitch invalido: esperado um de {list(PITCH_LEVELS)}", 400)
 
         ref_id = (request.form.get("ref") or "").strip()
         if REF_ID_RE.match(ref_id) is None:
             return _erro("ref invalido: use [A-Za-z0-9_-], no maximo 64 caracteres", 400)
+
+        # Coleta pra pesquisa: opt-in, nao afeta o fluxo normal do jogo.
+        salvar = (request.form.get("save") or "").strip().lower() in ("1", "true")
+        participante = (request.form.get("participante") or "").strip()
+        condicao = (request.form.get("condicao") or "").strip()
 
         upload = request.files.get("take")
         if upload is None:
@@ -111,6 +161,9 @@ def make_score_route(app) -> None:
                 return _erro("take sem amostras de audio", 400)
             take = track_from_audio(take_samples, sr)
 
+            # wav some quando o `with` fecha — se for salvar, o bytes tem que sair daqui.
+            take_wav_bytes = wav.read_bytes() if salvar else None
+
             if mode == "karaoke":
                 words = json.loads(wt.read_text(encoding="utf-8"))
                 ref_samples, ref_sr = sf.read(vocals, dtype="float32")
@@ -124,8 +177,11 @@ def make_score_route(app) -> None:
                     ref_samples = ref_samples.mean(axis=1)
                 ref = track_from_audio(ref_samples, ref_sr)
 
-        report = score(ref, take)
+        report = score(ref, take, pitch=pitch)
+        if salvar:
+            _salva_take_para_pesquisa(take_wav_bytes, mode, ref_id, participante, condicao, report)
         return jsonify({
+            "pitch": report.pitch,
             "melody": round(report.melody, 1),
             "rhythm": round(report.rhythm, 1),
             "attacks": round(report.attacks, 1),
