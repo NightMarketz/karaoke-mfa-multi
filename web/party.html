@@ -118,6 +118,30 @@
     font-weight: 800; color: var(--tinta); background: var(--branco); box-shadow: inset 0 2px 4px rgba(122,61,0,.2); }
   #dificuldade { border: none; border-radius: .6rem; padding: .4rem .6rem; font: inherit;
     font-weight: 800; color: var(--tinta); background: var(--branco); box-shadow: inset 0 2px 4px rgba(122,61,0,.2); }
+  /* modo de jogo: dois botoes-pilula num trilho (radio de verdade por baixo) */
+  .modo { display: flex; gap: .3rem; width: 100%; min-width: 0; margin: 0; padding: .25rem; border: none; border-radius: 999px;
+    background: rgba(255,255,255,.35); box-shadow: inset 0 2px 4px rgba(122,61,0,.2); }
+  .modo legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .modo label { flex: 1; position: relative; cursor: pointer; }
+  .modo input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+  .modo span { display: block; padding: .5rem .6rem; border-radius: 999px; font-weight: 800; color: var(--tinta);
+    transition: background-color .15s ease-out; }
+  .modo input:checked + span { background: linear-gradient(165deg, #fff, var(--branco));
+    box-shadow: 0 3px 0 0 #d9a25c, inset 0 1px 0 rgba(255,255,255,.9); }
+  .modo input:focus-visible + span { outline: 2px solid var(--tinta); outline-offset: 2px; }
+
+  /* musicas do modo Karaoke: mesma "pilula branca" da lista de jogadores */
+  .musicas-karaoke { display: flex; flex-direction: column; align-items: center; gap: .5rem; width: 100%; }
+  .musicas-karaoke[hidden] { display: none; }
+  .lista-musicas { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: .5rem;
+    max-height: 14rem; overflow-y: auto; }
+  .lista-musicas label { display: flex; align-items: center; gap: .6rem; background: var(--branco); cursor: pointer;
+    border-radius: 999px; padding: .55rem 1rem; box-shadow: 0 3px 0 0 #e8d5b0; font-weight: 700; color: var(--tinta); }
+  .lista-musicas input { flex-shrink: 0; width: 1.1rem; height: 1.1rem; margin: 0; accent-color: var(--rec-3); }
+  .lista-musicas .titulo-musica { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lista-musicas .dur { flex-shrink: 0; font-size: .85rem; opacity: .7; font-variant-numeric: tabular-nums; }
+  .add-musica { font-weight: 800; font-size: .9rem; color: var(--tinta); }
+
   .linha-teste-mic { display: flex; align-items: center; gap: .7rem; }
   .estado { font-weight: 700; font-size: .9rem; color: var(--tinta); min-height: 1.3em; }
   .estado:empty { display: none; }
@@ -138,6 +162,13 @@
     background: linear-gradient(180deg, rgba(255,255,255,.28), transparent); pointer-events: none; }
 
   .reproduzir { display: flex; align-items: center; gap: .9rem; margin-bottom: 1.6rem; padding: 0 .3rem; align-self: stretch; }
+  .reproduzir[hidden] { display: none; }
+  /* letra do Karaoke: caixa com rolagem PROPRIA — o scrollIntoView do letra-trecho.js
+     rola esta caixa a cada verso, nao a pagina inteira. */
+  #letra-trecho { align-self: stretch; max-height: 9.5rem; overflow-y: auto; overscroll-behavior: contain;
+    overflow-wrap: anywhere; margin-bottom: 1.6rem; padding: .5rem .7rem; border-radius: 1.1rem;
+    background: rgba(255,255,255,.4); box-shadow: inset 0 2px 4px rgba(122,61,0,.2); }
+  #letra-trecho[hidden] { display: none; }
   .play { flex-shrink: 0; width: 3rem; height: 3rem; border-radius: 50%; border: none; cursor: pointer; position: relative;
     background: radial-gradient(circle at var(--luz-x) var(--luz-y), #fff, var(--placa-1) 55%, #ffb703);
     box-shadow: 0 4px 0 0 #d9701c, 0 8px 14px -6px rgba(122,61,0,.4);
@@ -249,6 +280,18 @@
         </div>
         <ul class="lista-jogadores" id="lista-jogadores"></ul>
 
+        <fieldset class="modo">
+          <legend>Modo de jogo</legend>
+          <label><input type="radio" name="modo" value="imitar" checked autocomplete="off"><span>Imitar som</span></label>
+          <label><input type="radio" name="modo" value="karaoke" autocomplete="off"><span>Karaokê</span></label>
+        </fieldset>
+
+        <div class="musicas-karaoke" id="musicas-karaoke" hidden>
+          <ul class="lista-musicas" id="lista-musicas"></ul>
+          <span class="estado" id="musicas-estado" role="status" aria-live="polite"></span>
+          <a class="add-musica" href="/static/index.html" target="_blank">Adicionar música</a>
+        </div>
+
         <div class="linha-rodadas">
           <label for="rodadas">Rodadas</label>
           <input type="number" id="rodadas" value="5" min="1">
@@ -281,13 +324,16 @@
 
         <div class="faixa-envolt"><span class="faixa" id="clip-titulo">—</span></div>
 
-        <div class="reproduzir">
+        <div class="reproduzir" id="reproduzir-ref">
           <button class="play" id="play-btn" aria-label="Tocar referência">
             <svg class="icone" aria-hidden="true"><use href="#icon-play"></use></svg>
           </button>
           <div class="barra" id="play-bar"><div class="barra-fill"></div></div>
         </div>
         <audio id="player" preload="auto"></audio>
+        <!-- Karaoke: letra do trecho + base instrumental (karaoke-vez.js) -->
+        <div id="letra-trecho" hidden></div>
+        <audio id="base-karaoke" preload="none"></audio>
 
         <div class="fala">
           <span class="vez-label">VEZ DE</span>
@@ -367,6 +413,8 @@
 <script src="/static/score-animation.js"></script>
 <script src="/static/audio-player.js"></script>
 <script src="/static/mic-meter.js"></script>
+<script src="/static/letra-trecho.js"></script>
+<script src="/static/karaoke-vez.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
@@ -388,6 +436,9 @@ let jogadorAtual = 0;
 let clipeAtual = null;
 let pontosDaRodada = [];
 let takesDaRodada = []; // [{nome, blob, pontos}] — blob guardado pra tela de audicao (secao 3 do plano)
+// "imitar" (clipeAtual = {id, label}) ou "karaoke" (clipeAtual = trecho de
+// montaFilaDeTrechos: {job, titulo, inicio, fim, versos}). Fixado no "Começar".
+let modoPartida = "imitar";
 
 window.addEventListener("beforeunload", (e) => {
   if (rodadaAtual > 0 && rodadaAtual <= numRodadas) e.preventDefault();
@@ -402,7 +453,12 @@ function embaralha(arr) {
   return a;
 }
 function proximoClipe() {
-  if (poolIdx >= pool.length) { pool = embaralha(baseClipes); poolIdx = 0; }
+  // Karaoke nao embaralha: a fila ja vem na ordem certa (refrao primeiro, musicas
+  // intercaladas); ao esgotar, recomeca do inicio.
+  if (poolIdx >= pool.length) {
+    pool = modoPartida === "karaoke" ? baseClipes.slice() : embaralha(baseClipes);
+    poolIdx = 0;
+  }
   return pool[poolIdx++];
 }
 
@@ -457,10 +513,107 @@ $("testar-mic").addEventListener("click", async () => {
   $("testar-mic").disabled = false;
 });
 
+// ── Modo de jogo (setup) ────────────────────────────────────────────────
+let musicasKaraoke = []; // [{id, titulo, duracao_s}] de /api/karaoke/songs
+const modoEscolhido = () => document.querySelector('input[name="modo"]:checked').value;
+function formataDuracao(s) {
+  const t = Math.round(Number(s) || 0);
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+}
+async function carregaMusicas() {
+  const ul = $("lista-musicas");
+  ul.innerHTML = "";
+  $("musicas-estado").textContent = "Carregando músicas…";
+  try {
+    const r = await fetch("/api/karaoke/songs");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    musicasKaraoke = await r.json();
+  } catch (e) {
+    musicasKaraoke = [];
+    $("musicas-estado").textContent = "Falha ao carregar músicas: " + e.message;
+    return;
+  }
+  $("musicas-estado").textContent = musicasKaraoke.length ? "" : "Nenhuma música processada ainda";
+  for (const m of musicasKaraoke) {
+    const li = document.createElement("li");
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = m.id;
+    cb.checked = true;
+    const titulo = document.createElement("span");
+    titulo.className = "titulo-musica";
+    titulo.textContent = m.titulo;
+    titulo.title = m.titulo;
+    const dur = document.createElement("span");
+    dur.className = "dur";
+    dur.textContent = formataDuracao(m.duracao_s);
+    label.append(cb, titulo, dur);
+    li.appendChild(label);
+    ul.appendChild(li);
+  }
+}
+// trocaDificuldade=false so no carregamento da pagina: o padrao (Normal no Karaoke,
+// Facil no Imitar) e' aplicado ao TROCAR o modo; depois o usuario escolhe livre.
+function aplicaModo(trocaDificuldade) {
+  const karaoke = modoEscolhido() === "karaoke";
+  $("musicas-karaoke").hidden = !karaoke;
+  if (trocaDificuldade) $("dificuldade").value = karaoke ? "oitava" : "relativo";
+  $("estado-setup").textContent = "";
+  if (karaoke) carregaMusicas();
+}
+document.querySelectorAll('input[name="modo"]').forEach((r) => r.addEventListener("change", () => aplicaModo(true)));
+aplicaModo(false);
+
+// Busca os trechos das musicas marcadas e monta a fila. Musica com erro ou sem
+// trecho cantavel sai da partida com aviso. Retorna false se nao da pra comecar.
+async function preparaKaraoke() {
+  const ids = [...document.querySelectorAll("#lista-musicas input:checked")].map((cb) => cb.value);
+  const marcadas = musicasKaraoke.filter((m) => ids.includes(m.id));
+  if (marcadas.length === 0) { $("estado-setup").textContent = "Marque ao menos 1 música."; return false; }
+
+  $("estado-setup").textContent = "Carregando trechos…";
+  const resultados = await Promise.all(marcadas.map(async (musica) => {
+    try {
+      const r = await fetch("/api/karaoke/" + encodeURIComponent(musica.id) + "/trechos");
+      const data = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(data && data.error ? data.error : "HTTP " + r.status);
+      if (!Array.isArray(data) || !data.some((t) => !t.longo)) throw new Error("nenhum trecho cantável");
+      return { musica, trechos: data };
+    } catch (e) {
+      return { musica, erro: e.message };
+    }
+  }));
+  const avisos = resultados.filter((x) => x.erro).map((x) => `${x.musica.titulo}: ${x.erro}`);
+  const porMusica = resultados.filter((x) => !x.erro);
+  $("estado-setup").textContent = avisos.join(" · ");
+  if (porMusica.length === 0) return false;
+
+  baseClipes = montaFilaDeTrechos(porMusica);
+  const alertas = [];
+  if (avisos.length) alertas.push("Fora da partida:\n" + avisos.join("\n"));
+  if (baseClipes.length < numRodadas) {
+    alertas.push(`Só há ${baseClipes.length} trecho(s) para ${numRodadas} rodadas — alguns vão repetir.`);
+  }
+  if (alertas.length) alert(alertas.join("\n\n"));
+  pool = baseClipes.slice();
+  poolIdx = 0;
+  return true;
+}
+
 $("comecar").addEventListener("click", async () => {
   pararTesteMic();
   if (jogadores.length === 0) { $("estado-setup").textContent = "Adicione ao menos 1 jogador."; return; }
   numRodadas = Math.max(1, parseInt($("rodadas").value, 10) || 5);
+  modoPartida = modoEscolhido();
+
+  if (modoPartida === "karaoke") {
+    $("comecar").disabled = true;
+    let ok;
+    try { ok = await preparaKaraoke(); } finally { $("comecar").disabled = false; }
+    if (ok) iniciaPartida();
+    return;
+  }
 
   $("estado-setup").textContent = "Carregando clipes…";
   try {
@@ -509,17 +662,133 @@ function proximoJogadorDaRodada() {
   $("clip-titulo").textContent = `"${clipeAtual.label}"`;
   $("vez-nome").textContent = j.nome;
   $("vez-pts").textContent = `${j.pontos.toFixed(1)} pts`;
+  if (modoPartida === "karaoke") {
+    if (vezAtual) { vezAtual.cancela(); vezAtual = null; } // defensivo: nada da vez anterior rodando
+    $("clip-titulo").textContent = clipeAtual.titulo;
+    $("player").pause();
+    $("reproduzir-ref").hidden = true;
+    $("letra-trecho").hidden = false;
+    mostraLetraPrevia();
+    $("rec").setAttribute("aria-label", "Cantar");
+    $("estado-round").textContent = "Pronto. Toque para cantar.";
+    $("rec").disabled = false;
+    return;
+  }
+  $("reproduzir-ref").hidden = false;
+  $("letra-trecho").hidden = true;
+  $("rec").setAttribute("aria-label", "Gravar");
   $("player").src = "/api/score/ref?mode=mimic&ref=" + encodeURIComponent(clipeAtual.id);
   player.recarrega();
   $("estado-round").textContent = "Pronto.";
   $("rec").disabled = false;
 }
 
+// Letra estatica do trecho antes de cantar (criaLetraTrecho a substitui na vez).
+function mostraLetraPrevia() {
+  const el = $("letra-trecho");
+  el.textContent = "";
+  for (const v of clipeAtual.versos) {
+    const d = document.createElement("div");
+    d.className = "verso futuro";
+    d.textContent = v.texto;
+    el.appendChild(d);
+  }
+  el.scrollTop = 0;
+}
+
+// FormData do POST /api/score para a vez atual.
+function camposDoScore(blob) {
+  const fd = new FormData();
+  if (modoPartida === "karaoke") {
+    fd.append("mode", "karaoke");
+    fd.append("ref", clipeAtual.job);
+    fd.append("start", String(clipeAtual.inicio));
+    fd.append("end", String(clipeAtual.fim));
+  } else {
+    fd.append("mode", "mimic");
+    fd.append("ref", clipeAtual.id);
+  }
+  fd.append("pitch", $("dificuldade").value);
+  fd.append("take", blob, "take.webm");
+  return fd;
+}
+
+// Falha ao pontuar: mostra a mensagem e deixa regravar (os dois modos).
+function liberaRegravar(msg) {
+  $("estado-round").textContent = msg;
+  if (modoPartida === "karaoke") mostraLetraPrevia();
+  $("rec").disabled = false;
+}
+
+async function enviaTake(blob) {
+  let r, data = null;
+  try { r = await fetch("/api/score", { method: "POST", body: camposDoScore(blob) }); data = await r.json(); }
+  catch (e) {
+    liberaRegravar("Falha de rede ao pontuar.");
+    return;
+  }
+  if (!r.ok) {
+    liberaRegravar("Erro " + r.status + ": " + (data && data.error ? data.error : "falha ao pontuar"));
+    return;
+  }
+  const j = jogadores[jogadorAtual];
+  j.pontos += data.total;
+  pontosDaRodada.push({ nome: j.nome, pontos: data.total });
+  // nota fica guardada, nao mostrada agora — so aparece no resumo, depois de
+  // ouvir todas as gravacoes (spec da secao 4: votacao "de ouvido", sem numero
+  // pra ancorar o voto). audicao.js/mostraAudicao revela isso mais adiante.
+  takesDaRodada.push({ nome: j.nome, blob, pontos: data.total });
+  jogadorAtual++;
+  if (jogadorAtual < jogadores.length) proximoJogadorDaRodada();
+  else mostraAudicao();
+}
+
 function soltaMic(stream) { stream.getTracks().forEach((t) => t.stop()); }
 let rec = null, chunks = [], gravando = false, medidor = null;
 function paraMedidor() { if (medidor) { medidor.para(); medidor = null; } $("medidor").hidden = true; }
 
+// Karaoke: um clique em "Cantar" e a vez corre sozinha (3-2-1, base + letra, para no
+// fim do trecho). Ao terminar ou falhar, karaoke-vez.js ja parou base/letra/medidor;
+// aqui solta o mic.
+let vezAtual = null;
+async function cantaKaraoke() {
+  if (vezAtual) return;
+  $("rec").disabled = true;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) {
+    $("estado-round").textContent = "Sem acesso ao microfone: " + e.name;
+    $("rec").disabled = false;
+    return;
+  }
+  const encerra = () => {
+    vezAtual = null;
+    soltaMic(stream);
+    $("rec").setAttribute("aria-pressed", "false");
+  };
+  $("rec").setAttribute("aria-pressed", "true");
+  vezAtual = vezKaraoke({
+    trecho: clipeAtual,
+    audio: $("base-karaoke"),
+    letraEl: $("letra-trecho"),
+    medidorEl: $("medidor"),
+    estadoEl: $("estado-round"),
+    stream,
+    aoTerminar: (blob) => {
+      encerra();
+      $("estado-round").textContent = "Pontuando…";
+      enviaTake(blob);
+    },
+    aoErro: (msg) => {
+      encerra();
+      liberaRegravar(msg);
+    },
+  });
+}
+window.addEventListener("pagehide", () => { if (vezAtual) vezAtual.cancela(); });
+
 $("rec").addEventListener("click", async () => {
+  if (modoPartida === "karaoke") { cantaKaraoke(); return; }
   if (gravando) { rec.stop(); return; }
   $("rec").disabled = true;
   let stream;
@@ -543,35 +812,7 @@ $("rec").addEventListener("click", async () => {
       $("rec").disabled = true;
       $("estado-round").textContent = "Pontuando…";
 
-      const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
-      const fd = new FormData();
-      fd.append("mode", "mimic");
-      fd.append("pitch", $("dificuldade").value);
-      fd.append("ref", clipeAtual.id);
-      fd.append("take", blob, "take.webm");
-
-      let r, data = null;
-      try { r = await fetch("/api/score", { method: "POST", body: fd }); data = await r.json(); }
-      catch (e) {
-        $("estado-round").textContent = "Falha de rede ao pontuar.";
-        $("rec").disabled = false;
-        return;
-      }
-      if (!r.ok) {
-        $("estado-round").textContent = "Erro " + r.status + ": " + (data && data.error ? data.error : "falha ao pontuar");
-        $("rec").disabled = false;
-        return;
-      }
-      const j = jogadores[jogadorAtual];
-      j.pontos += data.total;
-      pontosDaRodada.push({ nome: j.nome, pontos: data.total });
-      // nota fica guardada, nao mostrada agora — so aparece no resumo, depois de
-      // ouvir todas as gravacoes (spec da secao 4: votacao "de ouvido", sem numero
-      // pra ancorar o voto). audicao.js/mostraAudicao revela isso mais adiante.
-      takesDaRodada.push({ nome: j.nome, blob, pontos: data.total });
-      jogadorAtual++;
-      if (jogadorAtual < jogadores.length) proximoJogadorDaRodada();
-      else mostraAudicao();
+      await enviaTake(new Blob(chunks, { type: rec.mimeType || "audio/webm" }));
     };
     rec.start();
     $("rec").disabled = false;
