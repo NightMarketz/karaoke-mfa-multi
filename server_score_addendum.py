@@ -8,6 +8,7 @@ segue puro.
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 import tempfile
@@ -19,9 +20,11 @@ from flask import jsonify, request, send_file
 
 from karaoke import paths as kpaths
 from karaoke.scorer import PITCH_LEVELS, score, track_from_audio, track_from_word_timing
+from karaoke.trechos import TRECHO_MAX_S
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024          # take de uma rodada nao passa disso
-MAX_TAKE_S = 30                             # ffmpeg corta aqui: 8 MB de Opus sao ~3 h
+# ponytail: >= TRECHO_MAX_S + PRE_ROLL_S do navegador (2 s); subir junto se o pre-roll crescer
+MAX_TAKE_S = 35                             # ffmpeg corta aqui: 8 MB de Opus sao ~3 h
 FFMPEG_TIMEOUT_S = 60                       # container malformado nao pendura o worker
 MODES = frozenset({"mimic", "karaoke"})     # lista FECHADA
 # Nivel de afinacao quando o cliente nao manda `pitch`: karaoke cobra o tom (ignora
@@ -114,6 +117,25 @@ def make_score_route(app) -> None:
         if REF_ID_RE.match(ref_id) is None:
             return _erro("ref invalido: use [A-Za-z0-9_-], no maximo 64 caracteres", 400)
 
+        # Trecho [start, end] (s): so no karaoke; ambos ou nenhum. Validado ANTES de ler o
+        # take e de qualquer ffmpeg. Sem os dois, o fluxo e o de sempre (musica inteira).
+        trecho = None
+        if mode == "karaoke":
+            bruto_ini = request.form.get("start")
+            bruto_fim = request.form.get("end")
+            if bruto_ini is not None or bruto_fim is not None:
+                try:
+                    t_ini = float(bruto_ini)
+                    t_fim = float(bruto_fim)
+                except (TypeError, ValueError):
+                    return _erro("trecho invalido: start e end precisam ser numeros (s)", 400)
+                if not (math.isfinite(t_ini) and math.isfinite(t_fim)):
+                    return _erro("trecho invalido: start e end precisam ser finitos", 400)
+                if t_ini < 0 or t_fim <= t_ini or t_fim - t_ini > TRECHO_MAX_S:
+                    return _erro(
+                        f"trecho invalido: exige 0 <= start < end e no maximo {TRECHO_MAX_S:g} s", 400)
+                trecho = (t_ini, t_fim)
+
         # Coleta pra pesquisa: opt-in, nao afeta o fluxo normal do jogo.
         salvar = (request.form.get("save") or "").strip().lower() in ("1", "true")
         participante = (request.form.get("participante") or "").strip()
@@ -135,6 +157,8 @@ def make_score_route(app) -> None:
             vocals = kpaths.vocals_raw(ref_id)
             if not wt.exists() or not vocals.exists():
                 return _erro(f"job {ref_id} nao tem gabarito alinhado", 404)
+            if trecho is not None and trecho[1] > sf.info(str(vocals)).duration:
+                return _erro("trecho invalido: end passa da duracao da musica", 400)
         else:
             clip = MIMIC_REF_DIR / f"{ref_id}.wav"
             if not clip.exists():
@@ -166,6 +190,11 @@ def make_score_route(app) -> None:
 
             if mode == "karaoke":
                 words = json.loads(wt.read_text(encoding="utf-8"))
+                if trecho is not None:
+                    words = [w for w in words
+                             if trecho[0] <= w["start"] and w["end"] <= trecho[1]]
+                    if not words:
+                        return _erro("trecho sem palavras alinhadas", 422)
                 ref_samples, ref_sr = sf.read(vocals, dtype="float32")
                 try:
                     ref = track_from_word_timing(words, ref_samples, ref_sr)
