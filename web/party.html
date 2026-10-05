@@ -1,106 +1,386 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Jogo de festa: imite o som</title>
-  <link rel="stylesheet" href="/static/theme-karaoke.css">
-  <style>
-    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
-    button { font: inherit; padding: .5rem 1rem; }
-    input[type="text"], input[type="number"] { font: inherit; padding: .4rem; }
-    ul { list-style: none; padding: 0; }
-    li { display: flex; align-items: center; gap: .75rem; border: 1px solid; padding: .4rem .75rem; margin-bottom: .4rem; }
-    li span.nome { flex: 1; }
-    .linha { display: flex; gap: .5rem; align-items: center; margin: .75rem 0; flex-wrap: wrap; }
-    .estado { font-weight: 600; }
-    .aviso { opacity: .85; }
-    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-    td, th { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid; }
-    .vencedor { font-weight: 700; }
-    .vencedor::before { content: "🏆 "; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jogo de festa: imite o som</title>
+<style>
+  @font-face {
+    font-family: 'Baloo 2'; font-style: normal; font-weight: 800; font-display: swap;
+    src: url('/static/fonts/baloo2-800.woff2') format('woff2');
+  }
+  @font-face {
+    /* so pro nome do jogador — unico peso que existe (400), ja e' bem solida por
+       natureza; nao forcar font-weight maior (viraria negrito sintetico). */
+    font-family: 'Luckiest Guy'; font-style: normal; font-weight: 400; font-display: swap;
+    src: url('/static/fonts/luckiest-guy-400.woff2') format('woff2');
+  }
+  :root {
+    color-scheme: dark;
+    --ceu-1: #ffd6e8; --ceu-2: #c9b8ff; --chao: #ff9f43;
+    --placa-1: #ffe27a; --placa-2: #ffb84d; --placa-3: #ff8f3d;
+    --tinta: #7a3d00; --branco: #fffdf7;
+    --rec-1: #ff9a9a; --rec-2: #ff4d4d; --rec-3: #c81e1e;
+    --az-1: #b9c8ff; --az-2: #6a8dff; --az-3: #3d5fd9; /* botao secundario/glossy azul */
+    --ease-bounce: cubic-bezier(.34, 1.56, .64, 1);
+    /* luz vem de cima-esquerda em TODO elemento glossy da cena — consistencia de
+       direcao e' o que faz "circulos brilhantes" ler como cena iluminada de verdade. */
+    --luz-x: 30%; --luz-y: 24%;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; font-family: system-ui, sans-serif; overflow-x: hidden; min-height: 100vh;
+    background: linear-gradient(160deg, var(--ceu-1), var(--ceu-2));
+  }
+  ::selection { background: var(--tinta); color: #fff; }
+
+  .cena { position: relative; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: 3.2rem 1rem 4rem; }
+
+  .titulo-jogo { position: relative; z-index: 1; font-family: 'Luckiest Guy', system-ui, sans-serif;
+    font-weight: 400; font-size: clamp(1.6rem, 1.3rem + 1.4vw, 2.2rem); color: var(--branco);
+    -webkit-text-stroke: 2.5px var(--tinta); text-stroke: 2.5px var(--tinta);
+    text-shadow: 0 3px 0 var(--tinta), 0 8px 14px rgba(122,61,0,.35);
+    text-align: center; margin: 0 0 .5rem; }
+  .voltar { position: relative; z-index: 1; display: inline-block; margin: 0 0 1rem; font-weight: 700;
+    font-size: .85rem; color: var(--tinta); text-decoration: none; opacity: .75; }
+  .voltar:hover { opacity: 1; }
+
+  /* ── atmosfera: bolhas desfocadas dando profundidade, 2 delas derivam bem devagar ── */
+  .bolha { position: absolute; border-radius: 50%; filter: blur(2px); opacity: .55; pointer-events: none; z-index: 0; }
+  .b1 { width: 5rem; height: 5rem; background: #fff; top: 8%; left: 10%; animation: deriva1 22s ease-in-out infinite; }
+  .b2 { width: 3rem; height: 3rem; background: #ffe27a; top: 16%; right: 14%; opacity: .7; }
+  .b3 { width: 7rem; height: 7rem; background: #ff9ec4; bottom: 10%; left: 6%; opacity: .4; filter: blur(4px); }
+  .b4 { width: 4rem; height: 4rem; background: #c9b8ff; bottom: 18%; right: 10%; animation: deriva2 28s ease-in-out infinite; }
+  .b5 { width: 2rem; height: 2rem; background: #fff; top: 38%; right: 6%; opacity: .8; }
+  @keyframes deriva1 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(1.2rem,-1rem); } }
+  @keyframes deriva2 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-1rem,1.4rem); } }
+  @media (prefers-reduced-motion: reduce) { .b1, .b4 { animation: none; } }
+
+  .chao { position: absolute; left: 0; right: 0; bottom: 0; height: 26vh; z-index: 0;
+    background: linear-gradient(180deg, transparent, var(--chao) 65%);
+    border-radius: 50% 50% 0 0 / 3rem 3rem 0 0; opacity: .5; }
+
+  .placa-sombra-contato { position: absolute; bottom: 3.2rem; left: 8%; right: 8%; height: 2.5rem; z-index: 0;
+    background: radial-gradient(ellipse, rgba(90,40,0,.35), transparent 70%); filter: blur(2px); }
+
+  /* ── a placa principal: compartilhada por todas as secoes ────────────────── */
+  .placa {
+    position: relative; z-index: 1; width: 100%; max-width: 23rem;
+    background: linear-gradient(165deg, var(--placa-1), var(--placa-2) 55%, var(--placa-3));
+    border-radius: 2rem; padding: 2.4rem 1.6rem 2.2rem; text-align: center;
+    box-shadow:
+      0 18px 0 -2px #d9701c,
+      0 26px 46px -12px rgba(122,61,0,.55),
+      inset 0 2px 0 rgba(255,255,255,.5),
+      inset 0 -3px 8px rgba(122,61,0,.18);
+    isolation: isolate;
+  }
+  .placa::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    background: radial-gradient(ellipse 70% 50% at var(--luz-x) var(--luz-y), rgba(255,255,255,.6), rgba(255,255,255,0) 65%);
+    pointer-events: none;
+  }
+  section[hidden] { display: none !important; }
+  .placa > section { display: flex; flex-direction: column; align-items: center; transition: opacity .2s ease-out; }
+  .placa > section.fading { opacity: 0; }
+
+  /* ── botao glossy generico: base pra Adicionar/Comecar/Testar mic/etc ────── */
+  .btn-glossy { position: relative; border: none; cursor: pointer; font-family: system-ui, sans-serif;
+    font-weight: 800; color: var(--tinta); border-radius: 999px; padding: .7rem 1.4rem;
+    background: linear-gradient(165deg, #fff, var(--branco));
+    box-shadow: 0 4px 0 0 #d9a25c, 0 8px 14px -6px rgba(122,61,0,.35), inset 0 1px 0 rgba(255,255,255,.9);
+    transition: transform .1s var(--ease-bounce); }
+  .btn-glossy:active { transform: translateY(2px); box-shadow: 0 2px 0 0 #d9a25c, 0 4px 8px -4px rgba(122,61,0,.35); }
+  .btn-glossy:disabled { opacity: .55; cursor: default; }
+  .btn-glossy.primario { color: #fff; font-size: 1.05rem; padding: .85rem 1.8rem; width: 100%;
+    background: linear-gradient(165deg, var(--rec-1), var(--rec-2) 55%, var(--rec-3));
+    box-shadow: 0 5px 0 0 #8f1414, 0 10px 20px -8px rgba(122,20,20,.5), inset 0 1px 0 rgba(255,255,255,.5); }
+  .btn-glossy.primario:active { box-shadow: 0 2px 0 0 #8f1414, 0 4px 10px -4px rgba(122,20,20,.5); }
+
+  /* ── setup ─────────────────────────────────────────────────────────────── */
+  #setup { gap: .9rem; width: 100%; }
+  .linha-add { display: flex; gap: .5rem; width: 100%; }
+  #nome-jogador { flex: 1; min-width: 0; border: none; border-radius: 999px; padding: .7rem 1.1rem;
+    font: inherit; font-weight: 700; color: var(--tinta); background: var(--branco);
+    box-shadow: inset 0 2px 4px rgba(122,61,0,.2); }
+  #nome-jogador::placeholder { color: #c9a877; }
+  .lista-jogadores { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: .5rem; }
+  .lista-jogadores li { display: flex; align-items: center; gap: .6rem; background: var(--branco);
+    border-radius: 999px; padding: .5rem .5rem .5rem 1rem; box-shadow: 0 3px 0 0 #e8d5b0; }
+  .lista-jogadores .nome { flex: 1; text-align: left; font-weight: 700; color: var(--tinta); }
+  .btn-x { width: 1.8rem; height: 1.8rem; border-radius: 50%; border: none; cursor: pointer; flex-shrink: 0;
+    background: linear-gradient(165deg, #fff, var(--branco)); box-shadow: 0 2px 0 0 #d9a25c; }
+  .btn-x svg { width: .8rem; height: .8rem; color: var(--tinta); }
+  .linha-rodadas { display: flex; align-items: center; gap: .6rem; justify-content: center; font-weight: 700; color: var(--tinta); }
+  #rodadas { width: 3.5rem; text-align: center; border: none; border-radius: .6rem; padding: .4rem; font: inherit;
+    font-weight: 800; color: var(--tinta); background: var(--branco); box-shadow: inset 0 2px 4px rgba(122,61,0,.2); }
+  #dificuldade { border: none; border-radius: .6rem; padding: .4rem .6rem; font: inherit;
+    font-weight: 800; color: var(--tinta); background: var(--branco); box-shadow: inset 0 2px 4px rgba(122,61,0,.2); }
+  .linha-teste-mic { display: flex; align-items: center; gap: .7rem; }
+  .estado { font-weight: 700; font-size: .9rem; color: var(--tinta); min-height: 1.3em; }
+  .estado:empty { display: none; }
+
+  /* ── rodada ────────────────────────────────────────────────────────────── */
+  .chip { display: inline-block; font-weight: 800; font-size: .8rem; color: var(--tinta);
+    background: linear-gradient(165deg, #fff, var(--branco)); padding: .35rem 1rem; border-radius: .5rem;
+    box-shadow: 0 4px 0 0 #d9a25c, 0 8px 14px -6px rgba(122,61,0,.35), inset 0 1px 0 rgba(255,255,255,.9);
+    position: absolute; top: -.9rem; left: 50%; transform: translateX(-50%) rotate(-3deg); }
+  #round { position: relative; padding-top: .9rem; }
+  .faixa-envolt { margin: 1.6rem 0 1.8rem; display: flex; justify-content: center; align-self: stretch; }
+  .faixa { position: relative; background: linear-gradient(155deg, #9a5a1f, var(--tinta) 60%, #5c2c00);
+    color: var(--placa-1); font-family: 'Baloo 2', system-ui, sans-serif; font-weight: 800; font-size: 1.1rem;
+    padding: .55rem 1.6rem; clip-path: polygon(0% 0%, 100% 0%, 92% 50%, 100% 100%, 0% 100%, 8% 50%);
+    box-shadow: 0 5px 12px -4px rgba(90,40,0,.55); max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .faixa::after { content: ""; position: absolute; top: 0; left: 8%; right: 8%; height: 45%;
+    background: linear-gradient(180deg, rgba(255,255,255,.28), transparent); pointer-events: none; }
+
+  .reproduzir { display: flex; align-items: center; gap: .9rem; margin-bottom: 1.6rem; padding: 0 .3rem; align-self: stretch; }
+  .play { flex-shrink: 0; width: 3rem; height: 3rem; border-radius: 50%; border: none; cursor: pointer; position: relative;
+    background: radial-gradient(circle at var(--luz-x) var(--luz-y), #fff, var(--placa-1) 55%, #ffb703);
+    box-shadow: 0 4px 0 0 #d9701c, 0 8px 14px -6px rgba(122,61,0,.4);
+    display: flex; align-items: center; justify-content: center; }
+  .play:disabled { opacity: .5; cursor: default; }
+  .play::after { content: ""; position: absolute; top: 16%; left: 20%; width: 28%; height: 20%;
+    border-radius: 50%; background: rgba(255,255,255,.8); filter: blur(1.5px); pointer-events: none; }
+  .play .icone { position: relative; width: 1.1rem; height: 1.1rem; color: var(--tinta); }
+  .barra { flex: 1; height: .55rem; border-radius: 999px; background: rgba(255,255,255,.5);
+    box-shadow: inset 0 2px 4px rgba(122,61,0,.25); overflow: hidden; }
+  /* var(--progresso, 0), NAO "--progresso: 0" declarado aqui: declarar a propriedade
+     no proprio elemento sombreia o valor herdado que o JS seta no pai (.barra) — a
+     barra travava sempre em scaleX(0) (achado rodando com audio de verdade). */
+  .barra .barra-fill { width: 100%; height: 100%; border-radius: inherit;
+    background: linear-gradient(180deg, #fff, var(--branco) 55%, #ffe9b8);
+    transform: scaleX(var(--progresso, 0)); transform-origin: left; transition: transform .1s linear; }
+
+  .fala { position: relative; background: linear-gradient(165deg, #fff, var(--branco) 60%, #fdf2df);
+    border-radius: 1.1rem; padding: 1rem 1rem 1.2rem; margin-bottom: 1.6rem;
+    box-shadow: 0 4px 0 0 #e8d5b0, 0 10px 20px -10px rgba(122,61,0,.35), inset 0 2px 0 rgba(255,255,255,.9);
+    align-self: stretch; }
+  .fala::before { content: ""; position: absolute; inset: 0; border-radius: inherit;
+    background: radial-gradient(ellipse 60% 45% at var(--luz-x) var(--luz-y), rgba(255,255,255,.8), transparent 70%);
+    pointer-events: none; }
+  .fala::after { content: ""; position: absolute; left: 50%; bottom: -.6rem; transform: translateX(-50%);
+    width: 1.3rem; height: 1.3rem; background: #fdf2df; clip-path: polygon(0 0, 100% 0, 50% 100%); }
+  .vez-label { position: relative; display: block; font-size: .8rem; font-weight: 700; color: #b98a4e; letter-spacing: .03em; }
+  .vez-nome { position: relative; margin: .2rem 0 0; font-family: 'Luckiest Guy', system-ui, sans-serif;
+    font-weight: 400; font-size: clamp(2.1rem, 1.7rem + 1.6vw, 2.9rem); color: var(--placa-1);
+    -webkit-text-stroke: 2.5px var(--tinta); text-stroke: 2.5px var(--tinta);
+    text-shadow: 0 3px 0 var(--tinta), 0 7px 10px rgba(122,61,0,.35); line-height: 1.05; letter-spacing: .01em;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+
+  .medalha-pts { display: inline-flex; align-items: center; gap: .4rem;
+    background: linear-gradient(165deg, #fff, var(--branco)); color: var(--tinta);
+    font-weight: 800; font-size: .95rem; padding: .4rem .9rem .4rem .6rem; border-radius: 999px;
+    box-shadow: 0 3px 0 0 #d9a25c, inset 0 1px 0 rgba(255,255,255,.9); margin-bottom: 1.7rem;
+    font-variant-numeric: tabular-nums; }
+  .medalha-pts svg { width: 1.2rem; height: 1.2rem; filter: drop-shadow(0 1px 0 rgba(122,61,0,.3)); }
+
+  .rec { width: 5.8rem; height: 5.8rem; border-radius: 50%; border: none; cursor: pointer; position: relative;
+    background: radial-gradient(circle at var(--luz-x) var(--luz-y), var(--rec-1), var(--rec-2) 55%, var(--rec-3));
+    box-shadow: 0 7px 0 0 #8f1414, 0 16px 26px -8px rgba(122,20,20,.55), inset 0 -6px 10px rgba(0,0,0,.15);
+    animation: respira 2.6s var(--ease-bounce) infinite; }
+  .rec::after { content: ""; position: absolute; top: 16%; left: 22%; width: 32%; height: 22%; border-radius: 50%;
+    background: rgba(255,255,255,.8); filter: blur(2px); }
+  .rec .icone-envolt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .rec .icone-envolt .icone { width: 1.6rem; height: 1.6rem; color: var(--branco); }
+  @keyframes respira { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.045); } }
+  @media (prefers-reduced-motion: reduce) { .rec { animation: none; } }
+  .rec:active { transform: scale(.94); animation-play-state: paused; }
+  .rec:disabled { opacity: .6; animation: none; cursor: default; }
+
+  /* medidor de mic: barras que acendem — feedback de "o mic te ouviu", nao previa de nota */
+  .medidor { display: flex; align-items: flex-end; justify-content: center; gap: .22rem; height: 1.2rem; margin-top: .3rem; }
+  .medidor[hidden] { display: none; }
+  .medidor span { width: .28rem; height: 30%; border-radius: 999px; background: rgba(122,61,0,.2);
+    transition: background-color .08s linear; }
+  .medidor span:nth-child(1), .medidor span:nth-child(7) { height: 20%; }
+  .medidor span:nth-child(2), .medidor span:nth-child(6) { height: 45%; }
+  .medidor span:nth-child(3), .medidor span:nth-child(5) { height: 70%; }
+  .medidor span:nth-child(4) { height: 100%; }
+  .medidor span.ativa { background: var(--tinta); }
+  .medidor span.ativa:last-child { background: #c81e1e; }
+
+  /* ── resumo de rodada / final: lista tipo ticket ─────────────────────────── */
+  .lista-ranking { list-style: none; margin: 1.4rem 0 1.7rem; padding: 0; width: 100%;
+    display: flex; flex-direction: column; gap: .5rem; }
+  .lista-ranking li { display: flex; align-items: center; gap: .7rem;
+    background: linear-gradient(165deg, #fff, var(--branco)); border-radius: 1rem; padding: .6rem .9rem;
+    box-shadow: 0 3px 0 0 #e8d5b0, inset 0 1px 0 rgba(255,255,255,.9); }
+  .lista-ranking .pos { flex-shrink: 0; width: 1.6rem; text-align: center; font-weight: 800; color: #b98a4e; }
+  .lista-ranking .pos svg { width: 1.4rem; height: 1.4rem; }
+  .lista-ranking .nome { flex: 1; text-align: left; font-weight: 700; color: var(--tinta); }
+  .lista-ranking .pts { font-weight: 800; color: var(--tinta); font-variant-numeric: tabular-nums; }
+  .lista-ranking li.vencedor { background: linear-gradient(165deg, #fff9e0, var(--branco));
+    box-shadow: 0 3px 0 0 #ffb703, inset 0 1px 0 rgba(255,255,255,.9); }
+  .lista-ranking li.vencedor .nome { color: #b45900; }
+
+  .acoes { display: flex; gap: .6rem; width: 100%; }
+  .acoes .btn-glossy { flex: 1; }
+</style>
 </head>
 <body>
-  <h1>Jogo de festa: imite o som</h1>
-  <p><a href="/static/refs.html">← Biblioteca de sons</a></p>
+  <div class="cena">
+    <div class="bolha b1"></div><div class="bolha b2"></div><div class="bolha b3"></div>
+    <div class="bolha b4"></div><div class="bolha b5"></div>
+    <div class="chao"></div>
+    <div class="placa-sombra-contato"></div>
 
-  <!-- ── Setup ─────────────────────────────────────────────────────────── -->
-  <section id="setup">
-    <div class="linha">
-      <input type="text" id="nome-jogador" placeholder="nome do jogador">
-      <button id="add-jogador">Adicionar jogador</button>
-    </div>
-    <ul id="lista-jogadores"></ul>
+    <h1 class="titulo-jogo">Jogo de festa: imite o som</h1>
+    <a class="voltar" href="/static/refs.html">← Biblioteca de sons</a>
 
-    <div class="linha">
-      <label for="rodadas">Rodadas</label>
-      <input type="number" id="rodadas" value="5" min="1" style="width: 4rem">
-    </div>
+    <main class="placa">
+      <!-- ── Setup ─────────────────────────────────────────────────────── -->
+      <section id="setup">
+        <div class="linha-add">
+          <input type="text" id="nome-jogador" placeholder="Nome do jogador">
+          <button class="btn-glossy" id="add-jogador">Adicionar</button>
+        </div>
+        <ul class="lista-jogadores" id="lista-jogadores"></ul>
 
-    <p><span id="estado-setup" class="estado" role="status" aria-live="polite"></span></p>
-    <button id="comecar">Começar</button>
-  </section>
+        <div class="linha-rodadas">
+          <label for="rodadas">Rodadas</label>
+          <input type="number" id="rodadas" value="5" min="1">
+        </div>
 
-  <!-- ── Rodada ────────────────────────────────────────────────────────── -->
-  <section id="round" hidden>
-    <p class="estado" id="round-titulo"></p>
-    <p><audio id="player" controls></audio></p>
-    <p>
-      <button id="rec" aria-pressed="false">● Gravar</button>
-      <span id="estado-round" role="status" aria-live="polite">Pronto.</span>
-    </p>
-  </section>
+        <!-- Nivel de afinacao do scorer (karaoke/scorer.py PITCH_LEVELS) -->
+        <div class="linha-rodadas">
+          <label for="dificuldade">Dificuldade</label>
+          <select id="dificuldade">
+            <option value="relativo" selected>Fácil — só a melodia</option>
+            <option value="oitava">Normal — no tom</option>
+            <option value="estrito">Difícil — tom e oitava</option>
+          </select>
+        </div>
 
-  <!-- ── Resumo da rodada ──────────────────────────────────────────────── -->
-  <section id="round-summary" hidden>
-    <h2 id="resumo-titulo"></h2>
-    <table id="tabela-resumo"><tbody></tbody></table>
-    <button id="proxima-rodada">Próxima rodada</button>
-  </section>
+        <div class="linha-teste-mic">
+          <button class="btn-glossy" id="testar-mic" type="button">Testar microfone</button>
+          <div class="medidor" id="medidor-setup" hidden aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
 
-  <!-- ── Fim de jogo ───────────────────────────────────────────────────── -->
-  <section id="final" hidden>
-    <h2>Fim de jogo!</h2>
-    <table id="tabela-final"><tbody></tbody></table>
-    <div class="linha">
-      <button id="jogar-de-novo">Jogar de novo</button>
-      <button id="nova-partida">Nova partida</button>
-    </div>
-  </section>
+        <span class="estado" id="estado-setup" role="status" aria-live="polite"></span>
+        <button class="btn-glossy primario" id="comecar">Começar</button>
+      </section>
 
+      <!-- ── Rodada ────────────────────────────────────────────────────── -->
+      <section id="round" hidden>
+        <span class="chip" id="round-progresso">Rodada 1 / 5</span>
+
+        <div class="faixa-envolt"><span class="faixa" id="clip-titulo">—</span></div>
+
+        <div class="reproduzir">
+          <button class="play" id="play-btn" aria-label="Tocar referência">
+            <svg class="icone" aria-hidden="true"><use href="#icon-play"></use></svg>
+          </button>
+          <div class="barra" id="play-bar"><div class="barra-fill"></div></div>
+        </div>
+        <audio id="player" preload="auto"></audio>
+
+        <div class="fala">
+          <span class="vez-label">VEZ DE</span>
+          <p class="vez-nome" id="vez-nome">—</p>
+        </div>
+
+        <span class="medalha-pts">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2l2.6 5.6 6.1.7-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.3 8.3l6.1-.7L12 2Z"
+              fill="url(#estrela-gradiente)" stroke="#d9701c" stroke-width="1"/>
+          </svg>
+          <span id="vez-pts">0.0 pts</span>
+        </span>
+
+        <button class="rec" id="rec" aria-pressed="false" aria-label="Gravar">
+          <span class="icone-envolt"><svg class="icone" aria-hidden="true"><use href="#icon-record"></use></svg></span>
+        </button>
+        <span class="estado" id="estado-round" role="status" aria-live="polite">Pronto.</span>
+        <div class="medidor" id="medidor" hidden aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+      </section>
+
+      <!-- ── Ouça as gravações: nota fica escondida ate' o resumo (spec da
+           secao 4 do plano — vota-se "de ouvido", sem numero pra ancorar) ── -->
+      <section id="audicao" hidden>
+        <span class="chip" id="audicao-progresso">Gravação 1 / 2</span>
+        <div class="fala">
+          <span class="vez-label">OUVINDO</span>
+          <p class="vez-nome" id="audicao-nome">—</p>
+        </div>
+        <div class="reproduzir">
+          <button class="play" id="audicao-play-btn" aria-label="Tocar/pausar gravação">
+            <svg class="icone" aria-hidden="true"><use href="#icon-play"></use></svg>
+          </button>
+          <div class="barra" id="audicao-play-bar"><div class="barra-fill"></div></div>
+        </div>
+        <audio id="audicao-player" preload="auto"></audio>
+        <button class="btn-glossy primario" id="audicao-proxima">Próxima gravação</button>
+      </section>
+
+      <!-- ── Resumo da rodada ──────────────────────────────────────────── -->
+      <section id="round-summary" hidden>
+        <h2 class="titulo-jogo" id="resumo-titulo" style="font-size:1.4rem; margin-top:0;"></h2>
+        <ol class="lista-ranking" id="lista-resumo"></ol>
+        <button class="btn-glossy primario" id="proxima-rodada">Próxima rodada</button>
+      </section>
+
+      <!-- ── Fim de jogo ───────────────────────────────────────────────── -->
+      <section id="final" hidden>
+        <h2 class="titulo-jogo" style="font-size:1.4rem; margin-top:0;">Fim de jogo!</h2>
+        <ol class="lista-ranking" id="lista-final"></ol>
+        <div class="acoes">
+          <button class="btn-glossy primario" id="jogar-de-novo">Jogar de novo</button>
+          <button class="btn-glossy" id="nova-partida">Nova partida</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+<svg style="display:none" aria-hidden="true">
+  <defs>
+    <radialGradient id="estrela-gradiente" cx="35%" cy="28%" r="75%">
+      <stop offset="0%" stop-color="#fff9e0"/><stop offset="55%" stop-color="#ffb703"/><stop offset="100%" stop-color="#e08a00"/>
+    </radialGradient>
+    <radialGradient id="coroa-gradiente" cx="35%" cy="28%" r="75%">
+      <stop offset="0%" stop-color="#fff9e0"/><stop offset="55%" stop-color="#ffd23f"/><stop offset="100%" stop-color="#d9701c"/>
+    </radialGradient>
+  </defs>
+  <symbol id="icon-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor"/></symbol>
+  <symbol id="icon-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/></symbol>
+  <symbol id="icon-record" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="currentColor"/></symbol>
+  <symbol id="icon-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor"/></symbol>
+  <symbol id="icon-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></symbol>
+  <symbol id="icon-crown" viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2Zm.7-3h12.6l1.7-9.5-4.9 3.1L12 5l-3.1 5.6-4.9-3.1L5.7 17Z" fill="url(#coroa-gradiente)" stroke="#b45900" stroke-width=".6"/></symbol>
+</svg>
 <script src="/static/score-animation.js"></script>
+<script src="/static/audio-player.js"></script>
+<script src="/static/mic-meter.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-// ponytail: escape via DOM em vez de tabela — so precisa cobrir texto entre tags.
 const esc = (s) => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
 
-// So uma secao (setup/round/round-summary/final) fica visivel por vez — acha a
-// atual e crossfada pra secao pedida, sem precisar que cada call site liste
-// manualmente quem escoder.
-const SECOES = () => [$("setup"), $("round"), $("round-summary"), $("final")];
+const SECOES = () => [$("setup"), $("round"), $("audicao"), $("round-summary"), $("final")];
 function mostraSecao(secao) {
   const atual = SECOES().find((el) => !el.hidden && el !== secao);
   crossfade(atual, secao);
 }
 
-// ── Estado, so em memoria da aba: recarregar a pagina perde a partida; a
-// guarda beforeunload abaixo so evita o acidente, nao recupera nada ──────
-let jogadores = [];      // [{nome, pontos}]
+// ── Estado, so em memoria da aba ───────────────────────────────────────────
+let jogadores = [];
 let numRodadas = 5;
-let baseClipes = [];     // [{id, label}] vindo de /api/mimic_refs
+let baseClipes = [];
 let pool = [];
 let poolIdx = 0;
-let rodadaAtual = 0;     // 1-based durante o jogo
-let jogadorAtual = 0;    // indice em jogadores, dentro da rodada
+let rodadaAtual = 0;
+let jogadorAtual = 0;
 let clipeAtual = null;
-let pontosDaRodada = []; // [{nome, pontos}] acumulado pra tela de resumo
+let pontosDaRodada = [];
+let takesDaRodada = []; // [{nome, blob, pontos}] — blob guardado pra tela de audicao (secao 3 do plano)
 
-// ponytail: guarda so pra notebook (decisao 2026-09-14). iOS nao dispara
-// beforeunload — se o jogo for pra celular, trocar por sessionStorage.
 window.addEventListener("beforeunload", (e) => {
-  // rodadaAtual passa de numRodadas antes de mostraFinal: esse intervalo e
-  // exatamente "partida em andamento".
   if (rodadaAtual > 0 && rodadaAtual <= numRodadas) e.preventDefault();
 });
 
@@ -112,12 +392,8 @@ function embaralha(arr) {
   }
   return a;
 }
-
 function proximoClipe() {
-  if (poolIdx >= pool.length) {
-    pool = embaralha(baseClipes);
-    poolIdx = 0;
-  }
+  if (poolIdx >= pool.length) { pool = embaralha(baseClipes); poolIdx = 0; }
   return pool[poolIdx++];
 }
 
@@ -127,17 +403,15 @@ function renderJogadores() {
   ul.innerHTML = "";
   jogadores.forEach((j, i) => {
     const li = document.createElement("li");
-    li.innerHTML = `<span class="nome">${esc(j.nome)}</span><button data-i="${i}">Remover</button>`;
+    li.innerHTML = `<span class="nome">${esc(j.nome)}</span>` +
+      `<button class="btn-x" data-i="${i}" aria-label="Remover ${esc(j.nome)}">` +
+      `<svg class="icone" aria-hidden="true"><use href="#icon-close"></use></svg></button>`;
     ul.appendChild(li);
   });
   ul.querySelectorAll("button").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      jogadores.splice(Number(btn.dataset.i), 1);
-      renderJogadores();
-    });
+    btn.addEventListener("click", () => { jogadores.splice(Number(btn.dataset.i), 1); renderJogadores(); });
   });
 }
-
 $("add-jogador").addEventListener("click", () => {
   const nome = $("nome-jogador").value.trim();
   if (!nome) return;
@@ -149,11 +423,34 @@ $("nome-jogador").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); $("add-jogador").click(); }
 });
 
-$("comecar").addEventListener("click", async () => {
-  if (jogadores.length === 0) {
-    $("estado-setup").textContent = "Adicione ao menos 1 jogador.";
+// ── Teste de microfone (setup) ──────────────────────────────────────────
+let testeMicStream = null, testeMicMedidor = null;
+function pararTesteMic() {
+  if (testeMicMedidor) { testeMicMedidor.para(); testeMicMedidor = null; }
+  if (testeMicStream) { soltaMic(testeMicStream); testeMicStream = null; }
+  $("medidor-setup").hidden = true;
+  $("testar-mic").textContent = "Testar microfone";
+}
+$("testar-mic").addEventListener("click", async () => {
+  if (testeMicStream) { pararTesteMic(); return; }
+  $("testar-mic").disabled = true;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) {
+    $("estado-setup").textContent = "Sem acesso ao microfone: " + e.name;
+    $("testar-mic").disabled = false;
     return;
   }
+  testeMicStream = stream;
+  testeMicMedidor = criaMedidor(stream, $("medidor-setup"));
+  $("medidor-setup").hidden = false;
+  $("testar-mic").textContent = "Parar teste";
+  $("testar-mic").disabled = false;
+});
+
+$("comecar").addEventListener("click", async () => {
+  pararTesteMic();
+  if (jogadores.length === 0) { $("estado-setup").textContent = "Adicione ao menos 1 jogador."; return; }
   numRodadas = Math.max(1, parseInt($("rodadas").value, 10) || 5);
 
   $("estado-setup").textContent = "Carregando clipes…";
@@ -169,13 +466,10 @@ $("comecar").addEventListener("click", async () => {
     $("estado-setup").textContent = "Nenhum clipe na biblioteca — adicione em /static/refs.html antes de começar.";
     return;
   }
-  // alert() porque a tela de setup some assim que a rodada 1 comeca — um texto
-  // aqui piscaria por um frame e ninguem leria (achado no teste manual no browser).
   if (baseClipes.length < numRodadas) {
     alert(`Só há ${baseClipes.length} clipe(s) para ${numRodadas} rodadas — alguns vão repetir.`);
   }
   $("estado-setup").textContent = "";
-
   pool = embaralha(baseClipes);
   poolIdx = 0;
   iniciaPartida();
@@ -188,62 +482,68 @@ function iniciaPartida() {
 }
 
 // ── Rodada ──────────────────────────────────────────────────────────────
+const player = criaPlayer($("player"), $("play-btn"), $("play-bar"));
+
 function proximaRodada() {
   rodadaAtual++;
   if (rodadaAtual > numRodadas) return mostraFinal();
   jogadorAtual = 0;
   pontosDaRodada = [];
+  takesDaRodada = [];
   clipeAtual = proximoClipe();
   mostraSecao($("round"));
   proximoJogadorDaRodada();
 }
-
 function proximoJogadorDaRodada() {
   const j = jogadores[jogadorAtual];
-  $("round-titulo").textContent =
-    `Rodada ${rodadaAtual}/${numRodadas} — clipe "${clipeAtual.label}" — vez de ${j.nome} (${j.pontos} pts)`;
+  $("round-progresso").textContent = `Rodada ${rodadaAtual} / ${numRodadas}`;
+  $("clip-titulo").textContent = `"${clipeAtual.label}"`;
+  $("vez-nome").textContent = j.nome;
+  $("vez-pts").textContent = `${j.pontos.toFixed(1)} pts`;
   $("player").src = "/api/score/ref?mode=mimic&ref=" + encodeURIComponent(clipeAtual.id);
+  player.recarrega();
   $("estado-round").textContent = "Pronto.";
   $("rec").disabled = false;
 }
 
 function soltaMic(stream) { stream.getTracks().forEach((t) => t.stop()); }
-
-let rec = null, chunks = [], gravando = false;
+let rec = null, chunks = [], gravando = false, medidor = null;
+function paraMedidor() { if (medidor) { medidor.para(); medidor = null; } $("medidor").hidden = true; }
 
 $("rec").addEventListener("click", async () => {
   if (gravando) { rec.stop(); return; }
   $("rec").disabled = true;
   let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch (e) {
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) {
     $("estado-round").textContent = "Sem acesso ao microfone: " + e.name;
     $("rec").disabled = false;
     return;
   }
+  medidor = criaMedidor(stream, $("medidor"));
+  $("medidor").hidden = false;
   try {
     chunks = [];
     rec = new MediaRecorder(stream);
     rec.ondataavailable = (e) => chunks.push(e.data);
     rec.onstop = async () => {
       soltaMic(stream);
+      paraMedidor();
       gravando = false;
-      $("rec").textContent = "● Gravar";
       $("rec").setAttribute("aria-pressed", "false");
       $("rec").disabled = true;
       $("estado-round").textContent = "Pontuando…";
 
+      const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
       const fd = new FormData();
       fd.append("mode", "mimic");
+      fd.append("pitch", $("dificuldade").value);
       fd.append("ref", clipeAtual.id);
-      fd.append("take", new Blob(chunks, { type: rec.mimeType || "audio/webm" }), "take.webm");
+      fd.append("take", blob, "take.webm");
 
       let r, data = null;
-      try {
-        r = await fetch("/api/score", { method: "POST", body: fd });
-        data = await r.json();
-      } catch (e) {
+      try { r = await fetch("/api/score", { method: "POST", body: fd }); data = await r.json(); }
+      catch (e) {
         $("estado-round").textContent = "Falha de rede ao pontuar.";
         $("rec").disabled = false;
         return;
@@ -253,42 +553,81 @@ $("rec").addEventListener("click", async () => {
         $("rec").disabled = false;
         return;
       }
-
       const j = jogadores[jogadorAtual];
       j.pontos += data.total;
       pontosDaRodada.push({ nome: j.nome, pontos: data.total });
-
+      // nota fica guardada, nao mostrada agora — so aparece no resumo, depois de
+      // ouvir todas as gravacoes (spec da secao 4: votacao "de ouvido", sem numero
+      // pra ancorar o voto). audicao.js/mostraAudicao revela isso mais adiante.
+      takesDaRodada.push({ nome: j.nome, blob, pontos: data.total });
       jogadorAtual++;
-      if (jogadorAtual < jogadores.length) {
-        proximoJogadorDaRodada();
-      } else {
-        mostraResumoDaRodada();
-      }
+      if (jogadorAtual < jogadores.length) proximoJogadorDaRodada();
+      else mostraAudicao();
     };
     rec.start();
     $("rec").disabled = false;
   } catch (e) {
     soltaMic(stream);
+    paraMedidor();
     $("estado-round").textContent = "Gravação não suportada neste navegador: " + e.name;
     $("rec").disabled = false;
     return;
   }
   gravando = true;
-  $("rec").textContent = "■ Parar";
   $("rec").setAttribute("aria-pressed", "true");
   $("estado-round").textContent = "Gravando…";
 });
 
-// ── Resumo da rodada ──────────────────────────────────────────────────────
+// ── Audicao: ouve cada gravacao da rodada em sequencia antes do resumo ─────
+const audicaoPlayer = criaPlayer($("audicao-player"), $("audicao-play-btn"), $("audicao-play-bar"));
+let audicaoIdx = 0;
+let audicaoUrlAtual = null;
+let audicaoAutoTimer = null;
+const AUDICAO_AUTOAVANCO_MS = 3000; // se ninguem clicar "Proxima", avanca sozinho
+
+function mostraAudicao() {
+  mostraSecao($("audicao"));
+  audicaoIdx = 0;
+  tocaAudicaoAtual();
+}
+function tocaAudicaoAtual() {
+  clearTimeout(audicaoAutoTimer);
+  if (audicaoUrlAtual) { URL.revokeObjectURL(audicaoUrlAtual); audicaoUrlAtual = null; }
+  if (audicaoIdx >= takesDaRodada.length) { mostraResumoDaRodada(); return; }
+  const take = takesDaRodada[audicaoIdx];
+  $("audicao-progresso").textContent = `Gravação ${audicaoIdx + 1} / ${takesDaRodada.length}`;
+  $("audicao-nome").textContent = take.nome;
+  audicaoUrlAtual = URL.createObjectURL(take.blob);
+  $("audicao-player").src = audicaoUrlAtual;
+  audicaoPlayer.recarrega();
+  $("audicao-player").play().catch(() => {}); // autoplay: "mostrado em sequencia", nao pede clique
+  $("audicao-proxima").textContent =
+    audicaoIdx + 1 < takesDaRodada.length ? "Próxima gravação" : "Ver resumo da rodada";
+}
+function avancaAudicao() {
+  audicaoIdx++;
+  tocaAudicaoAtual();
+}
+$("audicao-player").addEventListener("ended", () => {
+  audicaoAutoTimer = setTimeout(avancaAudicao, AUDICAO_AUTOAVANCO_MS);
+});
+$("audicao-proxima").addEventListener("click", avancaAudicao);
+
+// ── Resumo da rodada ────────────────────────────────────────────────────
+function linhaRanking(pos, nome, ehVencedor) {
+  const marcador = ehVencedor
+    ? `<svg class="icone" aria-hidden="true"><use href="#icon-crown"></use></svg>`
+    : pos;
+  return `<li class="${ehVencedor ? "vencedor" : ""}"><span class="pos">${marcador}</span>` +
+    `<span class="nome">${esc(nome)}</span><b class="pts pontos"></b></li>`;
+}
 function mostraResumoDaRodada() {
   mostraSecao($("round-summary"));
-  $("resumo-titulo").textContent = `Fim da rodada ${rodadaAtual}/${numRodadas}`;
-  const tbody = $("tabela-resumo").querySelector("tbody");
-  tbody.innerHTML = pontosDaRodada
-    .map((p) => `<tr><td>${esc(p.nome)}</td><td><b class="pontos"></b> nesta rodada</td></tr>`)
-    .join("");
+  $("resumo-titulo").textContent = `Fim da rodada ${rodadaAtual} / ${numRodadas}`;
+  const ol = $("lista-resumo");
+  ol.innerHTML = pontosDaRodada.map((p, i) => linhaRanking(i + 1, p.nome, false)).join("");
   new Audio("/static/sfx/ding.mp3").play().catch(() => {});
-  tbody.querySelectorAll("b.pontos").forEach((el, i) => animaContador(el, pontosDaRodada[i].pontos));
+  ol.querySelectorAll("b.pontos").forEach((el, i) => animaContador(el, pontosDaRodada[i].pontos));
 }
 $("proxima-rodada").addEventListener("click", proximaRodada);
 
@@ -297,20 +636,13 @@ function mostraFinal() {
   mostraSecao($("final"));
   new Audio("/static/sfx/aplauso.mp3").play().catch(() => {});
   const ordenados = jogadores.slice().sort((a, b) => b.pontos - a.pontos);
-  // placar final soma rodadas e pode passar de 100 — escala a duracao da animacao
-  // pelo MAIOR total da tabela, senao todo placar alto bate no teto e parece igual.
   const maiorTotal = Math.max(1, ...ordenados.map((j) => j.pontos));
-  const tbody = $("tabela-final").querySelector("tbody");
-  tbody.innerHTML = ordenados
-    .map((j, i) => `<tr><td class="${i === 0 ? "vencedor" : ""}">${esc(j.nome)}</td><td><b class="pontos"></b></td></tr>`)
-    .join("");
+  const ol = $("lista-final");
+  ol.innerHTML = ordenados.map((j, i) => linhaRanking(i + 1, j.nome, i === 0)).join("");
   new Audio("/static/sfx/ding.mp3").play().catch(() => {});
-  tbody.querySelectorAll("b.pontos").forEach((el, i) => animaContador(el, ordenados[i].pontos, 800, maiorTotal));
+  ol.querySelectorAll("b.pontos").forEach((el, i) => animaContador(el, ordenados[i].pontos, 800, maiorTotal));
 }
-
-$("jogar-de-novo").addEventListener("click", () => {
-  iniciaPartida();
-});
+$("jogar-de-novo").addEventListener("click", () => iniciaPartida());
 $("nova-partida").addEventListener("click", () => {
   jogadores = [];
   renderJogadores();
