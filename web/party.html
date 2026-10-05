@@ -163,8 +163,8 @@
 
   .reproduzir { display: flex; align-items: center; gap: .9rem; margin-bottom: 1.6rem; padding: 0 .3rem; align-self: stretch; }
   .reproduzir[hidden] { display: none; }
-  /* letra do Karaoke: caixa com rolagem PROPRIA — o scrollIntoView do letra-trecho.js
-     rola esta caixa a cada verso, nao a pagina inteira. */
+  /* letra do Karaoke: caixa com rolagem PROPRIA — o letra-trecho.js centraliza o verso
+     ativo rolando so esta caixa (scrollTop), nunca a pagina. */
   #letra-trecho { align-self: stretch; max-height: 9.5rem; overflow-y: auto; overscroll-behavior: contain;
     overflow-wrap: anywhere; margin-bottom: 1.6rem; padding: .5rem .7rem; border-radius: 1.1rem;
     background: rgba(255,255,255,.4); box-shadow: inset 0 2px 4px rgba(122,61,0,.2); }
@@ -663,7 +663,7 @@ function proximoJogadorDaRodada() {
   $("vez-nome").textContent = j.nome;
   $("vez-pts").textContent = `${j.pontos.toFixed(1)} pts`;
   if (modoPartida === "karaoke") {
-    if (vezAtual) { vezAtual.cancela(); vezAtual = null; } // defensivo: nada da vez anterior rodando
+    cancelaVezKaraoke(); // defensivo: nada da vez anterior rodando (nem o mic)
     $("clip-titulo").textContent = clipeAtual.titulo;
     $("player").pause();
     $("reproduzir-ref").hidden = true;
@@ -749,8 +749,14 @@ function paraMedidor() { if (medidor) { medidor.para(); medidor = null; } $("med
 
 // Karaoke: um clique em "Cantar" e a vez corre sozinha (3-2-1, base + letra, para no
 // fim do trecho). Ao terminar ou falhar, karaoke-vez.js ja parou base/letra/medidor;
-// aqui solta o mic.
-let vezAtual = null;
+// aqui solta o mic. cancela() nao chama callback nenhum, entao quem cancela usa
+// cancelaVezKaraoke(), que tambem solta o mic da vez (guardado em micDaVez).
+let vezAtual = null, micDaVez = null;
+function cancelaVezKaraoke() {
+  if (vezAtual) { vezAtual.cancela(); vezAtual = null; }
+  if (micDaVez) { soltaMic(micDaVez); micDaVez = null; }
+  $("rec").setAttribute("aria-pressed", "false");
+}
 async function cantaKaraoke() {
   if (vezAtual) return;
   $("rec").disabled = true;
@@ -763,9 +769,11 @@ async function cantaKaraoke() {
   }
   const encerra = () => {
     vezAtual = null;
+    micDaVez = null;
     soltaMic(stream);
     $("rec").setAttribute("aria-pressed", "false");
   };
+  micDaVez = stream;
   $("rec").setAttribute("aria-pressed", "true");
   vezAtual = vezKaraoke({
     trecho: clipeAtual,
@@ -785,7 +793,7 @@ async function cantaKaraoke() {
     },
   });
 }
-window.addEventListener("pagehide", () => { if (vezAtual) vezAtual.cancela(); });
+window.addEventListener("pagehide", cancelaVezKaraoke);
 
 $("rec").addEventListener("click", async () => {
   if (modoPartida === "karaoke") { cantaKaraoke(); return; }

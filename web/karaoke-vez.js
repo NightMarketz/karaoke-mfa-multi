@@ -5,6 +5,8 @@
 
 const PRE_ROLL_S = 2;   // a base entra 2 s antes do primeiro verso (servidor: MAX_TAKE_S cobre isso)
 const CONTAGEM_S = 3;   // 3-2-1 antes de cantar
+const FOLGA_VIGIA_S = 4;      // vigia de relogio: duracao esperada da vez + esta folga
+const ESPERA_CARGA_S = 15;    // base que nao carrega/toca em 15 s depois da contagem = falha
 
 // porMusica: [{musica: {id, titulo}, trechos: [...]}] -> [{job, titulo, inicio, fim, versos}]
 // Descarta trechos `longo` e intercala as musicas, um trecho de cada por vez, na
@@ -30,6 +32,8 @@ function vezKaraoke({ trecho, audio, letraEl, medidorEl, estadoEl, stream, aoTer
   let encerrada = false;   // terminou, falhou ou foi cancelada: nada mais roda
   let cancelada = false;   // rec.onstop nao entrega blob
   let timer = null, raf = 0, rec = null, chunks = [];
+  let vigiaRelogio = null; // setTimeout: base travada/sem 'ended' nao prende a vez (e o mic)
+  let metaCarregada = false;
   const inicioBase = Math.max(0, trecho.inicio - PRE_ROLL_S);
 
   const medidor = criaMedidor(stream, medidorEl);
@@ -37,8 +41,13 @@ function vezKaraoke({ trecho, audio, letraEl, medidorEl, estadoEl, stream, aoTer
 
   let okMeta, erroMeta;
   const metadata = new Promise((res, rej) => { okMeta = res; erroMeta = rej; });
-  const aoMeta = () => okMeta();
-  const aoErroAudio = () => erroMeta(new Error("falha ao carregar a base"));
+  const aoMeta = () => { metaCarregada = true; okMeta(); };
+  // Antes da metadata: rejeita a carga. Depois (rede/decodificacao no meio da vez):
+  // encerra a vez com erro — a promise ja resolvida nao acordaria ninguem.
+  const aoErroAudio = () => {
+    if (metaCarregada) falha("A base instrumental falhou no meio do trecho.");
+    else erroMeta(new Error("falha ao carregar a base"));
+  };
   audio.addEventListener("loadedmetadata", aoMeta);
   audio.addEventListener("error", aoErroAudio);
   audio.pause();
@@ -61,6 +70,7 @@ function vezKaraoke({ trecho, audio, letraEl, medidorEl, estadoEl, stream, aoTer
 
   function limpa() {
     if (timer) { clearInterval(timer); timer = null; }
+    if (vigiaRelogio) { clearTimeout(vigiaRelogio); vigiaRelogio = null; }
     cancelAnimationFrame(raf);
     audio.pause();
     audio.removeEventListener("loadedmetadata", aoMeta);
@@ -93,6 +103,8 @@ function vezKaraoke({ trecho, audio, letraEl, medidorEl, estadoEl, stream, aoTer
   async function comeca() {
     if (encerrada) return;
     if (audio.readyState < 1) estadoEl.textContent = "Carregando a base…";
+    // metadata ou play() que nunca resolvem (rede parada) tambem nao prendem a vez
+    vigiaRelogio = setTimeout(() => falha("A base instrumental não carregou."), ESPERA_CARGA_S * 1000);
     try { await metadata; } catch (e) { return falha("Falha ao carregar a base instrumental."); }
     if (encerrada) return;
     audio.currentTime = inicioBase;
@@ -110,6 +122,13 @@ function vezKaraoke({ trecho, audio, letraEl, medidorEl, estadoEl, stream, aoTer
     if (encerrada) { audio.pause(); return; }
     rec.start();
     estadoEl.textContent = "Cante!";
+    // Vigia de relogio: se a base travar (sem erro e sem 'ended'), currentTime nao
+    // chega a `fim`. Perto do fim conta como terminada; senao, falha.
+    clearTimeout(vigiaRelogio);
+    vigiaRelogio = setTimeout(() => {
+      if (audio.currentTime >= trecho.fim - 1) termina();
+      else falha("A base instrumental travou no meio do trecho.");
+    }, ((trecho.fim - inicioBase) + FOLGA_VIGIA_S) * 1000);
     audio.addEventListener("timeupdate", confere); // rAF dorme em aba oculta; timeupdate nao
     audio.addEventListener("ended", termina);      // musica acabou antes do fim do trecho
     raf = requestAnimationFrame(vigia);

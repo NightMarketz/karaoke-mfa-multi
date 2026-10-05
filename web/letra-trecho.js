@@ -27,6 +27,17 @@ function criaLetraTrecho(container, versos, audio) {
   let ativo = true;
   let idxAtivo = -1;
 
+  // Rola SO o container (scrollIntoView rolaria tambem a pagina quando a secao e'
+  // mais alta que a tela). Posicao relativa via getBoundingClientRect: nao depende
+  // do offsetParent do verso.
+  function centraNoContainer(el) {
+    const rc = container.getBoundingClientRect();
+    const re = el.getBoundingClientRect();
+    const alvo = container.scrollTop + (re.top - rc.top) - (container.clientHeight - re.height) / 2;
+    const max = Math.max(0, container.scrollHeight - container.clientHeight);
+    container.scrollTo({ top: Math.min(max, Math.max(0, alvo)), behavior: "smooth" });
+  }
+
   function passo() {
     if (!ativo) return;
     const t = audio.currentTime;
@@ -49,7 +60,7 @@ function criaLetraTrecho(container, versos, audio) {
     });
     if (novoAtivo !== idxAtivo) {
       idxAtivo = novoAtivo;
-      if (novoAtivo >= 0) itens[novoAtivo].el.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (novoAtivo >= 0) centraNoContainer(itens[novoAtivo].el);
     }
     requestAnimationFrame(passo);
   }
