@@ -7,16 +7,18 @@ from flask import Flask
 
 import server_karaoke_game_addendum as mod
 from karaoke import paths as kpaths
+from karaoke.lyrics_cleaner import clean_lyrics_strict, normalise_lyrics
 
 LETRA = [" ".join(f"p{i}_{k}" for k in range(6)) for i in range(6)]
 
 
 def _alinha(linhas, dur=1.0):
+    """Como o pipeline real: alinha normalise_lyrics(clean_lyrics_strict(letra))."""
+    texto = normalise_lyrics(clean_lyrics_strict("\n".join(linhas)))
     t, out = 0.0, []
-    for linha in linhas:
-        for tok in linha.split():
-            out.append({"word": tok, "start": t, "end": t + dur, "score": 1.0})
-            t += dur
+    for tok in texto.split():
+        out.append({"word": tok, "start": t, "end": t + dur, "score": 1.0})
+        t += dur
     return out
 
 
@@ -106,6 +108,31 @@ def test_trechos_letra_inconsistente_da_422(jobs, client):
     r = client.get("/api/karaoke/ok/trechos")
     assert r.status_code == 422
     assert "tokens" in r.json["error"]
+
+
+def test_trechos_word_timing_json_invalido_da_422(jobs, client):
+    jobs("ok")
+    kpaths.word_timing_json("ok").write_text("{nao e json", encoding="utf-8")
+    r = client.get("/api/karaoke/ok/trechos")
+    assert r.status_code == 422
+    assert "error" in r.json
+
+
+def test_trechos_letra_nao_utf8_da_422(jobs, client):
+    jobs("ok")
+    kpaths.lyrics_path("ok").write_bytes(b"\xff\xfe\xfa letra latin-1 \xe7")
+    r = client.get("/api/karaoke/ok/trechos")
+    assert r.status_code == 422
+    assert "error" in r.json
+
+
+def test_trechos_letra_com_tags_e_adlibs_nao_da_422(jobs, client):
+    letra = ["[Refrão]"] + [f"{l} (oh oh)" for l in LETRA[:3]] + ["", "[Verso]"] + LETRA[3:]
+    jobs("ok", palavras=_alinha(letra))
+    kpaths.lyrics_path("ok").write_text("\n".join(letra), encoding="utf-8")
+    r = client.get("/api/karaoke/ok/trechos")
+    assert r.status_code == 200
+    assert r.json[0]["versos"][0]["texto"] == LETRA[0]
 
 
 def test_base_serve_wav(jobs, client):

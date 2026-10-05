@@ -73,11 +73,13 @@ def make_karaoke_game_route(app) -> None:
         erro = _valida(job)
         if erro:
             return erro
-        linhas = kpaths.lyrics_path(job).read_text(encoding="utf-8").splitlines()
-        palavras = json.loads(kpaths.word_timing_json(job).read_text(encoding="utf-8"))
         try:
+            linhas = kpaths.lyrics_path(job).read_text(encoding="utf-8").splitlines()
+            palavras = json.loads(kpaths.word_timing_json(job).read_text(encoding="utf-8"))
             return jsonify(trechos_da_letra(linhas, palavras))
         except ValueError as exc:
+            # JSONDecodeError e UnicodeDecodeError sao ValueError: letra ou
+            # gabarito ilegivel tambem cai aqui (422, nao 500).
             return _erro(f"letra inconsistente com o alinhamento: {exc}", 422)
 
     @app.route("/api/karaoke/<job>/base", methods=["GET"])

@@ -28,7 +28,9 @@ if sys.platform == "win32":
 # Allow imports from project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from karaoke.lyrics_cleaner import clean_lyrics_strict
+# normalise_lyrics/CONTRACTIONS vivem em karaoke.lyrics_cleaner (o jogo de karaoke
+# usa a mesma normalizacao); reexportados aqui pra quem importa do script.
+from karaoke.lyrics_cleaner import CONTRACTIONS, clean_lyrics_strict, normalise_lyrics  # noqa: F401
 import karaoke.paths as kpaths
 
 def _progress(pct: int, msg: str = ""):
@@ -37,83 +39,6 @@ def _progress(pct: int, msg: str = ""):
         print(f"PROGRESS: {pct} | {msg}", flush=True)
     else:
         print(f"PROGRESS: {pct}", flush=True)
-
-# ── Contraction expansion map ─────────────────────────────────────────────────
-CONTRACTIONS = {
-    "i'm":      "i am",
-    "i'll":     "i will",
-    "i'd":      "i would",
-    "i've":     "i have",
-    "it's":     "it is",
-    "he's":     "he is",
-    "she's":    "she is",
-    "that's":   "that is",
-    "what's":   "what is",
-    "there's":  "there is",
-    "here's":   "here is",
-    "who's":    "who is",
-    "let's":    "let us",
-    "we're":    "we are",
-    "they're":  "they are",
-    "you're":   "you are",
-    "we've":    "we have",
-    "they've":  "they have",
-    "you've":   "you have",
-    "we'll":    "we will",
-    "they'll":  "they will",
-    "you'll":   "you will",
-    "he'll":    "he will",
-    "she'll":   "she will",
-    "it'll":    "it will",
-    "we'd":     "we would",
-    "they'd":   "they would",
-    "you'd":    "you would",
-    "he'd":     "he would",
-    "she'd":    "she would",
-    "isn't":    "is not",
-    "aren't":   "are not",
-    "wasn't":   "was not",
-    "weren't":  "were not",
-    "don't":    "do not",
-    "doesn't":  "does not",
-    "didn't":   "did not",
-    "won't":    "will not",
-    "wouldn't": "would not",
-    "can't":    "can not",
-    "couldn't": "could not",
-    "shouldn't":"should not",
-    "hasn't":   "has not",
-    "haven't":  "have not",
-    "hadn't":   "had not",
-    "'cause":   "cause",
-    "ain't":    "am not",
-}
-
-
-def normalise_lyrics(raw: str) -> str:
-    """Normaliza letra para alinhamento CTC — só texto limpo, sem pontuação."""
-    text = raw.lower()
-
-    # Normaliza aspas curvas para retas antes de expandir contrações
-    text = text.replace("\u2019", "'").replace("\u2018", "'")
-    for contraction, expansion in CONTRACTIONS.items():
-        text = text.replace(contraction, expansion)
-
-    # Remove possessivos (falcon's → falcons)
-    text = re.sub(r"(\w)'s\b", r"\1s", text)
-    # Remove apóstrofos restantes
-    text = text.replace("'", "")
-
-    # Remove pontuação (preserva hífens dentro de palavras)
-    text = re.sub(r"[^\w\s-]", " ", text)
-    # Remove hífens isolados
-    text = re.sub(r"(?<!\w)-|-(?!\w)", " ", text)
-
-    # Colapsa espaços por linha, remove linhas vazias
-    lines = [" ".join(line.split()) for line in text.splitlines()]
-    result = "\n".join(line for line in lines if line)
-    return result
-
 
 def main():
     parser = argparse.ArgumentParser()

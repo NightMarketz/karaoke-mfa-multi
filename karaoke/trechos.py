@@ -3,6 +3,8 @@ import re
 import unicodedata
 from collections import Counter
 
+from karaoke.lyrics_cleaner import clean_lyrics_strict, normalise_lyrics
+
 TRECHO_MIN_S: float = 20.0
 TRECHO_MAX_S: float = 30.0
 
@@ -16,13 +18,20 @@ def normaliza(texto: str) -> str:
 
 
 def versos_da_letra(linhas: list[str], palavras: list[dict]) -> list[dict]:
-    """Um verso por linha nao vazia; consome `palavras` em sequencia (um token cada).
+    """Um verso por linha da letra LIMPA; consome `palavras` em sequencia.
 
-    Mesma regra de ass_builder.group_words_by_lyrics_lines; linha em branco
-    incrementa a estrofe.
+    `linhas` e a letra bruta (input/lyrics.txt). O alinhador viu
+    normalise_lyrics(clean_lyrics_strict(letra)) (scripts/03_prepare_corpus.py),
+    entao os versos seguem esse mesmo texto: tags [Refrao] e ad-libs (oh oh)
+    saem, e cada linha limpa consome len(normalise_lyrics(linha).split())
+    palavras alinhadas (I'm -> i am consome duas). Linha em branco incrementa
+    a estrofe; linha que normaliza pra nada (um "—" solto) e pulada.
+    O texto de cada palavra e o token da linha limpa quando as contagens
+    batem; senao, a `word` do alinhador.
     """
-    tokens_por_linha = [linha.split() for linha in linhas]
-    n_tokens = sum(len(t) for t in tokens_por_linha)
+    limpas = clean_lyrics_strict("\n".join(linhas)).splitlines()
+    n_por_linha = [len(normalise_lyrics(linha).split()) for linha in limpas]
+    n_tokens = sum(n_por_linha)
     if n_tokens != len(palavras):
         raise ValueError(
             f"{n_tokens} tokens na letra != {len(palavras)} palavras alinhadas"
@@ -32,20 +41,25 @@ def versos_da_letra(linhas: list[str], palavras: list[dict]) -> list[dict]:
     idx = 0
     estrofe = 0
     pendente = False  # ha verso na estrofe atual
-    for tokens in tokens_por_linha:
-        if not tokens:
+    for linha, n in zip(limpas, n_por_linha):
+        if not linha.strip():
             if pendente:
                 estrofe += 1
                 pendente = False
             continue
-        fatia = palavras[idx: idx + len(tokens)]
-        idx += len(tokens)
+        if n == 0:
+            continue
+        fatia = palavras[idx: idx + n]
+        idx += n
+        tokens = linha.split()
+        if len(tokens) != n:
+            tokens = [str(p["word"]) for p in fatia]
         pals = [
             {"texto": tok, "inicio": float(p["start"]), "fim": float(p["end"])}
             for tok, p in zip(tokens, fatia)
         ]
         versos.append({
-            "texto": " ".join(tokens),
+            "texto": " ".join(linha.split()),
             "inicio": pals[0]["inicio"],
             "fim": pals[-1]["fim"],
             "estrofe": estrofe,
@@ -57,6 +71,10 @@ def versos_da_letra(linhas: list[str], palavras: list[dict]) -> list[dict]:
 
 def trechos(versos: list[dict]) -> list[dict]:
     """Trechos sem sobreposicao de 20-30 s; versos repetidos (refrao) primeiro."""
+    # ponytail: refrao = linha limpa normalizada identica aparecendo >= 2 vezes.
+    # Teto: nao pega refrao quase igual (uma palavra trocada) nem refrao cantado
+    # pela metade. Gatilho de upgrade: musicas reais com refrao ranqueado como
+    # nao-refrao (aí: similaridade por tokens/fuzzy em vez de igualdade exata).
     contagem = Counter(normaliza(v["texto"]) for v in versos)
     repetido = [contagem[normaliza(v["texto"])] >= 2 for v in versos]
 
@@ -82,6 +100,10 @@ def trechos(versos: list[dict]) -> list[dict]:
         prioridade = rep / dur if dur > 0 else 0.0
         candidatos.append((-prioridade, vi["inicio"], i, j, longo))
 
+    # ponytail: selecao gulosa sem sobreposicao (melhor prioridade primeiro).
+    # Teto: a janela aceita pode cortar a segunda ocorrencia do refrao e deixa-la
+    # de fora. Gatilho de upgrade: partidas ficando sem trechos de refrao (aí:
+    # ancorar janelas no inicio de cada ocorrencia ou selecao otima por intervalos).
     candidatos.sort(key=lambda c: (c[0], c[1]))
     aceitos: list[dict] = []
     for neg_prio, inicio, i, j, longo in candidatos:

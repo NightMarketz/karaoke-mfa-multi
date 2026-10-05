@@ -1,14 +1,16 @@
 import pytest
 
+from karaoke.lyrics_cleaner import clean_lyrics_strict, normalise_lyrics
 from karaoke.trechos import normaliza, trechos_da_letra, versos_da_letra
 
 
 def _alinha(linhas, dur=1.0):
+    """Como o pipeline real: alinha normalise_lyrics(clean_lyrics_strict(letra))."""
+    texto = normalise_lyrics(clean_lyrics_strict("\n".join(linhas)))
     t, out = 0.0, []
-    for linha in linhas:
-        for tok in linha.split():
-            out.append({"word": tok, "start": t, "end": t + dur, "score": 1.0})
-            t += dur
+    for tok in texto.split():
+        out.append({"word": tok, "start": t, "end": t + dur, "score": 1.0})
+        t += dur
     return out
 
 
@@ -86,3 +88,56 @@ def test_verso_longo_vira_trecho_marcado():
 def test_letra_curta_devolve_vazio():
     linhas = ["a b c d e f", "g h i j k l"]
     assert trechos_da_letra(linhas, _alinha(linhas)) == []
+
+
+# -- C1: os versos seguem o texto que o alinhador viu --------------------------
+
+def test_tag_de_secao_nao_vira_verso_nem_consome_palavra():
+    linhas = ["[Refrão]", "Eu vou cantar", "", "[Verso 2]", "Tu vais dançar"]
+    versos = versos_da_letra(linhas, _alinha(linhas))
+    assert [v["texto"] for v in versos] == ["Eu vou cantar", "Tu vais dançar"]
+    assert [v["estrofe"] for v in versos] == [0, 1]
+    assert versos[1]["palavras"][0]["inicio"] == 3.0
+
+
+def test_adlib_entre_parenteses_e_removido():
+    linhas = ["Eu vou cantar (oh oh)", "Tu vais dançar"]
+    palavras = _alinha(linhas)
+    assert len(palavras) == 6
+    versos = versos_da_letra(linhas, palavras)
+    assert versos[0]["texto"] == "Eu vou cantar"
+    assert [p["texto"] for p in versos[0]["palavras"]] == ["Eu", "vou", "cantar"]
+    assert versos[1]["inicio"] == 3.0
+
+
+def test_travessao_solto_nao_consome_palavra():
+    linhas = ["Eu vou — cantar", "—", "Tu vais dançar"]
+    palavras = _alinha(linhas)
+    assert len(palavras) == 6
+    versos = versos_da_letra(linhas, palavras)
+    assert len(versos) == 2
+    # linha com 4 tokens e 3 palavras alinhadas: usa as palavras do alinhador
+    assert [p["texto"] for p in versos[0]["palavras"]] == ["eu", "vou", "cantar"]
+    assert versos[0]["texto"] == "Eu vou — cantar"
+    assert versos[1]["palavras"][0]["inicio"] == 3.0
+    assert [v["estrofe"] for v in versos] == [0, 0]
+
+
+def test_contracoes_consomem_palavras_expandidas():
+    linhas = ["I'm still here", "I don't fall"]
+    palavras = _alinha(linhas)
+    assert [p["word"] for p in palavras] == [
+        "i", "am", "still", "here", "i", "do", "not", "fall",
+    ]
+    versos = versos_da_letra(linhas, palavras)
+    assert [v["texto"] for v in versos] == ["I'm still here", "I don't fall"]
+    assert [p["texto"] for p in versos[0]["palavras"]] == ["i", "am", "still", "here"]
+    assert [p["texto"] for p in versos[1]["palavras"]] == ["i", "do", "not", "fall"]
+    assert versos[1]["inicio"] == 4.0
+    assert versos[1]["fim"] == 8.0
+
+
+def test_divergencia_restante_ainda_e_erro_com_as_duas_contagens():
+    linhas = ["[Refrão]", "Eu vou cantar (oh oh)"]
+    with pytest.raises(ValueError, match=r"3 tokens.*4 palavras"):
+        versos_da_letra(linhas, _alinha(linhas) + [{"word": "x", "start": 9, "end": 10}])
