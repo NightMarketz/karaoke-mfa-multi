@@ -70,6 +70,16 @@ def test_lista_so_jogaveis(jobs, client):
     assert r.json[0]["duracao_s"] == 1.0
 
 
+@pytest.mark.parametrize("lixo", [b"", b"nao e um wav"])
+def test_lista_pula_instrumental_ilegivel(jobs, client, lixo):
+    jobs("ok")
+    jobs("quebrado")
+    kpaths.instrumental("quebrado").write_bytes(lixo)
+    r = client.get("/api/karaoke/songs")
+    assert r.status_code == 200
+    assert [s["id"] for s in r.json] == ["ok"]
+
+
 def test_lista_vazia_sem_pasta_de_jobs(client):
     assert client.get("/api/karaoke/songs").json == []
 

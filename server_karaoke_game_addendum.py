@@ -60,7 +60,10 @@ def make_karaoke_game_route(app) -> None:
             for d in JOBS_DIR.iterdir():
                 if not d.is_dir() or REF_ID_RE.match(d.name) is None or not jogavel(d.name):
                     continue
-                dur = sf.info(str(kpaths.instrumental(d.name))).duration
+                try:
+                    dur = sf.info(str(kpaths.instrumental(d.name))).duration
+                except (RuntimeError, OSError):
+                    continue  # base vazia/corrompida (Demucs caiu): nao jogavel
                 out.append({"id": d.name, "titulo": _titulo(d.name), "duracao_s": round(dur, 1)})
         out.sort(key=lambda s: s["titulo"])
         return jsonify(out)
