@@ -29,6 +29,7 @@ from karaoke import state_store, resume_planner, paths as kpaths
 from server_preview_addendum import write_preview_config, make_promote_route
 from server_score_addendum import make_score_route
 from server_mimic_refs_addendum import make_mimic_refs_route
+from server_karaoke_game_addendum import make_karaoke_game_route
 
 try:
     _res_cuda = subprocess.run(
@@ -42,6 +43,7 @@ except Exception:
 app = Flask(__name__, static_folder="web", static_url_path="/static")
 make_score_route(app)
 make_mimic_refs_route(app)
+make_karaoke_game_route(app)
 
 # ── Security ─────────────────────────────────────────────────────────────────
 app.config["MAX_CONTENT_LENGTH"] = 1000 * 1024 * 1024  # 1 GB

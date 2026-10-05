@@ -525,7 +525,7 @@ def main():
     out_mp4 = kpaths.output_video(job_id)
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
 
-    instrumental = kpaths.demucs_out_dir(job_id) / "no_vocals.wav"
+    instrumental = kpaths.instrumental(job_id)
     vocals = kpaths.vocals_listen(job_id)
 
     if not instrumental.exists():
